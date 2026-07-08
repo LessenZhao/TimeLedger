@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+failed=0
+
+error() {
+  printf 'project-check failed: %s\n' "$1" >&2
+  failed=1
+}
+
+require_file() {
+  if [ ! -f "$1" ]; then
+    error "missing required file: $1"
+  fi
+}
+
+require_dir() {
+  if [ ! -d "$1" ]; then
+    error "missing required directory: $1"
+  fi
+}
+
+require_file "AGENTS.md"
+require_file "CLAUDE.md"
+require_file "PROJECT_STATE.md"
+require_file "CHANGELOG.md"
+require_file "docs/README.md"
+require_file "docs/project-overview.md"
+require_file "docs/plans/000-roadmap.md"
+require_file "TimeLedger.xcodeproj/project.pbxproj"
+
+require_dir "docs"
+require_dir "docs/plans"
+require_dir "scripts"
+
+if [ -f "AGENTS.md" ]; then
+  if ! grep -q '模板默认静默' "AGENTS.md"; then
+    error "AGENTS.md missing silent-template boundary: 模板默认静默"
+  fi
+
+  if ! grep -q '不自动更新 `PROJECT_STATE.md`' "AGENTS.md"; then
+    error "AGENTS.md missing non-automatic PROJECT_STATE boundary"
+  fi
+
+  if ! grep -q '只有用户明确要求' "AGENTS.md"; then
+    error "AGENTS.md missing explicit-user-request boundary"
+  fi
+fi
+
+if [ ! -L "CLAUDE.md" ]; then
+  error "CLAUDE.md must be a symlink to AGENTS.md"
+fi
+
+if [ -L "CLAUDE.md" ] && [ "$(readlink CLAUDE.md)" != "AGENTS.md" ]; then
+  error "CLAUDE.md symlink target must be AGENTS.md"
+fi
+
+if [ "$failed" -ne 0 ]; then
+  exit 1
+fi
+
+printf 'project-check passed\n'

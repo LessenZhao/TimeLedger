@@ -11,9 +11,7 @@ import SwiftData
 @main
 struct TimeLedgerApp: App {
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
+        let schema = Schema(TimeLedgerModels.all)
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
@@ -29,4 +27,13 @@ struct TimeLedgerApp: App {
         }
         .modelContainer(sharedModelContainer)
     }
+}
+
+enum TimeLedgerModels {
+    static let all: [any PersistentModel.Type] = [
+        Project.self,
+        TimeCursor.self,
+        TimeEntry.self,
+        AppSettings.self,
+    ]
 }
