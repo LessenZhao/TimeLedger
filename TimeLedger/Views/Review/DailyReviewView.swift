@@ -16,6 +16,7 @@ struct DailyReviewView: View {
                     categorySection
                     projectSection
                     timelineSection
+                    thoughtDistributionSection
                 }
                 .padding(16)
             }
@@ -49,6 +50,15 @@ struct DailyReviewView: View {
                     .monospacedDigit()
             }
             Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("思考")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("\(thoughtCount)")
+                    .font(.title2.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(.secondarySystemBackground)))
@@ -112,6 +122,23 @@ struct DailyReviewView: View {
         (try? TimeSummaryService(modelContext: modelContext).entriesForDate(date: selectedDate)) ?? []
     }
 
+    private var todayThoughts: [ThoughtNote] {
+        (try? ThoughtLinkingService(modelContext: modelContext).thoughtsCapturedOnDate(selectedDate)) ?? []
+    }
+
+    private var thoughtCount: Int {
+        todayThoughts.count
+    }
+
+    private var thoughtHourlyDistribution: [(hour: Int, count: Int)] {
+        let calendar = Calendar.current
+        let counts = todayThoughts.reduce(into: [Int: Int]()) { result, thought in
+            let hour = calendar.component(.hour, from: thought.capturedAt)
+            result[hour, default: 0] += 1
+        }
+        return counts.sorted { $0.key < $1.key }.map { (hour: $0.key, count: $0.value) }
+    }
+
     private func summaryRow(_ name: String, _ duration: String) -> some View {
         HStack {
             Text(name)
@@ -145,6 +172,41 @@ struct DailyReviewView: View {
                 .monospacedDigit()
         }
         .padding(.vertical, 6)
+    }
+
+    private var thoughtDistributionSection: some View {
+        ReviewSection(title: "今日思考分布") {
+            if todayThoughts.isEmpty {
+                Text("无数据")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("思考总数")
+                            .font(.subheadline)
+                        Spacer()
+                        Text("\(thoughtCount) 条")
+                            .font(.subheadline.weight(.medium))
+                            .monospacedDigit()
+                    }
+                    Divider()
+                        .padding(.vertical, 4)
+                    ForEach(thoughtHourlyDistribution, id: \.hour) { item in
+                        HStack {
+                            Text(String(format: "%02d:00 - %02d:00", item.hour, (item.hour + 1) % 24))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(item.count) 条")
+                                .font(.caption.weight(.medium))
+                                .monospacedDigit()
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
     }
 }
 

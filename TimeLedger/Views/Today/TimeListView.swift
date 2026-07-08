@@ -3,11 +3,26 @@ import SwiftUI
 
 struct TimeListView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query private var allEntries: [TimeEntry]
+    @Query private var allThoughts: [ThoughtNote]
     @State private var errorMessage: String?
 
     let date: Date
     let now: Date
     let unclassifiedDuration: TimeInterval
+
+    init(date: Date, now: Date, unclassifiedDuration: TimeInterval) {
+        self.date = date
+        self.now = now
+        self.unclassifiedDuration = unclassifiedDuration
+        let range = DateRangeService.naturalDayRange(for: date)
+        _allEntries = Query(
+            filter: #Predicate<TimeEntry> { entry in
+                entry.startAt < range.upperBound && entry.endAt > range.lowerBound
+            },
+            sort: \TimeEntry.startAt
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +36,7 @@ struct TimeListView: View {
                             NavigationLink {
                                 TimeEntryEditView(entry: entry)
                             } label: {
-                                entryRow(entry)
+                                entryRow(entry, thoughtCount: thoughtCount(for: entry))
                             }
                             .buttonStyle(.plain)
                         }
@@ -49,11 +64,19 @@ struct TimeListView: View {
     }
 
     private var entries: [TimeEntry] {
-        (try? TimeSummaryService(modelContext: modelContext).entriesForDate(date: date)) ?? []
+        allEntries
     }
 
     private var totalDuration: TimeInterval {
-        (try? TimeSummaryService(modelContext: modelContext).totalDurationForDate(date)) ?? 0
+        let range = DateRangeService.naturalDayRange(for: date)
+        return allEntries.reduce(0) { total, entry in
+            total + DateRangeService.overlapDuration(
+                entryStart: entry.startAt,
+                entryEnd: entry.endAt,
+                rangeStart: range.lowerBound,
+                rangeEnd: range.upperBound
+            )
+        }
     }
 
     private var remainingToday: TimeInterval {
@@ -72,7 +95,7 @@ struct TimeListView: View {
         .padding(.vertical, 10)
     }
 
-    private func entryRow(_ entry: TimeEntry) -> some View {
+    private func entryRow(_ entry: TimeEntry, thoughtCount: Int) -> some View {
         let isDraft = entry.status == TimeEntryStatus.draft.rawValue
 
         return HStack(alignment: .top, spacing: 12) {
@@ -87,6 +110,11 @@ struct TimeListView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+                if thoughtCount > 0 {
+                    Label("思考 \(thoughtCount) 条", systemImage: "lightbulb")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
 
@@ -114,6 +142,10 @@ struct TimeListView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(.secondarySystemBackground))
         )
+    }
+
+    private func thoughtCount(for entry: TimeEntry) -> Int {
+        allThoughts.filter { $0.linkedEntryId == entry.id }.count
     }
 
     private func statusItem(_ title: String, _ value: String) -> some View {

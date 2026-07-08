@@ -35,5 +35,6 @@ enum TimeLedgerModels {
         TimeCursor.self,
         TimeEntry.self,
         AppSettings.self,
+        ThoughtNote.self,
     ]
 }

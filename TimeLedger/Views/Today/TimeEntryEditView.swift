@@ -5,6 +5,7 @@ struct TimeEntryEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
+    @Query private var allThoughts: [ThoughtNote]
 
     let entry: TimeEntry
 
@@ -15,6 +16,8 @@ struct TimeEntryEditView: View {
     @State private var errorMessage: String?
     @State private var showingDeleteAlert = false
     @State private var showingCancelConfirmationAlert = false
+    @State private var showingAddThought = false
+    @State private var newThoughtBody = ""
 
     init(entry: TimeEntry) {
         self.entry = entry
@@ -47,6 +50,28 @@ struct TimeEntryEditView: View {
             Section("备注") {
                 TextField("备注", text: $note, axis: .vertical)
                     .lineLimit(3...6)
+            }
+
+            Section("关联思考") {
+                if linkedThoughts.isEmpty {
+                    Text("暂无关联思考")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(linkedThoughts) { thought in
+                        NavigationLink {
+                            ThoughtEditView(thought: thought, entry: entry)
+                        } label: {
+                            thoughtRow(thought)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Button {
+                    showingAddThought = true
+                } label: {
+                    Label("添加思考", systemImage: "plus")
+                }
             }
 
             if isDraft {
@@ -93,6 +118,11 @@ struct TimeEntryEditView: View {
         } message: {
             Text("这条记录会变回草稿，时间位置不会改变。")
         }
+        .sheet(isPresented: $showingAddThought) {
+            ThoughtAddSheet { newBody in
+                addThought(body: newBody)
+            }
+        }
     }
 
     private var isDraft: Bool {
@@ -105,6 +135,44 @@ struct TimeEntryEditView: View {
 
     private var selectedProject: Project? {
         projects.first { $0.id == selectedProjectId }
+    }
+
+    private var linkedThoughts: [ThoughtNote] {
+        allThoughts
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.capturedAt < $1.capturedAt }
+    }
+
+    private func thoughtRow(_ thought: ThoughtNote) -> some View {
+        let isWithinRange = thought.capturedAt >= entry.startAt && thought.capturedAt <= entry.endAt
+        let tagText = isWithinRange ? "当时想法" : "事后补充"
+        let tagColor: Color = isWithinRange ? .orange : .blue
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(tagText)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(tagColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(tagColor.opacity(0.12)))
+            }
+            Text(thought.body)
+                .font(.footnote)
+                .lineLimit(3)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func addThought(body: String) {
+        do {
+            _ = try ThoughtLinkingService(modelContext: modelContext).addThought(to: entry, body: body)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func save() {

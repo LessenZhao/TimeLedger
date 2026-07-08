@@ -64,6 +64,7 @@ struct TimeCursorService {
         cursor.cursorAt = now
         cursor.updatedAt = now
         try modelContext.save()
+        _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
         return entry
     }
 
@@ -92,6 +93,7 @@ struct TimeCursorService {
         cursor.cursorAt = endAt
         cursor.updatedAt = endAt
         try modelContext.save()
+        _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
         return entry
     }
 

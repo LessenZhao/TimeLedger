@@ -14,6 +14,7 @@ struct TodayView: View {
     @State private var canUndo = false
     @State private var adjustmentProject: Project?
     @State private var selectedView = 0
+    @State private var showingThoughtCapture = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -38,6 +39,20 @@ struct TodayView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("撤销", action: undoLastEntry)
                         .disabled(!canUndo)
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        ThoughtDayView(date: now)
+                    } label: {
+                        Label("今日思考", systemImage: "list.bullet.rectangle.portrait")
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingThoughtCapture = true
+                    } label: {
+                        Label("想法", systemImage: "lightbulb")
+                    }
                 }
             }
         }
@@ -67,6 +82,9 @@ struct TodayView: View {
                     skipSegment(to: endAt)
                 }
             )
+        }
+        .sheet(isPresented: $showingThoughtCapture) {
+            ThoughtQuickCaptureSheet()
         }
     }
 
@@ -200,6 +218,7 @@ struct TodayView: View {
             }
 
             _ = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: now)
+            now = Date()
             refreshUndoState()
         } catch {
             errorMessage = error.localizedDescription
