@@ -97,16 +97,24 @@ struct DraftListView: View {
 
     private func sectionTitle(for dayStart: Date) -> String {
         let calendar = Calendar.current
+        let weekday = weekdayLabel(for: dayStart)
         if calendar.isDateInToday(dayStart) {
-            return "今天"
+            return "今天 · \(weekday)"
         }
         if calendar.isDateInYesterday(dayStart) {
-            return "昨天"
+            return "昨天 · \(weekday)"
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日"
-        return formatter.string(from: dayStart)
+        return "\(formatter.string(from: dayStart)) · \(weekday)"
+    }
+
+    private func weekdayLabel(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
     }
 
     private func draftRow(_ entry: TimeEntry, thoughtCount: Int) -> some View {
