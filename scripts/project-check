@@ -21,13 +21,11 @@ require_dir() {
 }
 
 require_file "AGENTS.md"
-require_file "CLAUDE.md"
 require_file "PROJECT_STATE.md"
 require_file "CHANGELOG.md"
 require_file "docs/README.md"
 require_file "docs/project-overview.md"
 require_file "docs/plans/000-roadmap.md"
-require_file "TimeLedger.xcodeproj/project.pbxproj"
 
 require_dir "docs"
 require_dir "docs/plans"
@@ -46,6 +44,9 @@ if [ -f "AGENTS.md" ]; then
     error "AGENTS.md missing explicit-user-request boundary"
   fi
 fi
+
+# Project-specific: Xcode project + CLAUDE.md symlink
+require_file "TimeLedger.xcodeproj/project.pbxproj"
 
 if [ ! -L "CLAUDE.md" ]; then
   error "CLAUDE.md must be a symlink to AGENTS.md"

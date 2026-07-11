@@ -6,12 +6,6 @@
 
 - `project-overview.md`：项目总览、当前结构、运行方式和验收标准。
 - `plans/000-roadmap.md`：项目主线阶段和后续方向。
+- `plans/001-timeledger-v1-implementation-plan.md`：V1 实施计划（历史参考）。
 - `../CHANGELOG.md`：已经完成的实际历史变更、版本记录和验证摘要。
 - `../PROJECT_STATE.md`：当前阶段、当前任务、未完成项和接手恢复。
-
-## 维护边界
-
-- 产品规则和开发红线写在 `../AGENTS.md`。
-- 当前执行现场写在 `../PROJECT_STATE.md`。
-- 已完成变更写在 `../CHANGELOG.md`。
-- 不在多个文件重复维护同一份状态。

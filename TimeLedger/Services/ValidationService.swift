@@ -5,6 +5,7 @@ enum ValidationError: LocalizedError {
     case invalidTimeRange
     case missingProject
     case overlappingTime
+    case unknownProjectNotConfirmable
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum ValidationError: LocalizedError {
             "项目不存在或已归档。"
         case .overlappingTime:
             "时间记录不能重叠。"
+        case .unknownProjectNotConfirmable:
+            "未知项目不能确认，请先选择具体项目。"
         }
     }
 }
@@ -64,8 +67,29 @@ struct ValidationService {
         let drafts = try modelContext.fetch(descriptor).filter { entry in
             entry.status == TimeEntryStatus.draft.rawValue
         }
+        return try confirmDrafts(drafts)
+    }
 
-        for draft in drafts {
+    @discardableResult
+    func confirmAllEligibleDrafts() throws -> Int {
+        let descriptor = FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.startAt)])
+        let drafts = try modelContext.fetch(descriptor).filter { entry in
+            entry.status == TimeEntryStatus.draft.rawValue
+        }
+        return try confirmDrafts(drafts)
+    }
+
+    private func confirmDrafts(_ drafts: [TimeEntry]) throws -> Int {
+        guard !drafts.isEmpty else { return 0 }
+
+        let unknowns = drafts.filter { SystemProject.isUnknownEntry($0) }
+        let eligible = drafts.filter { !SystemProject.isUnknownEntry($0) }
+
+        if eligible.isEmpty, !unknowns.isEmpty {
+            throw ValidationError.unknownProjectNotConfirmable
+        }
+
+        for draft in eligible {
             try validateEntry(
                 projectId: draft.projectId,
                 startAt: draft.startAt,
@@ -75,13 +99,13 @@ struct ValidationService {
         }
 
         let now = Date()
-        for draft in drafts {
+        for draft in eligible {
             draft.status = TimeEntryStatus.confirmed.rawValue
             draft.updatedAt = now
         }
 
         try modelContext.save()
-        return drafts.count
+        return eligible.count
     }
 
     private func projectExists(_ projectId: UUID) throws -> Bool {

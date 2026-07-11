@@ -1,20 +1,19 @@
 import Combine
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
 
     @State private var now = Date()
-    @State private var searchText = ""
-    @State private var newProjectName = ""
-    @State private var newProjectCategory = "日常"
     @State private var errorMessage: String?
     @State private var canUndo = false
     @State private var adjustmentProject: Project?
     @State private var selectedView = 0
     @State private var showingThoughtCapture = false
+    @State private var showingAddProject = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -22,39 +21,18 @@ struct TodayView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                header
-                if selectedView == 0 {
-                    addProjectBar
-                    projectList
-                } else {
-                    TimeListView(date: now, now: now, unclassifiedDuration: unclassifiedDuration)
-                }
+            VStack(spacing: 0) {
+                statusBar
+                    .frame(height: 44)
+                segmentBar
+                    .frame(height: 42)
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .navigationTitle("TimeLedger")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(TLTheme.pageBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("撤销", action: undoLastEntry)
-                        .disabled(!canUndo)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        ThoughtDayView(date: now)
-                    } label: {
-                        Label("今日思考", systemImage: "list.bullet.rectangle.portrait")
-                    }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingThoughtCapture = true
-                    } label: {
-                        Label("想法", systemImage: "lightbulb")
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .task {
             bootstrap()
@@ -66,7 +44,7 @@ struct TodayView: View {
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
-            Button("OK", role: .cancel) {}
+            Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
@@ -86,84 +64,148 @@ struct TodayView: View {
         .sheet(isPresented: $showingThoughtCapture) {
             ThoughtQuickCaptureSheet()
         }
+        .sheet(isPresented: $showingAddProject) {
+            ProjectEditView(project: nil)
+        }
     }
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("当前未记录")
-                    .font(.caption)
+    private var statusBar: some View {
+        HStack(spacing: 0) {
+            Button("撤销", action: undoLastEntry)
+                .font(TLTheme.statusFont)
+                .disabled(!canUndo)
+                .frame(width: 64, alignment: .leading)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 5) {
+                Text("未记录")
                     .foregroundStyle(.secondary)
                 Text(DurationFormatter.compact(unclassifiedDuration))
-                    .font(.title2.weight(.semibold))
+                    .fontWeight(.semibold)
                     .monospacedDigit()
+                    .foregroundStyle(.primary)
             }
+            .font(TLTheme.statusFont)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            Picker("视图", selection: $selectedView) {
-                Text("待办").tag(0)
-                Text("时间").tag(1)
+            Group {
+                if selectedView == 1 {
+                    Button("确认", action: confirmDrafts)
+                        .font(TLTheme.statusFont.weight(.semibold))
+                } else {
+                    Button {
+                        showingThoughtCapture = true
+                    } label: {
+                        Image(systemName: "lightbulb.fill")
+                            .font(.system(size: TLTheme.statusIconSize, weight: .medium))
+                    }
+                    .accessibilityLabel("快速想法")
+                }
             }
-            .pickerStyle(.segmented)
-            .frame(width: 150)
+            .frame(width: 64, alignment: .trailing)
         }
+        .padding(.horizontal, 12)
     }
 
-    private var addProjectBar: some View {
-        VStack(spacing: 8) {
-            TextField("搜索项目", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-
-            HStack(spacing: 8) {
-                TextField("添加项目", text: $newProjectName)
-                    .textFieldStyle(.roundedBorder)
-
-                TextField("分类", text: $newProjectCategory)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 92)
-
-                Button(action: addProject) {
-                    Image(systemName: "plus")
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(newProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+    private var segmentBar: some View {
+        Picker("视图", selection: $selectedView) {
+            Text("项目").tag(0)
+            Text("草稿").tag(1)
+            Text("已确认").tag(2)
         }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        // Keep all panes mounted so chrome above does not reflow when switching.
+        ZStack(alignment: .top) {
+            projectList
+                .opacity(selectedView == 0 ? 1 : 0)
+                .allowsHitTesting(selectedView == 0)
+
+            DraftListView()
+                .padding(.horizontal, 12)
+                .opacity(selectedView == 1 ? 1 : 0)
+                .allowsHitTesting(selectedView == 1)
+
+            ConfirmedListView()
+                .opacity(selectedView == 2 ? 1 : 0)
+                .allowsHitTesting(selectedView == 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var activeProjects: [Project] {
+        projects.filter { !SystemProject.isUnknown($0) }
     }
 
     private var projectList: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                if filteredProjects.isEmpty {
-                    ContentUnavailableView("还没有项目", systemImage: "tray", description: Text("先添加一个常用项目。"))
-                        .padding(.top, 40)
-                } else {
-                    ForEach(filteredProjects) { project in
-                        ProjectRowView(
-                            project: project,
-                            todayDuration: todayDuration(for: project),
-                            quickRecordAction: { quickRecord(project) },
-                            adjustAction: { openAdjustment(for: project) }
-                        )
-                    }
+        VStack(spacing: 0) {
+            HStack {
+                Text("点 ＋ 归档")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                NavigationLink {
+                    ProjectManageView()
+                        .toolbar(.visible, for: .navigationBar)
+                } label: {
+                    Text("管理")
+                        .font(.system(size: 15, weight: .medium))
                 }
             }
-            .padding(.bottom, 24)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+
+            ScrollView {
+                LazyVStack(spacing: TLTheme.listSpacing) {
+                    if activeProjects.isEmpty {
+                        emptyProjects
+                    } else {
+                        ForEach(activeProjects) { project in
+                            ProjectRowView(
+                                project: project,
+                                todayDuration: todayDuration(for: project),
+                                quickRecordAction: { quickRecord(project) },
+                                adjustAction: { openAdjustment(for: project) }
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+
+            if !activeProjects.isEmpty {
+                Text("轻点归档 · 长按调整")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .padding(.bottom, 6)
+            }
         }
     }
 
-    private var filteredProjects: [Project] {
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else {
-            return projects
+    private var emptyProjects: some View {
+        VStack(spacing: 12) {
+            ContentUnavailableView(
+                "还没有项目",
+                systemImage: "tray",
+                description: Text("先添加几个常用项目，之后一键归档时间。")
+            )
+            Button("添加项目") {
+                showingAddProject = true
+            }
+            .buttonStyle(.borderedProminent)
         }
-
-        return projects.filter { project in
-            project.name.localizedCaseInsensitiveContains(keyword)
-            || project.categoryName.localizedCaseInsensitiveContains(keyword)
-        }
+        .padding(.top, 32)
     }
 
     private var unclassifiedDuration: TimeInterval {
@@ -184,29 +226,6 @@ struct TodayView: View {
         }
     }
 
-    private func addProject() {
-        let name = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let category = newProjectCategory.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            return
-        }
-
-        let project = Project(
-            name: name,
-            categoryName: category.isEmpty ? "日常" : category,
-            sortOrder: projects.count
-        )
-        modelContext.insert(project)
-
-        do {
-            try modelContext.save()
-            newProjectName = ""
-            newProjectCategory = "日常"
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     private func quickRecord(_ project: Project) {
         do {
             let settings = try getOrCreateSettings()
@@ -218,6 +237,7 @@ struct TodayView: View {
             }
 
             _ = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: now)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             now = Date()
             refreshUndoState()
         } catch {
@@ -238,6 +258,7 @@ struct TodayView: View {
                 endAt: endAt,
                 note: note
             )
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             refreshUndoState()
             now = Date()
         } catch {
@@ -260,6 +281,19 @@ struct TodayView: View {
             try TimeCursorService(modelContext: modelContext).undoLastEntry()
             refreshUndoState()
             now = Date()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func confirmDrafts() {
+        do {
+            let count = try ValidationService(modelContext: modelContext).confirmAllEligibleDrafts()
+            if count == 0 {
+                errorMessage = "没有可确认的草稿。未知项目请先选择具体项目。"
+                return
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } catch {
             errorMessage = error.localizedDescription
         }

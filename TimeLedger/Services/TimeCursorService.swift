@@ -5,6 +5,8 @@ enum TimeCursorError: LocalizedError {
     case emptySegment
     case cannotUndo
     case cannotDelete
+    case startCannotMoveEarlier
+    case endOverlapsNext
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +16,10 @@ enum TimeCursorError: LocalizedError {
             "没有可撤销的草稿记录。"
         case .cannotDelete:
             "只能删除草稿记录。"
+        case .startCannotMoveEarlier:
+            "开始时间不能早于当前开始时间。"
+        case .endOverlapsNext:
+            "结束时间不能与后一段重叠。"
         }
     }
 }
@@ -138,6 +144,7 @@ struct TimeCursorService {
         startAt: Date,
         endAt: Date
     ) throws {
+        let originalStartAt = entry.startAt
         let originalEndAt = entry.endAt
 
         entry.projectId = project.id
@@ -147,12 +154,37 @@ struct TimeCursorService {
         entry.updatedAt = Date()
 
         if entry.status == TimeEntryStatus.draft.rawValue {
+            guard endAt > startAt else {
+                throw ValidationError.invalidTimeRange
+            }
+            guard startAt >= originalStartAt else {
+                throw TimeCursorError.startCannotMoveEarlier
+            }
+
+            if let next = try nextEntry(after: entry), endAt > next.startAt {
+                throw TimeCursorError.endOverlapsNext
+            }
+
             try ValidationService(modelContext: modelContext).validateEntry(
                 projectId: project.id,
                 startAt: startAt,
                 endAt: endAt,
                 excluding: entry.id
             )
+
+            if startAt > originalStartAt {
+                let unknown = try SystemProject.getOrCreateUnknown(modelContext: modelContext)
+                let freed = TimeEntry(
+                    projectId: unknown.id,
+                    projectNameSnapshot: unknown.name,
+                    categoryNameSnapshot: unknown.categoryName,
+                    startAt: originalStartAt,
+                    endAt: startAt,
+                    status: .draft
+                )
+                modelContext.insert(freed)
+                _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: freed)
+            }
 
             entry.startAt = startAt
             entry.endAt = endAt
@@ -178,14 +210,36 @@ struct TimeCursorService {
             throw TimeCursorError.cannotDelete
         }
 
+        let deletedStart = entry.startAt
+        let deletedEnd = entry.endAt
         let cursor = try getOrCreateCursor()
-        if cursor.cursorAt == entry.endAt {
-            cursor.cursorAt = entry.startAt
+
+        if cursor.cursorAt == deletedEnd {
+            cursor.cursorAt = deletedStart
             cursor.updatedAt = Date()
+            modelContext.delete(entry)
+            try modelContext.save()
+            return
+        }
+
+        if let next = try nextEntry(after: entry) {
+            next.startAt = deletedStart
+            next.updatedAt = Date()
         }
 
         modelContext.delete(entry)
         try modelContext.save()
+    }
+
+    func nextEntry(after entry: TimeEntry) throws -> TimeEntry? {
+        let entries = try modelContext.fetch(
+            FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.startAt)])
+        )
+        return entries.first { candidate in
+            candidate.id != entry.id && candidate.startAt >= entry.endAt
+        } ?? entries.first { candidate in
+            candidate.id != entry.id && candidate.startAt > entry.startAt
+        }
     }
 
     private func lastCreatedEntry() throws -> TimeEntry? {

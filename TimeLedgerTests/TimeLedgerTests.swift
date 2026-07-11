@@ -575,6 +575,167 @@ struct TimeLedgerTests {
         #expect(try cursorService.getOrCreateCursor().cursorAt == cursorAt)
     }
 
+    @Test func shrinkingDraftStartCreatesUnknownProjectEntry() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let start = Date(timeIntervalSince1970: 10_000)
+        let end = Date(timeIntervalSince1970: 10_000 + 3_600)
+        let newStart = Date(timeIntervalSince1970: 10_000 + 1_800)
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: start)
+        let entry = try service.quickRecord(project: project, now: end)
+
+        try service.updateEntry(
+            entry,
+            project: project,
+            note: "",
+            startAt: newStart,
+            endAt: end
+        )
+
+        let entries = try context.fetch(FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.startAt)]))
+        #expect(entries.count == 2)
+        #expect(entries[0].startAt == start)
+        #expect(entries[0].endAt == newStart)
+        #expect(entries[0].projectNameSnapshot == SystemProject.unknownName)
+        #expect(entries[0].status == TimeEntryStatus.draft.rawValue)
+        #expect(entries[1].id == entry.id)
+        #expect(entries[1].startAt == newStart)
+        #expect(entries[1].endAt == end)
+    }
+
+    @Test func updateDraftRejectsEarlierStart() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let start = Date(timeIntervalSince1970: 20_000)
+        let end = Date(timeIntervalSince1970: 20_000 + 3_600)
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: start)
+        let entry = try service.quickRecord(project: project, now: end)
+
+        do {
+            try service.updateEntry(
+                entry,
+                project: project,
+                note: "",
+                startAt: start.addingTimeInterval(-600),
+                endAt: end
+            )
+            #expect(Bool(false), "earlier start should be rejected")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+    }
+
+    @Test func deleteMiddleDraftPullsNextEntryStartForward() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 30_000)
+        let t1 = Date(timeIntervalSince1970: 30_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 30_000 + 7_200)
+        let t3 = Date(timeIntervalSince1970: 30_000 + 10_800)
+
+        context.insert(project)
+        try context.save()
+
+        let first = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1
+        )
+        let middle = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2
+        )
+        let last = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t2,
+            endAt: t3
+        )
+        context.insert(first)
+        context.insert(middle)
+        context.insert(last)
+        _ = try service.getOrCreateCursor(now: t3)
+        try context.save()
+
+        try service.deleteDraftEntry(middle)
+
+        #expect(last.startAt == t1)
+        #expect(last.endAt == t3)
+        #expect(try context.fetch(FetchDescriptor<TimeEntry>()).count == 2)
+        #expect(try service.getOrCreateCursor().cursorAt == t3)
+    }
+
+    @Test func confirmAllEligibleDraftsSkipsUnknownProject() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = ValidationService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let unknown = try SystemProject.getOrCreateUnknown(modelContext: context)
+        let realDraft = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: Date(timeIntervalSince1970: 40_000),
+            endAt: Date(timeIntervalSince1970: 40_600)
+        )
+        let unknownDraft = TimeEntry(
+            projectId: unknown.id,
+            projectNameSnapshot: unknown.name,
+            categoryNameSnapshot: unknown.categoryName,
+            startAt: Date(timeIntervalSince1970: 40_600),
+            endAt: Date(timeIntervalSince1970: 41_200)
+        )
+
+        context.insert(project)
+        context.insert(realDraft)
+        context.insert(unknownDraft)
+        try context.save()
+
+        let count = try service.confirmAllEligibleDrafts()
+        #expect(count == 1)
+        #expect(realDraft.status == TimeEntryStatus.confirmed.rawValue)
+        #expect(unknownDraft.status == TimeEntryStatus.draft.rawValue)
+    }
+
+    @Test func confirmAllEligibleDraftsFailsWhenOnlyUnknownRemain() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = ValidationService(modelContext: context)
+        let unknown = try SystemProject.getOrCreateUnknown(modelContext: context)
+        let unknownDraft = TimeEntry(
+            projectId: unknown.id,
+            projectNameSnapshot: unknown.name,
+            categoryNameSnapshot: unknown.categoryName,
+            startAt: Date(timeIntervalSince1970: 50_000),
+            endAt: Date(timeIntervalSince1970: 50_600)
+        )
+        context.insert(unknownDraft)
+        try context.save()
+
+        do {
+            _ = try service.confirmAllEligibleDrafts()
+            #expect(Bool(false), "only unknown drafts should not confirm")
+        } catch {
+            #expect(error is ValidationError)
+        }
+    }
+
     private var fixedCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

@@ -8,7 +8,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("记录") {
+                Section {
                     HStack {
                         Text("未记录提醒阈值")
                         Spacer()
@@ -30,6 +30,10 @@ struct SettingsView: View {
                             saveSettings()
                         }
                     ))
+                } header: {
+                    Text("记录")
+                } footer: {
+                    Text("超过阈值再打标时，会弹出调整时间。")
                 }
 
                 Section("导出") {

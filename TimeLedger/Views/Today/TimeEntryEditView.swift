@@ -6,6 +6,7 @@ struct TimeEntryEditView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
     @Query private var allThoughts: [ThoughtNote]
+    @Query private var allEntries: [TimeEntry]
 
     let entry: TimeEntry
 
@@ -13,11 +14,11 @@ struct TimeEntryEditView: View {
     @State private var note: String
     @State private var startAt: Date
     @State private var endAt: Date
+    @State private var minimumStartAt: Date
     @State private var errorMessage: String?
     @State private var showingDeleteAlert = false
     @State private var showingCancelConfirmationAlert = false
     @State private var showingAddThought = false
-    @State private var newThoughtBody = ""
 
     init(entry: TimeEntry) {
         self.entry = entry
@@ -25,34 +26,62 @@ struct TimeEntryEditView: View {
         _note = State(initialValue: entry.note)
         _startAt = State(initialValue: entry.startAt)
         _endAt = State(initialValue: entry.endAt)
+        _minimumStartAt = State(initialValue: entry.startAt)
     }
 
     var body: some View {
         Form {
-            Section("项目") {
+            Section {
                 Picker("项目", selection: $selectedProjectId) {
-                    ForEach(projects) { project in
+                    ForEach(selectableProjects) { project in
                         Text(project.name).tag(project.id)
                     }
                 }
-            }
 
-            Section("时间") {
                 if isDraft {
-                    DatePicker("开始", selection: $startAt, displayedComponents: [.date, .hourAndMinute])
-                    DatePicker("结束", selection: $endAt, displayedComponents: [.date, .hourAndMinute])
+                    DatePicker(
+                        "开始",
+                        selection: $startAt,
+                        in: minimumStartAt...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    DatePicker(
+                        "结束",
+                        selection: $endAt,
+                        in: startAt...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
                 } else {
-                    LabeledContent("开始", value: DateFormatterFactory.dateTime.string(from: entry.startAt))
-                    LabeledContent("结束", value: DateFormatterFactory.dateTime.string(from: entry.endAt))
+                    LabeledContent("开始") {
+                        Text(DateFormatterFactory.dateTime.string(from: entry.startAt))
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("结束") {
+                        Text(DateFormatterFactory.dateTime.string(from: entry.endAt))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                NavigationLink {
+                    TimeEntryNoteEditView(note: $note)
+                } label: {
+                    HStack(alignment: .top) {
+                        Text("备注")
+                        Spacer(minLength: 12)
+                        Text(notePreview)
+                            .foregroundStyle(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .tertiary : .secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            } footer: {
+                if SystemProject.isUnknownEntry(entry) {
+                    Text("请选择具体项目后再确认。")
+                } else if isDraft, let maxEnd = maximumEndAt {
+                    Text("结束不能晚于下一段 \(DateFormatterFactory.timeOnly.string(from: maxEnd))")
                 }
             }
 
-            Section("备注") {
-                TextField("备注", text: $note, axis: .vertical)
-                    .lineLimit(3...6)
-            }
-
-            Section("关联思考") {
+            Section {
                 if linkedThoughts.isEmpty {
                     Text("暂无关联思考")
                         .font(.footnote)
@@ -64,7 +93,6 @@ struct TimeEntryEditView: View {
                         } label: {
                             thoughtRow(thought)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
                 Button {
@@ -72,6 +100,8 @@ struct TimeEntryEditView: View {
                 } label: {
                     Label("添加思考", systemImage: "plus")
                 }
+            } header: {
+                Text("思考")
             }
 
             if isDraft {
@@ -86,7 +116,7 @@ struct TimeEntryEditView: View {
                         showingCancelConfirmationAlert = true
                     }
                 } footer: {
-                    Text("取消确认后，这条记录会回到草稿状态，但不会改变当前未记录时间的位置。")
+                    Text("取消确认后回到草稿，未记录光标位置不变。")
                 }
             }
         }
@@ -102,7 +132,7 @@ struct TimeEntryEditView: View {
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
-            Button("OK", role: .cancel) {}
+            Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
         }
@@ -110,7 +140,7 @@ struct TimeEntryEditView: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive, action: deleteDraft)
         } message: {
-            Text("删除后会移除这段时间记录。")
+            Text("删除后后面的记录会向前贴紧；若是最后一条，未记录光标会退回。")
         }
         .alert("取消确认？", isPresented: $showingCancelConfirmationAlert) {
             Button("保留确认", role: .cancel) {}
@@ -123,10 +153,43 @@ struct TimeEntryEditView: View {
                 addThought(body: newBody)
             }
         }
+        .onChange(of: startAt) { _, newStart in
+            if endAt <= newStart {
+                endAt = newStart.addingTimeInterval(60)
+            }
+            if let maxEnd = maximumEndAt, endAt > maxEnd {
+                endAt = maxEnd
+            }
+        }
+        .onChange(of: endAt) { _, newEnd in
+            if let maxEnd = maximumEndAt, newEnd > maxEnd {
+                endAt = maxEnd
+            }
+        }
+    }
+
+    private var notePreview: String {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "点击编写" : trimmed
     }
 
     private var isDraft: Bool {
         entry.status == TimeEntryStatus.draft.rawValue
+    }
+
+    private var selectableProjects: [Project] {
+        let real = projects.filter { !SystemProject.isUnknown($0) }
+        if let current = projects.first(where: { $0.id == selectedProjectId }),
+           SystemProject.isUnknown(current),
+           !real.contains(where: { $0.id == current.id }) {
+            return [current] + real
+        }
+        if SystemProject.isUnknownEntry(entry),
+           !real.contains(where: { $0.id == entry.projectId }),
+           let unknown = projects.first(where: { $0.id == entry.projectId }) {
+            return [unknown] + real
+        }
+        return real
     }
 
     private var saveDisabled: Bool {
@@ -135,6 +198,20 @@ struct TimeEntryEditView: View {
 
     private var selectedProject: Project? {
         projects.first { $0.id == selectedProjectId }
+            ?? selectableProjects.first { $0.id == selectedProjectId }
+    }
+
+    private var maximumEndAt: Date? {
+        allEntries
+            .filter { $0.id != entry.id && $0.startAt >= entry.endAt - 1 }
+            .sorted { $0.startAt < $1.startAt }
+            .first?
+            .startAt
+            ?? allEntries
+            .filter { $0.id != entry.id && $0.startAt > entry.startAt }
+            .sorted { $0.startAt < $1.startAt }
+            .first?
+            .startAt
     }
 
     private var linkedThoughts: [ThoughtNote] {
@@ -144,25 +221,13 @@ struct TimeEntryEditView: View {
     }
 
     private func thoughtRow(_ thought: ThoughtNote) -> some View {
-        let isWithinRange = thought.capturedAt >= entry.startAt && thought.capturedAt <= entry.endAt
-        let tagText = isWithinRange ? "当时想法" : "事后补充"
-        let tagColor: Color = isWithinRange ? .orange : .blue
-
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(tagText)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(tagColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(tagColor.opacity(0.12)))
-            }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(thought.body)
                 .font(.footnote)
-                .lineLimit(3)
+                .lineLimit(2)
         }
         .padding(.vertical, 2)
     }
@@ -178,6 +243,11 @@ struct TimeEntryEditView: View {
     private func save() {
         guard let project = selectedProject else {
             errorMessage = "请选择项目。"
+            return
+        }
+
+        if let maxEnd = maximumEndAt, endAt > maxEnd {
+            errorMessage = "结束时间不能与后一段重叠。"
             return
         }
 

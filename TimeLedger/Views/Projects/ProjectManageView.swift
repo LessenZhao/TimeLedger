@@ -81,7 +81,7 @@ struct ProjectManageView: View {
         } label: {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(Color(project.colorHex ?? "secondarySystemBackground"))
+                    .fill(Color(hex: project.colorHex))
                     .frame(width: 12, height: 12)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
