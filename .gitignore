@@ -6,3 +6,6 @@ xcuserdata/
 *.xccheckout
 *.xcscmblueprint
 .superpowers/
+Packages/EvolutionCore/.build/
+EvolutionHub/.build/
+dist/

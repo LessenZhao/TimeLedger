@@ -36,6 +36,14 @@ struct SettingsView: View {
                     Text("超过阈值再打标时，会弹出调整时间。")
                 }
 
+                Section("Mac 镜像") {
+                    NavigationLink {
+                        MirrorConnectView()
+                    } label: {
+                        Label("连接 Mac 镜像", systemImage: "desktopcomputer")
+                    }
+                }
+
                 Section("导出") {
                     Toggle("仅导出已确认", isOn: Binding(
                         get: { settings?.exportOnlyConfirmed ?? true },

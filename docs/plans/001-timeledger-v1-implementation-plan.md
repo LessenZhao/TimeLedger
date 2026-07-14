@@ -78,7 +78,7 @@
 - `CHANGELOG.md`
 - `docs/README.md`
 - `docs/project-overview.md`
-- `docs/plans/000-roadmap.md`
+- `docs/plans/initial-build.md`
 - `scripts/project-check`
 
 **Verification:**

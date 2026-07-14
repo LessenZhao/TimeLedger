@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "exportedAt": "2026-07-12T10:00:00Z",
+  "projects": [
+    {
+      "id": "proj-1",
+      "name": "TimeLedger",
+      "categoryName": "开发",
+      "emoji": "",
+      "colorHex": "",
+      "sortOrder": 0,
+      "isArchived": false,
+      "createdAt": "2026-07-01T00:00:00Z",
+      "updatedAt": "2026-07-01T00:00:00Z"
+    }
+  ],
+  "timeEntries": [
+    {
+      "id": "entry-1",
+      "projectId": "proj-1",
+      "projectNameSnapshot": "TimeLedger",
+      "categoryNameSnapshot": "开发",
+      "startAt": "2026-07-12T01:00:00Z",
+      "endAt": "2026-07-12T03:00:00Z",
+      "note": "V3.1 hub shell",
+      "status": "confirmed",
+      "createdAt": "2026-07-12T03:00:00Z",
+      "updatedAt": "2026-07-12T03:00:00Z"
+    },
+    {
+      "id": "entry-2",
+      "projectId": "proj-1",
+      "projectNameSnapshot": "TimeLedger",
+      "categoryNameSnapshot": "开发",
+      "startAt": "2026-07-11T08:00:00Z",
+      "endAt": "2026-07-11T09:00:00Z",
+      "note": "yesterday",
+      "status": "draft",
+      "createdAt": "2026-07-11T09:00:00Z",
+      "updatedAt": "2026-07-11T09:00:00Z"
+    }
+  ],
+  "thoughtNotes": [
+    {
+      "id": "thought-1",
+      "body": "先做壳层再接 Collector",
+      "capturedAt": "2026-07-12T02:00:00Z",
+      "anchorAt": "2026-07-12T02:00:00Z",
+      "linkedEntryId": "entry-1",
+      "linkSource": "auto",
+      "createdAt": "2026-07-12T02:00:00Z",
+      "updatedAt": "2026-07-12T02:00:00Z"
+    }
+  ],
+  "settings": {
+    "longUnclassifiedThresholdMinutes": 90,
+    "exportOnlyConfirmed": true,
+    "includeDraftInTodaySummary": true
+  }
+}

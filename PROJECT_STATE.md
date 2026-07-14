@@ -1,45 +1,56 @@
 # 项目状态
 
-updated_at: 2026-07-10
-current_version: 0.2.0
+updated_at: 2026-07-12  
+current_version: 0.3.1-mirror
 
 ## 当前阶段
 
-V1（时间记录）和 V2（思考卡片）均已完成并通过测试。App 已成功构建并安装到 iPhone 16 plus 真机。
+V3 MVP 已落地。正在 **`feature/mac-mirror-sync`**：Mac 为手机镜像账本（未连接不可记账；连接后今天/思考同构；文件双向回写）。  
+App 安装名：**`/Applications/TimeLedger.app`**。
 
 ## 当前任务
 
-当前问题：暂无活跃任务。
-方案来源：内联
-当前方案：V1+V2 已交付；暂无新方案。
-已完成：V1 阶段 0-6；V2 阶段 0-8；真机签名与安装；全量 44 单元 + 3 UI 测试通过。
-正在进行：暂无。
-下一步：暂无。
+当前问题：Mac 镜像第一期可用；局域网实时同步未做。  
+方案来源：用户确认「连接后镜像、不独立记账」。  
+当前方案：MirrorLedgerEngine + 文件 SyncEnvelope 闭环；Bonjour 后续。  
+已完成：镜像引擎与单测；Mac 侧边栏今天/思考/复盘/连接；iOS 导出含 TimeCursor + 导入 mac-to-phone；安装 TimeLedger.app。  
+正在进行：暂无（本轮可交付试用）。  
+下一步：真机局域网联调；手机改账自动推送增量（现支持全量推送 + Mac 改账回写）。  
 涉及文件：
 
-- 暂无
+- `Packages/EvolutionCore/MirrorLedger*.swift`
+- `EvolutionHub/` Mirror UI + `MirrorSessionController`
+- `TimeLedger/Services/MirrorSyncImportService.swift`
+- `scripts/build-evolution-hub-app`
 
 验收清单：
 
 | 项 | 状态 | 证据 |
 | --- | --- | --- |
-| V1 时间记录 | done | CHANGELOG 0.1.0；xcodebuild test |
-| V2 ThoughtNote | done | CHANGELOG 0.2.0；44 单元 + 3 UI |
-| 真机构建安装 | done | iPhone 16 plus；DEVELOPMENT_TEAM = Y5ADUFM52Q |
+| V1 时间记录 | done | CHANGELOG 0.1.0 |
+| V2 ThoughtNote | done | CHANGELOG 0.2.0 |
+| V3 EvolutionCore/Hub | done | `swift test`；CHANGELOG 0.3.0 |
+| Hub 系统应用 | done | `/Applications/Evolution Hub.app`；`scripts/build-evolution-hub-app` |
+| iOS 回归 | done | xcodebuild test iPhone 17 |
 
-状态：暂无活跃任务。
+状态：暂无活跃开发任务。
 
 ## 未完成项
 
-- GitHub 远程仓库尚未创建或绑定。
-- 真机启动需用户在手机上信任开发者证书（设置 > 通用 > VPN与设备管理）。
+- 无 Bonjour 局域网实时同步（文件交换为正式路径）。
+- ChatGPT 扩展侧自动认领 pee job 可继续增强。
+- 明日调整回手机为 Hub `sync/next-adjustment-*.json`，未进 SwiftData。
+- GitHub 远程仓库尚未绑定。
+- 真机需信任开发者证书。
 
 ## 接手恢复
 
-1. 读取 `AGENTS.md`。
-2. 读取本文件。
-3. 运行 `git status --short`。
-4. 对照本文件的涉及文件和实际 diff。
-5. 如果“方案来源”指向文件，先读取该文件；如果复杂任务的方案来源为 `unknown` 或 `BLOCKED`，先报告 `BLOCKED`。
-6. 从“下一步”继续；如果现场不一致，先报告 `BLOCKED`。
-7. 需要验证时：`xcodebuild test -scheme TimeLedger -project TimeLedger.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17'`。
+1. 读 `AGENTS.md`、`docs/project-overview.md`、`docs/evolution-hub-usage.md`。  
+2. 读本文件与 `docs/plans/003-personal-evolution-engine-v3.md`。  
+3. `git status --short`；当前功能分支多为 `feature/v3.1-hub-shell`。  
+4. 验证：  
+   - iOS：`xcodebuild test -scheme TimeLedger -project TimeLedger.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17'`  
+   - Core：`cd Packages/EvolutionCore && swift test`  
+   - Hub：`cd EvolutionHub && swift test`  
+   - 更新 App：`scripts/build-evolution-hub-app`  
+5. 打开 Hub：`open "/Applications/Evolution Hub.app"`  

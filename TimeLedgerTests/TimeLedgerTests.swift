@@ -271,7 +271,8 @@ struct TimeLedgerTests {
             project: project,
             startAt: adjustedStart,
             endAt: adjustedEnd,
-            note: "会议后整理"
+            note: "会议后整理",
+            now: adjustedEnd
         )
 
         #expect(entry.projectId == project.id)
@@ -335,6 +336,7 @@ struct TimeLedgerTests {
         let originalEnd = Date(timeIntervalSince1970: 1_600)
         let editedStart = Date(timeIntervalSince1970: 1_060)
         let editedEnd = Date(timeIntervalSince1970: 1_900)
+        let now = Date(timeIntervalSince1970: 2_000)
 
         context.insert(project)
         _ = try service.getOrCreateCursor(now: originalStart)
@@ -345,13 +347,148 @@ struct TimeLedgerTests {
             project: project,
             note: "补充说明",
             startAt: editedStart,
-            endAt: editedEnd
+            endAt: editedEnd,
+            now: now
         )
 
         #expect(entry.startAt == editedStart)
         #expect(entry.endAt == editedEnd)
         #expect(entry.note == "补充说明")
         #expect(try service.getOrCreateCursor().cursorAt == editedEnd)
+    }
+
+    @Test func updateLatestDraftRejectsEndAfterNow() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let start = Date(timeIntervalSince1970: 1_000)
+        let end = Date(timeIntervalSince1970: 1_600)
+        let now = Date(timeIntervalSince1970: 1_800)
+        let futureEnd = Date(timeIntervalSince1970: 2_200)
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: start)
+        let entry = try service.quickRecord(project: project, now: end)
+
+        do {
+            try service.updateEntry(
+                entry,
+                project: project,
+                note: "",
+                startAt: start,
+                endAt: futureEnd,
+                now: now
+            )
+            #expect(Bool(false), "end after now should be rejected")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+
+        #expect(entry.endAt == end)
+        #expect(try service.getOrCreateCursor().cursorAt == end)
+    }
+
+    @Test func recordSegmentRejectsEndAfterNow() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写材料", categoryName: "工作")
+        let cursorStart = Date(timeIntervalSince1970: 1_000)
+        let now = Date(timeIntervalSince1970: 1_500)
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: cursorStart)
+
+        do {
+            _ = try service.recordSegment(
+                project: project,
+                startAt: cursorStart,
+                endAt: Date(timeIntervalSince1970: 1_800),
+                now: now
+            )
+            #expect(Bool(false), "end after now should be rejected")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+
+        #expect(try context.fetch(FetchDescriptor<TimeEntry>()).isEmpty)
+        #expect(try service.getOrCreateCursor().cursorAt == cursorStart)
+    }
+
+    @Test func recordSegmentRejectsStartBeforeCursor() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写材料", categoryName: "工作")
+        let cursorStart = Date(timeIntervalSince1970: 1_000)
+        let now = Date(timeIntervalSince1970: 2_000)
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: cursorStart)
+
+        do {
+            _ = try service.recordSegment(
+                project: project,
+                startAt: Date(timeIntervalSince1970: 900),
+                endAt: Date(timeIntervalSince1970: 1_500),
+                now: now
+            )
+            #expect(Bool(false), "start before cursor should be rejected")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+
+        #expect(try context.fetch(FetchDescriptor<TimeEntry>()).isEmpty)
+    }
+
+    @Test func deleteMiddleDraftLeavesGapWhenNextIsConfirmed() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 50_000)
+        let t1 = Date(timeIntervalSince1970: 50_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 50_000 + 7_200)
+        let t3 = Date(timeIntervalSince1970: 50_000 + 10_800)
+
+        context.insert(project)
+        let middle = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1,
+            status: .draft
+        )
+        let confirmedNext = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2,
+            status: .confirmed
+        )
+        let tail = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t2,
+            endAt: t3,
+            status: .draft
+        )
+        context.insert(middle)
+        context.insert(confirmedNext)
+        context.insert(tail)
+        _ = try service.getOrCreateCursor(now: t3)
+        try context.save()
+
+        try service.deleteDraftEntry(middle)
+
+        #expect(confirmedNext.startAt == t1)
+        #expect(confirmedNext.endAt == t2)
+        #expect(try context.fetch(FetchDescriptor<TimeEntry>()).count == 2)
+        #expect(try service.getOrCreateCursor().cursorAt == t3)
     }
 
     @Test func deleteLatestDraftRestoresCursorToStartTime() throws {

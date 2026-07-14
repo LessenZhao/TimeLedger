@@ -48,7 +48,7 @@ struct TimeEntryEditView: View {
                     DatePicker(
                         "结束",
                         selection: $endAt,
-                        in: startAt...,
+                        in: startAt...endUpperBound,
                         displayedComponents: [.date, .hourAndMinute]
                     )
                 } else {
@@ -76,8 +76,12 @@ struct TimeEntryEditView: View {
             } footer: {
                 if SystemProject.isUnknownEntry(entry) {
                     Text("请选择具体项目后再确认。")
-                } else if isDraft, let maxEnd = maximumEndAt {
-                    Text("结束不能晚于下一段 \(DateFormatterFactory.timeOnly.string(from: maxEnd))")
+                } else if isDraft {
+                    if let nextCap = nextEntryStartAt, nextCap < Date() {
+                        Text("结束不能晚于下一段 \(DateFormatterFactory.timeOnly.string(from: nextCap))")
+                    } else {
+                        Text("结束不能晚于当前时间。")
+                    }
                 }
             }
 
@@ -140,7 +144,7 @@ struct TimeEntryEditView: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive, action: deleteDraft)
         } message: {
-            Text("删除后后面的记录会向前贴紧；若是最后一条，未记录光标会退回。")
+            Text("若后面是草稿会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
         }
         .alert("取消确认？", isPresented: $showingCancelConfirmationAlert) {
             Button("保留确认", role: .cancel) {}
@@ -155,15 +159,15 @@ struct TimeEntryEditView: View {
         }
         .onChange(of: startAt) { _, newStart in
             if endAt <= newStart {
-                endAt = newStart.addingTimeInterval(60)
+                endAt = min(newStart.addingTimeInterval(60), endUpperBound)
             }
-            if let maxEnd = maximumEndAt, endAt > maxEnd {
-                endAt = maxEnd
+            if endAt > endUpperBound {
+                endAt = endUpperBound
             }
         }
         .onChange(of: endAt) { _, newEnd in
-            if let maxEnd = maximumEndAt, newEnd > maxEnd {
-                endAt = maxEnd
+            if newEnd > endUpperBound {
+                endAt = endUpperBound
             }
         }
     }
@@ -201,9 +205,9 @@ struct TimeEntryEditView: View {
             ?? selectableProjects.first { $0.id == selectedProjectId }
     }
 
-    private var maximumEndAt: Date? {
+    private var nextEntryStartAt: Date? {
         allEntries
-            .filter { $0.id != entry.id && $0.startAt >= entry.endAt - 1 }
+            .filter { $0.id != entry.id && $0.startAt >= entry.endAt }
             .sorted { $0.startAt < $1.startAt }
             .first?
             .startAt
@@ -212,6 +216,14 @@ struct TimeEntryEditView: View {
             .sorted { $0.startAt < $1.startAt }
             .first?
             .startAt
+    }
+
+    private var endUpperBound: Date {
+        let now = Date()
+        if let next = nextEntryStartAt {
+            return min(now, next)
+        }
+        return now
     }
 
     private var linkedThoughts: [ThoughtNote] {
@@ -232,11 +244,13 @@ struct TimeEntryEditView: View {
         .padding(.vertical, 2)
     }
 
-    private func addThought(body: String) {
+    private func addThought(body: String) -> Bool {
         do {
             _ = try ThoughtLinkingService(modelContext: modelContext).addThought(to: entry, body: body)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -246,7 +260,12 @@ struct TimeEntryEditView: View {
             return
         }
 
-        if let maxEnd = maximumEndAt, endAt > maxEnd {
+        let now = Date()
+        if endAt > now {
+            errorMessage = "结束时间不能晚于当前时间。"
+            return
+        }
+        if let next = nextEntryStartAt, endAt > next {
             errorMessage = "结束时间不能与后一段重叠。"
             return
         }
@@ -257,7 +276,8 @@ struct TimeEntryEditView: View {
                 project: project,
                 note: note.trimmingCharacters(in: .whitespacesAndNewlines),
                 startAt: startAt,
-                endAt: endAt
+                endAt: endAt,
+                now: now
             )
             dismiss()
         } catch {

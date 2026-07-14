@@ -25,7 +25,7 @@ require_file "PROJECT_STATE.md"
 require_file "CHANGELOG.md"
 require_file "docs/README.md"
 require_file "docs/project-overview.md"
-require_file "docs/plans/000-roadmap.md"
+require_file "docs/plans/initial-build.md"
 
 require_dir "docs"
 require_dir "docs/plans"
@@ -54,6 +54,38 @@ fi
 
 if [ -L "CLAUDE.md" ] && [ "$(readlink CLAUDE.md)" != "AGENTS.md" ]; then
   error "CLAUDE.md symlink target must be AGENTS.md"
+fi
+
+if [ -e ".DS_Store" ] || [ -e "docs/.DS_Store" ] || [ -e "docs/plans/.DS_Store" ]; then
+  error "template pollution: .DS_Store must not be present"
+fi
+
+if [ ! -L "CLAUDE.md" ]; then
+  error "CLAUDE.md must be a symlink to AGENTS.md"
+elif [ "$(readlink "CLAUDE.md")" != "AGENTS.md" ]; then
+  error "CLAUDE.md must point to AGENTS.md"
+fi
+
+if [ -f "docs/plans/000-roadmap.md" ]; then
+  error "legacy plan file remains: docs/plans/000-roadmap.md"
+fi
+
+if [ -f ".agentdesk/HANDOFF.md" ] || [ -f ".agentdesk/RELAY.md" ]; then
+  error "legacy agent handoff/relay files must not be plan or relay sources"
+fi
+
+if [ -f "docs/plans/initial-build.md" ]; then
+  if ! grep -Eq "^status: (draft|ready|active|done|superseded)$" "docs/plans/initial-build.md"; then
+    error "docs/plans/initial-build.md missing valid status"
+  fi
+
+  if ! grep -Eq "^plan_type: (initial|task)$" "docs/plans/initial-build.md"; then
+    error "docs/plans/initial-build.md missing valid plan_type"
+  fi
+
+  if ! grep -Eq "^updated_at: " "docs/plans/initial-build.md"; then
+    error "docs/plans/initial-build.md missing updated_at"
+  fi
 fi
 
 if [ "$failed" -ne 0 ]; then

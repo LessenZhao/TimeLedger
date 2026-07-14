@@ -6,15 +6,33 @@
 
 ## Unreleased
 
-尚未形成正式版本发布、但已经完成并验证的变更。
+（空）
 
-### Changed
+## 0.3.0 — 2026-07-12
 
-- 对齐 new-project 模板：`AGENTS.md` 章节结构、`PROJECT_STATE.md` 字段、`scripts/project-check` 骨架检查。
+### Added — V3 Personal Evolution Engine（本地 MVP）
+
+- `Packages/EvolutionCore`：Context DTO、Collector 协议、SyncBatch、LinkingEngine、SourceAdapters、确定性复盘、Git 摘要。
+- `EvolutionHub`：macOS 时间线 / 收件箱 / 复盘 / 设置；「同步今日上下文」；JSON 与 SyncBatch 导入。
+- iOS `SyncEnvelopeExportService` + 导出入口（给 Mac Hub）。
+- `scripts/build-evolution-hub-app`：Release 构建并安装/覆盖 `/Applications/Evolution Hub.app`。
+- 文档：`docs/plans/003-personal-evolution-engine-v3.md`、`docs/evolution-hub-usage.md`。
+
+### External（独立仓）
+
+- `agent-session-archive/tools/collector_cli.py`：Codex/Claude CollectorResult JSON。
+- `ai-chat-future-activity-archiver` companion：`POST /jobs/pee-sync`（waitingForBrowser）。
 
 ### Verified
 
-- `scripts/project-check` passed。
+- `Packages/EvolutionCore`：`swift test` 通过。
+- `EvolutionHub`：`swift test` 通过；`/Applications/Evolution Hub.app` 可打开。
+- iOS：`xcodebuild test`（iPhone 17）通过，含 SyncEnvelope 单测。
+- collector_cli 实跑 Codex 返回 succeeded。
+
+### Limits
+
+- 无 Bonjour；ChatGPT 依赖浏览器扩展认领；明日调整文件回传，无 SwiftData 新模型。
 
 ## 0.2.0 — 2026-07-09
 

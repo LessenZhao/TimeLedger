@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Build Evolution Hub as a double-clickable macOS .app and install/update /Applications.
+# Re-run after code changes to refresh the same app path (overwrite install).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HUB="${ROOT}/EvolutionHub"
+DIST="${ROOT}/dist"
+APP_NAME="TimeLedger.app"
+APP_PATH="${DIST}/${APP_NAME}"
+BIN_NAME="EvolutionHub"
+# System Applications (overwrite on every successful build = local auto-update)
+INSTALL_DIR="${EVOLUTION_HUB_INSTALL_DIR:-/Applications}"
+INSTALLED_APP="${INSTALL_DIR}/${APP_NAME}"
+
+echo "==> Building Release..."
+swift build -c release --package-path "${HUB}"
+
+BIN="$(swift build -c release --package-path "${HUB}" --show-bin-path)/${BIN_NAME}"
+if [[ ! -x "${BIN}" ]]; then
+  echo "Executable not found: ${BIN}" >&2
+  exit 1
+fi
+
+echo "==> Assembling app bundle..."
+rm -rf "${APP_PATH}"
+mkdir -p "${APP_PATH}/Contents/MacOS"
+mkdir -p "${APP_PATH}/Contents/Resources"
+
+cp "${HUB}/AppBundle/Info.plist" "${APP_PATH}/Contents/Info.plist"
+# Bump bundle version with build timestamp so Finder/LaunchServices refresh
+if command -v plutil >/dev/null 2>&1; then
+  BUILD_TS="$(date +%Y%m%d%H%M%S)"
+  plutil -replace CFBundleVersion -string "${BUILD_TS}" "${APP_PATH}/Contents/Info.plist"
+fi
+cp "${BIN}" "${APP_PATH}/Contents/MacOS/${BIN_NAME}"
+chmod +x "${APP_PATH}/Contents/MacOS/${BIN_NAME}"
+
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "${APP_PATH}" 2>/dev/null || true
+fi
+
+install_app() {
+  local dest="$1"
+  mkdir -p "$(dirname "${dest}")"
+  # Atomic-ish update: stage then replace, so a half-written app is less likely
+  local staging
+  staging="$(mktemp -d)/${APP_NAME}"
+  cp -R "${APP_PATH}" "${staging}"
+  rm -rf "${dest}"
+  mv "${staging}" "${dest}"
+  rm -rf "$(dirname "${staging}")" 2>/dev/null || true
+}
+
+echo "==> Installing/updating: ${INSTALLED_APP}"
+if [[ -w "${INSTALL_DIR}" ]] || [[ ! -e "${INSTALL_DIR}" && -w "$(dirname "${INSTALL_DIR}")" ]]; then
+  install_app "${INSTALLED_APP}"
+elif command -v sudo >/dev/null 2>&1; then
+  echo "    (需要管理员权限写入 ${INSTALL_DIR})"
+  STAGE_PARENT="$(mktemp -d)"
+  STAGE_APP="${STAGE_PARENT}/${APP_NAME}"
+  cp -R "${APP_PATH}" "${STAGE_APP}"
+  sudo rm -rf "${INSTALLED_APP}"
+  sudo mv "${STAGE_APP}" "${INSTALLED_APP}"
+  sudo chmod -R a+rX "${INSTALLED_APP}"
+  rm -rf "${STAGE_PARENT}"
+else
+  echo "无法写入 ${INSTALL_DIR}，且没有 sudo。" >&2
+  echo "构建产物仍在: ${APP_PATH}" >&2
+  exit 1
+fi
+
+# Remove old names / personal copies to avoid two apps
+for old in \
+  "${HOME}/Applications/Evolution Hub.app" \
+  "${HOME}/Applications/TimeLedger.app" \
+  "/Applications/Evolution Hub.app"
+do
+  if [[ -d "${old}" && "${old}" != "${INSTALLED_APP}" ]]; then
+    echo "==> Removing old app: ${old}"
+    if [[ -w "$(dirname "${old}")" ]]; then
+      rm -rf "${old}"
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo rm -rf "${old}" || true
+    fi
+  fi
+done
+
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "${LSREGISTER}" ]]; then
+  "${LSREGISTER}" -f "${INSTALLED_APP}" 2>/dev/null || true
+fi
+
+echo ""
+echo "Done."
+echo "  Built:     ${APP_PATH}"
+echo "  Installed: ${INSTALLED_APP}"
+echo ""
+echo "Open:  open \"${INSTALLED_APP}\""
+echo "Update after code changes:  scripts/build-evolution-hub-app"

@@ -4,7 +4,8 @@ struct ThoughtAddSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var thoughtBody: String = ""
 
-    let onSave: (String) -> Void
+    private let draftStore = ThoughtDraftStore()
+    let onSave: (String) -> Bool
 
     var body: some View {
         NavigationStack {
@@ -30,11 +31,19 @@ struct ThoughtAddSheet: View {
                     Button("添加") {
                         let trimmed = thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmed.isEmpty else { return }
-                        onSave(trimmed)
-                        dismiss()
+                        if onSave(trimmed) {
+                            draftStore.clear(.addToEntry)
+                            dismiss()
+                        }
                     }
                     .disabled(thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            .onAppear {
+                thoughtBody = draftStore.load(.addToEntry)
+            }
+            .onChange(of: thoughtBody) { _, newValue in
+                draftStore.save(newValue, for: .addToEntry)
             }
         }
     }

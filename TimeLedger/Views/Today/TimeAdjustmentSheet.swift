@@ -26,10 +26,14 @@ struct TimeAdjustmentSheet: View {
         self.defaultEndAt = defaultEndAt
         self.saveAction = saveAction
         self.skipAction = skipAction
-        _startAt = State(initialValue: cursorAt)
-        _endAt = State(initialValue: defaultEndAt)
+        let cappedEnd = min(defaultEndAt, Date())
+        let initialStart = min(cursorAt, cappedEnd)
+        _startAt = State(initialValue: initialStart)
+        _endAt = State(initialValue: max(cappedEnd, initialStart.addingTimeInterval(60)))
         _note = State(initialValue: note)
     }
+
+    private var nowBound: Date { Date() }
 
     var body: some View {
         NavigationStack {
@@ -40,10 +44,22 @@ struct TimeAdjustmentSheet: View {
                 }
 
                 Section {
-                    DatePicker("开始", selection: $startAt, displayedComponents: [.hourAndMinute])
-                    DatePicker("结束", selection: $endAt, displayedComponents: [.hourAndMinute])
+                    DatePicker(
+                        "开始",
+                        selection: $startAt,
+                        in: cursorAt...nowBound,
+                        displayedComponents: [.hourAndMinute]
+                    )
+                    DatePicker(
+                        "结束",
+                        selection: $endAt,
+                        in: startAt...nowBound,
+                        displayedComponents: [.hourAndMinute]
+                    )
                     TextField("备注", text: $note, axis: .vertical)
                         .lineLimit(2...4)
+                } footer: {
+                    Text("开始不早于未记录起点，结束不晚于当前时间。")
                 }
 
                 if let validationMessage {
@@ -55,7 +71,8 @@ struct TimeAdjustmentSheet: View {
 
                 Section {
                     Button("跳过这段时间", role: .destructive) {
-                        skipAction(endAt)
+                        let skipTo = min(max(endAt, cursorAt.addingTimeInterval(60)), nowBound)
+                        skipAction(skipTo)
                         dismiss()
                     }
                 }
@@ -74,12 +91,34 @@ struct TimeAdjustmentSheet: View {
                     }
                 }
             }
+            .onChange(of: startAt) { _, newStart in
+                if endAt <= newStart {
+                    endAt = min(newStart.addingTimeInterval(60), nowBound)
+                }
+                if endAt > nowBound {
+                    endAt = nowBound
+                }
+            }
+            .onChange(of: endAt) { _, newEnd in
+                if newEnd > nowBound {
+                    endAt = nowBound
+                }
+            }
         }
     }
 
     private func save() {
+        let now = Date()
         guard endAt > startAt else {
             validationMessage = "结束时间必须晚于开始时间。"
+            return
+        }
+        guard startAt >= cursorAt else {
+            validationMessage = "开始时间不能早于未记录起点。"
+            return
+        }
+        guard endAt <= now else {
+            validationMessage = "结束时间不能晚于当前时间。"
             return
         }
 

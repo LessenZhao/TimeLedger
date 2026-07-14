@@ -10,6 +10,8 @@ struct ThoughtQuickCaptureSheet: View {
     @State private var linkingResult: LinkingResult?
     @FocusState private var isFocused: Bool
 
+    private let draftStore = ThoughtDraftStore()
+
     var body: some View {
         NavigationStack {
             Form {
@@ -46,7 +48,13 @@ struct ThoughtQuickCaptureSheet: View {
             } message: {
                 Text(errorMessage ?? "")
             }
-            .onAppear { isFocused = true }
+            .onAppear {
+                thoughtBody = draftStore.load(.quickCapture)
+                isFocused = true
+            }
+            .onChange(of: thoughtBody) { _, newValue in
+                draftStore.save(newValue, for: .quickCapture)
+            }
         }
     }
 
@@ -57,10 +65,10 @@ struct ThoughtQuickCaptureSheet: View {
         do {
             let now = Date()
             let thought = try ThoughtLinkingService(modelContext: modelContext).quickCaptureThought(body: trimmed, now: now)
+            draftStore.clear(.quickCapture)
             linkingResult = checkLinkStatus(thought: thought)
 
             if linkingResult != nil {
-                // Show result briefly, then dismiss
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     dismiss()
                 }

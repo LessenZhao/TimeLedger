@@ -1,0 +1,28 @@
+[
+  {
+    "id": "evt-1",
+    "source": "codex",
+    "threadId": "thread-abc",
+    "startedAt": "2026-07-12T01:30:00Z",
+    "endedAt": "2026-07-12T02:45:00Z",
+    "title": "Implement EvolutionHub shell",
+    "summary": "Built macOS hub pages",
+    "projectHint": "TimeLedger",
+    "rawReference": "raw/codex/views/threads/openai/gpt/2026-07/2026-07-12--hub--abc.md",
+    "importedAt": "2026-07-12T04:00:00Z",
+    "schemaVersion": 1
+  },
+  {
+    "id": "evt-2",
+    "source": "chatgpt",
+    "threadId": "conv-xyz",
+    "startedAt": "2026-07-12T05:00:00Z",
+    "endedAt": "2026-07-12T05:20:00Z",
+    "title": "Discuss product scope",
+    "summary": "Keep V3 local-first",
+    "projectHint": null,
+    "rawReference": "raw/chatgpt/2026-07-12--discuss-product-scope.md",
+    "importedAt": "2026-07-12T06:00:00Z",
+    "schemaVersion": 1
+  }
+]

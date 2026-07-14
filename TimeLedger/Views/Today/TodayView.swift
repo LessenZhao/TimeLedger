@@ -150,9 +150,6 @@ struct TodayView: View {
     private var projectList: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("点 ＋ 归档")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
                 Spacer()
                 NavigationLink {
                     ProjectManageView()
@@ -182,13 +179,6 @@ struct TodayView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
-            }
-
-            if !activeProjects.isEmpty {
-                Text("轻点归档 · 长按调整")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .padding(.bottom, 6)
             }
         }
     }
@@ -256,7 +246,8 @@ struct TodayView: View {
                 project: project,
                 startAt: startAt,
                 endAt: endAt,
-                note: note
+                note: note,
+                now: Date()
             )
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             refreshUndoState()

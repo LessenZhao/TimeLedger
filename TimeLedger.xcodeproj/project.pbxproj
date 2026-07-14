@@ -398,6 +398,8 @@
 				DEVELOPMENT_TEAM = Y5ADUFM52Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBonjourServices = "_timeledger-mirror._tcp";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "与 Mac 上的 TimeLedger 建立局域网镜像同步";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -430,6 +432,8 @@
 				DEVELOPMENT_TEAM = Y5ADUFM52Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBonjourServices = "_timeledger-mirror._tcp";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "与 Mac 上的 TimeLedger 建立局域网镜像同步";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

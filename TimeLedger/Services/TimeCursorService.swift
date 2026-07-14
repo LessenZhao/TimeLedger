@@ -7,6 +7,8 @@ enum TimeCursorError: LocalizedError {
     case cannotDelete
     case startCannotMoveEarlier
     case endOverlapsNext
+    case endAfterNow
+    case startBeforeCursor
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ enum TimeCursorError: LocalizedError {
             "开始时间不能早于当前开始时间。"
         case .endOverlapsNext:
             "结束时间不能与后一段重叠。"
+        case .endAfterNow:
+            "结束时间不能晚于当前时间。"
+        case .startBeforeCursor:
+            "开始时间不能早于未记录起点。"
         }
     }
 }
@@ -75,10 +81,22 @@ struct TimeCursorService {
     }
 
     @discardableResult
-    func recordSegment(project: Project, startAt: Date, endAt: Date, note: String = "") throws -> TimeEntry {
-        let cursor = try getOrCreateCursor(now: startAt)
+    func recordSegment(
+        project: Project,
+        startAt: Date,
+        endAt: Date,
+        note: String = "",
+        now: Date = Date()
+    ) throws -> TimeEntry {
+        let cursor = try getOrCreateCursor(now: now)
         guard endAt > startAt else {
             throw TimeCursorError.emptySegment
+        }
+        guard startAt >= cursor.cursorAt else {
+            throw TimeCursorError.startBeforeCursor
+        }
+        guard endAt <= now else {
+            throw TimeCursorError.endAfterNow
         }
         try ValidationService(modelContext: modelContext).validateEntry(
             projectId: project.id,
@@ -97,7 +115,7 @@ struct TimeCursorService {
 
         modelContext.insert(entry)
         cursor.cursorAt = endAt
-        cursor.updatedAt = endAt
+        cursor.updatedAt = now
         try modelContext.save()
         _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
         return entry
@@ -142,7 +160,8 @@ struct TimeCursorService {
         project: Project,
         note: String,
         startAt: Date,
-        endAt: Date
+        endAt: Date,
+        now: Date = Date()
     ) throws {
         let originalStartAt = entry.startAt
         let originalEndAt = entry.endAt
@@ -151,7 +170,7 @@ struct TimeCursorService {
         entry.projectNameSnapshot = project.name
         entry.categoryNameSnapshot = project.categoryName
         entry.note = note
-        entry.updatedAt = Date()
+        entry.updatedAt = now
 
         if entry.status == TimeEntryStatus.draft.rawValue {
             guard endAt > startAt else {
@@ -159,6 +178,9 @@ struct TimeCursorService {
             }
             guard startAt >= originalStartAt else {
                 throw TimeCursorError.startCannotMoveEarlier
+            }
+            guard endAt <= now else {
+                throw TimeCursorError.endAfterNow
             }
 
             if let next = try nextEntry(after: entry), endAt > next.startAt {
@@ -189,10 +211,10 @@ struct TimeCursorService {
             entry.startAt = startAt
             entry.endAt = endAt
 
-            let cursor = try getOrCreateCursor()
+            let cursor = try getOrCreateCursor(now: now)
             if cursor.cursorAt == originalEndAt {
                 cursor.cursorAt = endAt
-                cursor.updatedAt = Date()
+                cursor.updatedAt = now
             }
         }
 
@@ -222,7 +244,8 @@ struct TimeCursorService {
             return
         }
 
-        if let next = try nextEntry(after: entry) {
+        if let next = try nextEntry(after: entry),
+           next.status == TimeEntryStatus.draft.rawValue {
             next.startAt = deletedStart
             next.updatedAt = Date()
         }

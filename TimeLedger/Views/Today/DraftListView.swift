@@ -68,7 +68,7 @@ struct DraftListView: View {
                 }
             }
         } message: {
-            Text("删除后后面的记录会向前贴紧；若是最后一条，未记录光标会退回。")
+            Text("若后面是草稿会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },

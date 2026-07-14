@@ -2,50 +2,76 @@
 
 ## 项目目标
 
-TimeLedger 是面向个人使用的 iOS 原生时间账本。目标是用柳比谢夫时间记录法记录真实时间开销，但交互上避免传统"开始/结束计时器"的摩擦。第二版增加了"思考卡片"能力，把 App 从单纯时间开销记录升级为"时间线优先的个人记录入口"。
+**TimeLedger** 是个人时间事实入口（iOS）：柳比谢夫式低摩擦时间记录 + ThoughtNote。  
+**Personal Evolution Engine (V3)** 在 Mac 上用 **Evolution Hub** 把时间事实与 Codex / Claude / ChatGPT 等上下文对齐，做有证据的每日复盘。
 
-核心路径：
-1. 时间记录：打开 App -> 看到当前未记录时长 -> 点项目右侧快捷按钮 -> 生成灰色草稿记录 -> 项目今日累计立即刷新 -> 在时间页修正 -> 确认转换为黑色正式记录 -> 导出复盘数据。
-2. 思考记录：点灯泡按钮 -> 输入想法 -> 保存 -> 系统自动关联到覆盖该时间点的 TimeEntry -> 在时间线和复盘中查看"做了什么 + 想到了什么"。
+核心闭环：目标 → 行动 → 事实证据 → 结果 → 复盘 → 调整 → 下一轮验证。
+
+## 日常路径
+
+1. **手机**：打时间块、写思考；设置 → 导出 **SyncEnvelope（给 Mac Hub）**。  
+2. **Mac**：打开 `/Applications/Evolution Hub.app` → 导入 SyncEnvelope → **同步今日上下文**。  
+3. 收件箱确认/拒绝关联 → 每日复盘填偏差与明日调整 → 确认。  
+
+更细步骤见 `docs/evolution-hub-usage.md`。
 
 ## 当前结构
 
-- `TimeLedger.xcodeproj`：Xcode 工程。
-- `TimeLedger/`：App 源码。
-  - `Models/`：SwiftData 模型（`Project`、`TimeCursor`、`TimeEntry`、`AppSettings`、`ThoughtNote`）。
-  - `Services/`：业务服务（`TimeCursorService`、`TimeSummaryService`、`ValidationService`、`ExportService`、`DateRangeService`、`ThoughtLinkingService`）。
-  - `Views/`：SwiftUI 页面。
-    - `Today/`：首页、项目列表、时间列表、时间编辑、时间调整。
-    - `Thoughts/`：快速想法输入、今日思考卡片流、思考编辑、手动关联、添加思考。
-    - `Review/`：日/周/月复盘（含思考分布）。
-    - `Settings/`：设置和导出。
-    - `Projects/`：项目管理。
-  - `Utilities/`：格式化与日期工具。
-- `TimeLedgerTests/`：核心业务单元测试。
-- `TimeLedgerUITests/`：基础 UI 测试。
-- `docs/plans/`：分阶段路线图和实施计划。
-
-## 运行方式
-
-```bash
-open TimeLedger.xcodeproj
+```text
+TimeLedger/                 # iOS SwiftUI + SwiftData
+Packages/EvolutionCore/     # 跨端协议与纯逻辑（SPM）
+EvolutionHub/               # macOS Hub（SPM SwiftUI）
+  AppBundle/Info.plist
+  SampleData/               # 练手 JSON
+scripts/build-evolution-hub-app   # 构建并安装到 /Applications
+docs/plans/003-…            # V3 实施与审计
 ```
 
-在 Xcode 中选择 `TimeLedger` scheme，选择可用 iOS Simulator 或真机运行。真机运行需先在 Xcode Settings > Accounts 登录 Apple ID 并选择 Development Team。
+### iOS（`TimeLedger/`）
 
-## 验证方式
+- 模型：`Project`、`TimeCursor`、`TimeEntry`、`AppSettings`、`ThoughtNote`
+- 服务：时间游标、统计、校验、导出、思考关联、`SyncEnvelopeExportService`
+- 页面：Today / Thoughts / Review / Settings / Projects
+
+### EvolutionCore
+
+Context* DTO、CollectorRequest/Result、SyncBatch、LinkingEngine、SourceAdapters、DeterministicReview、GitEvidence 摘要。
+
+### Evolution Hub
+
+时间线、上下文收件箱、每日复盘、设置；调用外部 Collector；不写 iOS SwiftData。
+
+### 外部 Collector（独立仓，不整仓复制进本仓）
+
+| 仓 | 对接 |
+| --- | --- |
+| `agent-session-archive` | `tools/collector_cli.py`（codex/claude） |
+| `ai-chat-future-activity-archiver` | companion `POST /jobs/pee-sync`（127.0.0.1） |
+
+## 运行
+
+```bash
+# iOS
+open TimeLedger.xcodeproj
+
+# Mac Hub（安装/更新后双击）
+scripts/build-evolution-hub-app
+open "/Applications/Evolution Hub.app"
+```
+
+## 验证
 
 ```bash
 scripts/project-check
 xcodebuild test -scheme TimeLedger -project TimeLedger.xcodeproj -destination 'platform=iOS Simulator,name=iPhone 17'
-xcodebuild build -scheme TimeLedger -project TimeLedger.xcodeproj -destination 'generic/platform=iOS'
+cd Packages/EvolutionCore && swift test
+cd EvolutionHub && swift test
 ```
 
-## 当前边界
+## 边界
 
-- 本地优先，不做账号、服务器、云同步、订阅、AI 总结、标签系统、双链、知识图谱、富文本编辑器、图片/语音/文件附件。
-- 分类只用 `categoryName: String`，不做复杂二级分类树。
-- App 不做后台计时，只保存 `TimeCursor.cursorAt`，用当前时间动态计算未记录时长。
-- 所有统计、Review 和导出按自然日计算，不使用生活日。
-- `ThoughtNote` 通过 `anchorAt` 自动关联到覆盖该时间点的 `TimeEntry`；手动关联优先级高于自动关联。
-- 真机签名使用免费 Apple ID Personal Team，签名有效期 7 天，过期后需在 Xcode 重新编译安装。
+- 本地优先；无账号/云同步/订阅/App Store（V3）。
+- 不同步 SQLite；跨端用 SyncEnvelope 文件交换（Bonjour 未做）。
+- AI 复盘仅接口预留；默认确定性报告。
+- 不改 SwiftData schema 即可完成 V3 同步回传（明日调整为 Hub 侧文件）。
+- 真机签名免费 Personal Team，约 7 天有效。
