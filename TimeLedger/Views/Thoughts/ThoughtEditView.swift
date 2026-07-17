@@ -21,7 +21,9 @@ struct ThoughtEditView: View {
         Form {
             Section {
                 TextField("思考内容", text: $thoughtBody, axis: .vertical)
-                    .lineLimit(3...8)
+                    .lineLimit(1...1000)
+                    .lineSpacing(6)
+                    .font(.body)
             } header: {
                 Text("内容")
             } footer: {

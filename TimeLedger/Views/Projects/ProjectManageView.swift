@@ -5,16 +5,17 @@ struct ProjectManageView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Project.sortOrder) private var allProjects: [Project]
 
-    @State private var showEditSheet = false
+    @State private var showAddSheet = false
     @State private var editingProject: Project?
     @State private var deleteTarget: Project?
     @State private var deleteError: String?
 
     private var activeProjects: [Project] {
-        allProjects.filter { !$0.isArchived }
+        allProjects.filter { !$0.isArchived && !SystemProject.isUnknown($0) }
     }
+
     private var archivedProjects: [Project] {
-        allProjects.filter { $0.isArchived }
+        allProjects.filter { $0.isArchived && !SystemProject.isUnknown($0) }
     }
 
     var body: some View {
@@ -43,15 +44,17 @@ struct ProjectManageView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    editingProject = nil
-                    showEditSheet = true
+                    showAddSheet = true
                 } label: {
                     Image(systemName: "plus")
                 }
             }
         }
-        .sheet(isPresented: $showEditSheet) {
-            ProjectEditView(project: editingProject)
+        .sheet(isPresented: $showAddSheet) {
+            ProjectEditView(project: nil)
+        }
+        .sheet(item: $editingProject) { project in
+            ProjectEditView(project: project)
         }
         .alert("删除项目", isPresented: Binding(
             get: { deleteTarget != nil },
@@ -77,7 +80,6 @@ struct ProjectManageView: View {
     private func projectRow(_ project: Project) -> some View {
         Button {
             editingProject = project
-            showEditSheet = true
         } label: {
             HStack(spacing: 12) {
                 Circle()
@@ -90,6 +92,7 @@ struct ProjectManageView: View {
                         }
                         Text(project.name)
                             .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
                     }
                     Text(project.categoryName)
                         .font(.caption)
@@ -104,7 +107,11 @@ struct ProjectManageView: View {
                         .padding(.vertical, 4)
                         .background(Capsule().fill(Color.gray.opacity(0.12)))
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .trailing) {

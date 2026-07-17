@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 struct RootView: View {
     @EnvironmentObject private var hubStore: HubStore
     @StateObject private var mirror = MirrorSessionController()
-    @State private var section: MacSection = .connection
+    @State private var section: MacSection = .workEvolution
 
     var body: some View {
         NavigationSplitView {
@@ -24,6 +24,8 @@ struct RootView: View {
                         .tag(MacSection.reviewStats)
                 }
                 Section("进化（Mac）") {
+                    Label("工作沉淀", systemImage: "point.3.connected.trianglepath.dotted")
+                        .tag(MacSection.workEvolution)
                     Label("上下文", systemImage: "tray")
                         .tag(MacSection.context)
                     Label("证据复盘", systemImage: "text.book.closed")
@@ -34,7 +36,7 @@ struct RootView: View {
                         .tag(MacSection.settings)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 320)
             .navigationTitle("TimeLedger")
         } detail: {
             detail
@@ -63,6 +65,8 @@ struct RootView: View {
             ThoughtsMirrorPane()
         case .reviewStats:
             ReviewStatsPane()
+        case .workEvolution:
+            WorkEvolutionView()
         case .context:
             InboxView()
                 .environmentObject(hubStore)
@@ -77,5 +81,5 @@ struct RootView: View {
 }
 
 private enum MacSection: Hashable {
-    case connection, today, thoughts, reviewStats, context, evidenceReview, settings
+    case connection, today, thoughts, reviewStats, workEvolution, context, evidenceReview, settings
 }

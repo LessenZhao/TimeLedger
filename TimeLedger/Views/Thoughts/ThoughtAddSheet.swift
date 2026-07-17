@@ -11,8 +11,20 @@ struct ThoughtAddSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("思考内容", text: $thoughtBody, axis: .vertical)
-                        .lineLimit(3...8)
+                    TextEditor(text: $thoughtBody)
+                        .font(.body)
+                        .frame(minHeight: 280)
+                        .scrollContentBackground(.hidden)
+                        .overlay(alignment: .topLeading) {
+                            if thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text("思考内容")
+                                    .font(.body)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 8)
+                                    .padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                 } header: {
                     Text("事后补充")
                 } footer: {

@@ -5,13 +5,23 @@ import SwiftUI
 @main
 struct EvolutionHubApp: App {
     @StateObject private var hubStore = HubStore()
+    @StateObject private var workEvolutionStore = WorkEvolutionHubStore()
     @NSApplicationDelegateAdaptor(HubAppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup("TimeLedger") {
             RootView()
                 .environmentObject(hubStore)
+                .environmentObject(workEvolutionStore)
                 .frame(minWidth: 1000, minHeight: 680)
+                .task {
+                    await workEvolutionStore.refresh()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else { return }
+                    Task { await workEvolutionStore.refresh() }
+                }
         }
         .defaultSize(width: 1180, height: 760)
         .commands {

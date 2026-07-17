@@ -19,6 +19,8 @@ struct TimeEntryEditView: View {
     @State private var showingDeleteAlert = false
     @State private var showingCancelConfirmationAlert = false
     @State private var showingAddThought = false
+    @State private var editingStart = false
+    @State private var editingEnd = false
 
     init(entry: TimeEntry) {
         self.entry = entry
@@ -39,18 +41,55 @@ struct TimeEntryEditView: View {
                 }
 
                 if isDraft {
-                    DatePicker(
-                        "开始",
-                        selection: $startAt,
-                        in: minimumStartAt...,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-                    DatePicker(
-                        "结束",
-                        selection: $endAt,
-                        in: startAt...endUpperBound,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            editingStart.toggle()
+                            if editingStart { editingEnd = false }
+                        }
+                    } label: {
+                        LabeledContent("开始") {
+                            Text(DateFormatterFactory.dateTime.string(from: startAt))
+                                .foregroundStyle(editingStart ? Color.accentColor : .secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    if editingStart {
+                        DatePicker(
+                            "开始",
+                            selection: $startAt,
+                            in: startPickerRange,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                    }
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            editingEnd.toggle()
+                            if editingEnd { editingStart = false }
+                        }
+                    } label: {
+                        LabeledContent("结束") {
+                            Text(DateFormatterFactory.dateTime.string(from: endAt))
+                                .foregroundStyle(editingEnd ? Color.accentColor : .secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    if editingEnd {
+                        DatePicker(
+                            "结束",
+                            selection: $endAt,
+                            in: endPickerRange,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                    }
                 } else {
                     LabeledContent("开始") {
                         Text(DateFormatterFactory.dateTime.string(from: entry.startAt))
@@ -65,27 +104,36 @@ struct TimeEntryEditView: View {
                 NavigationLink {
                     TimeEntryNoteEditView(note: $note)
                 } label: {
-                    HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("备注")
-                        Spacer(minLength: 12)
-                        Text(notePreview)
-                            .foregroundStyle(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .tertiary : .secondary)
-                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(.primary)
+                        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("点击编写")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            Text(note)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .multilineTextAlignment(.leading)
+                        }
                     }
                 }
             } footer: {
                 if SystemProject.isUnknownEntry(entry) {
                     Text("请选择具体项目后再确认。")
-                } else if isDraft {
-                    if let nextCap = nextEntryStartAt, nextCap < Date() {
-                        Text("结束不能晚于下一段 \(DateFormatterFactory.timeOnly.string(from: nextCap))")
-                    } else {
-                        Text("结束不能晚于当前时间。")
-                    }
                 }
             }
 
             Section {
+                Button {
+                    showingAddThought = true
+                } label: {
+                    Label("添加思考", systemImage: "plus")
+                }
+
                 if linkedThoughts.isEmpty {
                     Text("暂无关联思考")
                         .font(.footnote)
@@ -98,11 +146,6 @@ struct TimeEntryEditView: View {
                             thoughtRow(thought)
                         }
                     }
-                }
-                Button {
-                    showingAddThought = true
-                } label: {
-                    Label("添加思考", systemImage: "plus")
                 }
             } header: {
                 Text("思考")
@@ -172,11 +215,6 @@ struct TimeEntryEditView: View {
         }
     }
 
-    private var notePreview: String {
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "点击编写" : trimmed
-    }
-
     private var isDraft: Bool {
         entry.status == TimeEntryStatus.draft.rawValue
     }
@@ -205,25 +243,35 @@ struct TimeEntryEditView: View {
             ?? selectableProjects.first { $0.id == selectedProjectId }
     }
 
-    private var nextEntryStartAt: Date? {
+    private var nextEntry: TimeEntry? {
         allEntries
             .filter { $0.id != entry.id && $0.startAt >= entry.endAt }
             .sorted { $0.startAt < $1.startAt }
-            .first?
-            .startAt
+            .first
             ?? allEntries
             .filter { $0.id != entry.id && $0.startAt > entry.startAt }
             .sorted { $0.startAt < $1.startAt }
-            .first?
-            .startAt
+            .first
     }
 
     private var endUpperBound: Date {
         let now = Date()
-        if let next = nextEntryStartAt {
-            return min(now, next)
+        guard let next = nextEntry else { return now }
+        if next.status == TimeEntryStatus.draft.rawValue {
+            let beforeNextEnd = next.endAt.addingTimeInterval(-1)
+            return min(now, max(startAt.addingTimeInterval(1), beforeNextEnd))
         }
-        return now
+        return min(now, next.startAt)
+    }
+
+    private var startPickerRange: ClosedRange<Date> {
+        let upper = max(minimumStartAt, endAt.addingTimeInterval(-60))
+        return minimumStartAt...upper
+    }
+
+    private var endPickerRange: ClosedRange<Date> {
+        let lower = min(startAt.addingTimeInterval(60), endUpperBound)
+        return lower...max(lower, endUpperBound)
     }
 
     private var linkedThoughts: [ThoughtNote] {
@@ -233,15 +281,19 @@ struct TimeEntryEditView: View {
     }
 
     private func thoughtRow(_ thought: ThoughtNote) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(thought.body)
-                .font(.footnote)
-                .lineLimit(2)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .lineSpacing(6)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
     private func addThought(body: String) -> Bool {
@@ -265,9 +317,16 @@ struct TimeEntryEditView: View {
             errorMessage = "结束时间不能晚于当前时间。"
             return
         }
-        if let next = nextEntryStartAt, endAt > next {
-            errorMessage = "结束时间不能与后一段重叠。"
-            return
+        if let next = nextEntry {
+            if next.status == TimeEntryStatus.draft.rawValue {
+                if endAt >= next.endAt {
+                    errorMessage = "结束时间会挤掉下一段草稿。"
+                    return
+                }
+            } else if endAt > next.startAt {
+                errorMessage = "结束时间不能与后一段重叠。"
+                return
+            }
         }
 
         do {

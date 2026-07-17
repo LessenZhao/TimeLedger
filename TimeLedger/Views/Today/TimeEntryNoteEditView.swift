@@ -14,7 +14,8 @@ struct TimeEntryNoteEditView: View {
 
     var body: some View {
         TextEditor(text: $draft)
-            .font(.system(size: 18))
+            .font(.system(size: 17))
+            .lineSpacing(6)
             .padding(12)
             .focused($isFocused)
             .navigationTitle("备注")

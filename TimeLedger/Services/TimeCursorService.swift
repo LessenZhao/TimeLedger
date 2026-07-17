@@ -7,6 +7,7 @@ enum TimeCursorError: LocalizedError {
     case cannotDelete
     case startCannotMoveEarlier
     case endOverlapsNext
+    case squeezesNextDraft
     case endAfterNow
     case startBeforeCursor
 
@@ -22,6 +23,8 @@ enum TimeCursorError: LocalizedError {
             "开始时间不能早于当前开始时间。"
         case .endOverlapsNext:
             "结束时间不能与后一段重叠。"
+        case .squeezesNextDraft:
+            "结束时间会挤掉下一段草稿。"
         case .endAfterNow:
             "结束时间不能晚于当前时间。"
         case .startBeforeCursor:
@@ -183,8 +186,23 @@ struct TimeCursorService {
                 throw TimeCursorError.endAfterNow
             }
 
-            if let next = try nextEntry(after: entry), endAt > next.startAt {
-                throw TimeCursorError.endOverlapsNext
+            let next = try nextEntry(after: entry)
+            if let next {
+                let nextIsDraft = next.status == TimeEntryStatus.draft.rawValue
+                if nextIsDraft {
+                    if endAt >= next.endAt {
+                        throw TimeCursorError.squeezesNextDraft
+                    }
+                    let shouldSnapNextStart =
+                        endAt > next.startAt
+                        || (endAt < originalEndAt && next.startAt == originalEndAt)
+                    if shouldSnapNextStart {
+                        next.startAt = endAt
+                        next.updatedAt = now
+                    }
+                } else if endAt > next.startAt {
+                    throw TimeCursorError.endOverlapsNext
+                }
             }
 
             try ValidationService(modelContext: modelContext).validateEntry(

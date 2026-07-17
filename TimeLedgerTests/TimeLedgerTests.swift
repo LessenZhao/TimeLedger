@@ -770,6 +770,193 @@ struct TimeLedgerTests {
         }
     }
 
+    @Test func shrinkingDraftEndPullsNextDraftStart() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 40_000)
+        let t1 = Date(timeIntervalSince1970: 40_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 40_000 + 7_200)
+        let now = Date(timeIntervalSince1970: 40_000 + 10_800)
+
+        context.insert(project)
+        let first = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1
+        )
+        let second = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2
+        )
+        context.insert(first)
+        context.insert(second)
+        _ = try service.getOrCreateCursor(now: t2)
+        try context.save()
+
+        let newEnd = t1.addingTimeInterval(-60)
+        try service.updateEntry(
+            first,
+            project: project,
+            note: "",
+            startAt: t0,
+            endAt: newEnd,
+            now: now
+        )
+
+        #expect(first.endAt == newEnd)
+        #expect(second.startAt == newEnd)
+        #expect(second.endAt == t2)
+    }
+
+    @Test func lengtheningDraftEndPushesNextDraftStart() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 50_000)
+        let t1 = Date(timeIntervalSince1970: 50_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 50_000 + 7_200)
+        let now = Date(timeIntervalSince1970: 50_000 + 10_800)
+
+        context.insert(project)
+        let first = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1
+        )
+        let second = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2
+        )
+        context.insert(first)
+        context.insert(second)
+        _ = try service.getOrCreateCursor(now: t2)
+        try context.save()
+
+        let newEnd = t1.addingTimeInterval(300)
+        try service.updateEntry(
+            first,
+            project: project,
+            note: "",
+            startAt: t0,
+            endAt: newEnd,
+            now: now
+        )
+
+        #expect(first.endAt == newEnd)
+        #expect(second.startAt == newEnd)
+        #expect(second.endAt == t2)
+    }
+
+    @Test func lengtheningDraftEndDoesNotMoveConfirmedNext() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 60_000)
+        let t1 = Date(timeIntervalSince1970: 60_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 60_000 + 7_200)
+        let now = Date(timeIntervalSince1970: 60_000 + 10_800)
+
+        context.insert(project)
+        let first = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1
+        )
+        let second = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2,
+            status: .confirmed
+        )
+        context.insert(first)
+        context.insert(second)
+        _ = try service.getOrCreateCursor(now: t2)
+        try context.save()
+
+        do {
+            try service.updateEntry(
+                first,
+                project: project,
+                note: "",
+                startAt: t0,
+                endAt: t1.addingTimeInterval(300),
+                now: now
+            )
+            #expect(Bool(false), "should not push confirmed next")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+
+        #expect(first.endAt == t1)
+        #expect(second.startAt == t1)
+    }
+
+    @Test func lengtheningDraftEndRejectsSqueezingNextDraftAway() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let project = Project(name: "写作", categoryName: "工作")
+        let t0 = Date(timeIntervalSince1970: 70_000)
+        let t1 = Date(timeIntervalSince1970: 70_000 + 3_600)
+        let t2 = Date(timeIntervalSince1970: 70_000 + 7_200)
+        let now = Date(timeIntervalSince1970: 70_000 + 10_800)
+
+        context.insert(project)
+        let first = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t0,
+            endAt: t1
+        )
+        let second = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: t1,
+            endAt: t2
+        )
+        context.insert(first)
+        context.insert(second)
+        _ = try service.getOrCreateCursor(now: t2)
+        try context.save()
+
+        do {
+            try service.updateEntry(
+                first,
+                project: project,
+                note: "",
+                startAt: t0,
+                endAt: t2,
+                now: now
+            )
+            #expect(Bool(false), "should not squeeze next draft away")
+        } catch {
+            #expect(error is TimeCursorError)
+        }
+
+        #expect(first.endAt == t1)
+        #expect(second.startAt == t1)
+    }
+
     @Test func deleteMiddleDraftPullsNextEntryStartForward() throws {
         let container = try makeContainer()
         let context = ModelContext(container)

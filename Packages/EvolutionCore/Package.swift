@@ -8,13 +8,19 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .library(name: "EvolutionCore", targets: ["EvolutionCore"])
+        .library(name: "EvolutionCore", targets: ["EvolutionCore"]),
+        .executable(name: "evolution-ledger-cli", targets: ["EvolutionLedgerCLI"])
     ],
     targets: [
         .target(name: "EvolutionCore"),
+        .executableTarget(
+            name: "EvolutionLedgerCLI",
+            dependencies: ["EvolutionCore"]
+        ),
         .testTarget(
             name: "EvolutionCoreTests",
-            dependencies: ["EvolutionCore"]
+            dependencies: ["EvolutionCore"],
+            exclude: ["Fixtures"]
         )
     ]
 )

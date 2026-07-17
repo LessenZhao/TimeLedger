@@ -16,9 +16,21 @@ struct ThoughtQuickCaptureSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("记下你的想法…", text: $thoughtBody, axis: .vertical)
-                        .lineLimit(3...8)
+                    TextEditor(text: $thoughtBody)
+                        .font(.body)
+                        .frame(minHeight: 280)
+                        .scrollContentBackground(.hidden)
                         .focused($isFocused)
+                        .overlay(alignment: .topLeading) {
+                            if thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text("记下你的想法…")
+                                    .font(.body)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 8)
+                                    .padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                 } header: {
                     Text("思考")
                 } footer: {

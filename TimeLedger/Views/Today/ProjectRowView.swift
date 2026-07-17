@@ -69,15 +69,16 @@ struct ProjectRowView: View {
         let tapGesture = TapGesture().onEnded {
             quickRecordAction()
         }
-        let longPressGesture = LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+        let longPressGesture = LongPressGesture(minimumDuration: 0.2).onEnded { _ in
             adjustAction()
         }
 
-        return Text("+")
-            .font(.system(size: 18, weight: .medium))
+        return Image(systemName: "plus")
+            .font(.system(size: 14, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: TLTheme.actionButtonSize, height: TLTheme.actionButtonSize)
             .background(Circle().fill(Color.accentColor))
+            .contentShape(Circle())
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
             .gesture(longPressGesture.exclusively(before: tapGesture))

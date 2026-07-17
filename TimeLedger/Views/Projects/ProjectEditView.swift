@@ -9,7 +9,6 @@ struct ProjectEditView: View {
 
     @State private var name = ""
     @State private var categoryName = ""
-    @State private var emoji = ""
     @State private var colorHex = ""
     @State private var sortOrder = 0
     @State private var isArchived = false
@@ -17,13 +16,20 @@ struct ProjectEditView: View {
 
     var isEditing: Bool { project != nil }
 
+    private var suggestedEmoji: String {
+        ProjectEmojiMatcher.emoji(for: name, categoryName: categoryName)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("基本信息") {
                     TextField("项目名称", text: $name)
                     TextField("分类", text: $categoryName)
-                    TextField("Emoji（可选）", text: $emoji)
+                    LabeledContent("图标") {
+                        Text(suggestedEmoji)
+                            .font(.title2)
+                    }
                     TextField("颜色 Hex（可选，如 #FF6B6B）", text: $colorHex)
                 }
 
@@ -64,7 +70,6 @@ struct ProjectEditView: View {
         guard let project else { return }
         name = project.name
         categoryName = project.categoryName
-        emoji = project.emoji ?? ""
         colorHex = project.colorHex ?? ""
         sortOrder = project.sortOrder
         isArchived = project.isArchived
@@ -78,10 +83,13 @@ struct ProjectEditView: View {
             return
         }
 
+        let resolvedCategory = trimmedCategory.isEmpty ? "日常" : trimmedCategory
+        let emoji = ProjectEmojiMatcher.emoji(for: trimmedName, categoryName: resolvedCategory)
+
         if let project {
             project.name = trimmedName
-            project.categoryName = trimmedCategory.isEmpty ? "日常" : trimmedCategory
-            project.emoji = emoji.isEmpty ? nil : emoji
+            project.categoryName = resolvedCategory
+            project.emoji = emoji
             project.colorHex = colorHex.isEmpty ? nil : colorHex
             project.sortOrder = sortOrder
             project.isArchived = isArchived
@@ -89,8 +97,8 @@ struct ProjectEditView: View {
         } else {
             let newProject = Project(
                 name: trimmedName,
-                categoryName: trimmedCategory.isEmpty ? "日常" : trimmedCategory,
-                emoji: emoji.isEmpty ? nil : emoji,
+                categoryName: resolvedCategory,
+                emoji: emoji,
                 colorHex: colorHex.isEmpty ? nil : colorHex,
                 sortOrder: sortOrder
             )
