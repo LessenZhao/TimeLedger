@@ -19,17 +19,23 @@ struct ContentView: View {
                 }
                 .tag(0)
 
+            ThoughtStreamView()
+                .tabItem {
+                    Label("思考", systemImage: "lightbulb")
+                }
+                .tag(1)
+
             ReviewView()
                 .tabItem {
                     Label("复盘", systemImage: "chart.bar.xaxis")
                 }
-                .tag(1)
+                .tag(2)
 
             SettingsView()
                 .tabItem {
                     Label("设置", systemImage: "gearshape")
                 }
-                .tag(2)
+                .tag(3)
         }
     }
 }

@@ -1,11 +1,11 @@
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct ThoughtCardView: View {
     @Environment(\.modelContext) private var modelContext
 
     let thought: ThoughtNote
-    let date: Date
+    let linkedEntry: TimeEntry?
 
     @State private var showingEdit = false
     @State private var showingManualLink = false
@@ -13,20 +13,20 @@ struct ThoughtCardView: View {
     @State private var errorMessage: String?
 
     var body: some View {
- VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                linkStatusBadge
+                lifecycleBadge
             }
 
             Text(thought.body)
                 .font(.body)
                 .lineLimit(nil)
 
-            if let linkedEntry = linkedEntry {
+            if let linkedEntry {
                 linkedEntryInfo(linkedEntry)
             }
 
@@ -72,7 +72,7 @@ struct ThoughtCardView: View {
             }
         }
         .sheet(isPresented: $showingManualLink) {
-            ThoughtManualLinkView(thought: thought, date: date)
+            ThoughtManualLinkView(thought: thought, date: thought.capturedAt)
         }
         .alert("删除这条思考？", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) {}
@@ -90,37 +90,42 @@ struct ThoughtCardView: View {
         }
     }
 
-    private var linkedEntry: TimeEntry? {
-        guard let entryId = thought.linkedEntryId else { return nil }
-        let entries = (try? modelContext.fetch(FetchDescriptor<TimeEntry>())) ?? []
-        return entries.first { $0.id == entryId }
+    @ViewBuilder
+    private var lifecycleBadge: some View {
+        switch lifecycle {
+        case .unlinked:
+            badge("未关联", color: .secondary, fill: Color.gray.opacity(0.12))
+        case .draft:
+            badge("草稿", color: .orange, fill: Color.orange.opacity(0.12))
+        case .confirmed:
+            badge("已确认", color: .green, fill: Color.green.opacity(0.12))
+        case .orphaned:
+            badge("关联失效", color: .red, fill: Color.red.opacity(0.12))
+        }
     }
 
-    @ViewBuilder
-    private var linkStatusBadge: some View {
-        switch thought.linkSourceEnum {
-        case .auto:
-            Text("自动关联")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.orange.opacity(0.12)))
-        case .manual:
-            Text("手动关联")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.blue)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.blue.opacity(0.12)))
-        case .none:
-            Text("等待匹配")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.gray.opacity(0.12)))
+    private var lifecycle: ThoughtLifecycle {
+        if let linkedEntry {
+            switch linkedEntry.entryStatus {
+            case .draft:
+                return .draft
+            case .confirmed:
+                return .confirmed
+            }
         }
+        if thought.linkedEntryId != nil {
+            return .orphaned
+        }
+        return .unlinked
+    }
+
+    private func badge(_ title: String, color: Color, fill: Color) -> some View {
+        Text(title)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(fill))
     }
 
     private func linkedEntryInfo(_ entry: TimeEntry) -> some View {
@@ -149,4 +154,11 @@ struct ThoughtCardView: View {
             errorMessage = error.localizedDescription
         }
     }
+}
+
+private enum ThoughtLifecycle {
+    case unlinked
+    case draft
+    case confirmed
+    case orphaned
 }
