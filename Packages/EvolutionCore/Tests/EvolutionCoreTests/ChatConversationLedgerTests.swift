@@ -18,6 +18,12 @@ final class ChatConversationLedgerTests: XCTestCase {
         try fixture.writeManifest(conversationIDs: ["conversation-1"])
         let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
         let store = JSONChatConversationLedgerStore(layout: layout)
+        let previousReceipt = ChatConversationReceipt(
+            jobId: "previous-job",
+            proposalDigest: "previous-proposal",
+            status: .accepted,
+            recordedAt: "2026-07-01T00:00:00Z"
+        )
         try store.save(ChatConversationLedgerDocument(
             processedRevisions: [
                 ChatConversationProcessedRevision(
@@ -32,8 +38,13 @@ final class ChatConversationLedgerTests: XCTestCase {
                     contentHash: ContentHasher.hash("Old response"),
                     taskId: "previous-job"
                 ),
-            ]
+            ],
+            receipts: [previousReceipt]
         ))
+        try JSONEncoder().encode(previousReceipt).write(
+            to: layout.chatConversationReceiptURL(jobId: previousReceipt.jobId),
+            options: .atomic
+        )
         let ledger = ChatConversationLedger(layout: layout)
 
         let task = try ledger.createTask(
@@ -163,6 +174,170 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertTrue(task.inputMessages.allSatisfy { !$0.contextOnly })
     }
 
+    func testReceiptWriteFailureLeavesMessagesPendingUntilRetryFinalizes() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let failingLedger = ChatConversationLedger(
+            layout: layout,
+            receiptWriter: { _, _ in throw ReceiptWriteFailure.failed }
+        )
+        let task = try failingLedger.createTask(jobId: "job-recover", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
+
+        XCTAssertThrowsError(try failingLedger.apply(proposal(for: task)))
+
+        let interrupted = try failingLedger.load()
+        XCTAssertEqual(interrupted.receipts.map(\.status), [.accepted])
+        XCTAssertEqual(interrupted.processedRevisions.map(\.messageId), ["message-1"])
+        XCTAssertEqual(
+            try failingLedger.readArchiveSummaries(archiveRoot: fixture.rootURL).first?.pendingMessageCount,
+            1
+        )
+        XCTAssertThrowsError(try failingLedger.createTask(
+            jobId: "job-blocked",
+            selectedConversationIDs: ["conversation-1"],
+            archiveRoot: fixture.rootURL
+        )) { error in
+            XCTAssertEqual(error as? ChatConversationLedgerError, .pendingFinalization("job-recover"))
+        }
+
+        let retried = try ChatConversationLedger(layout: layout).apply(proposal(for: task))
+        XCTAssertEqual(retried.status, .noOp)
+        XCTAssertEqual(
+            try ChatConversationLedger(layout: layout).readArchiveSummaries(archiveRoot: fixture.rootURL).first?.processedMessageCount,
+            1
+        )
+        XCTAssertEqual(try ChatConversationLedger(layout: layout).load().processedRevisions.map(\.messageId), ["message-1"])
+    }
+
+    func testFinalLedgerWriteFailureLeavesMessagesPendingUntilRetryFinalizes() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let store = FailingOnSecondSaveLedgerStore(layout: layout)
+        let failingLedger = ChatConversationLedger(layout: layout, store: store)
+        let task = try failingLedger.createTask(jobId: "job-final-save", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
+
+        XCTAssertThrowsError(try failingLedger.apply(proposal(for: task)))
+
+        let interrupted = try ChatConversationLedger(layout: layout).load()
+        XCTAssertEqual(interrupted.receipts.map(\.status), [.pending])
+        XCTAssertTrue(interrupted.processedRevisions.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: layout.chatConversationReceiptURL(jobId: task.jobId).path))
+        XCTAssertEqual(
+            try ChatConversationLedger(layout: layout).readArchiveSummaries(archiveRoot: fixture.rootURL).first?.pendingMessageCount,
+            1
+        )
+
+        let retried = try ChatConversationLedger(layout: layout).apply(proposal(for: task))
+        XCTAssertEqual(retried.status, .accepted)
+        XCTAssertEqual(try ChatConversationLedger(layout: layout).load().processedRevisions.map(\.messageId), ["message-1"])
+    }
+
+    func testRejectsMultiConversationSegmentBeforePublishingAnyReceipt() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeConversation(id: "conversation-2", messages: [fixture.message(id: "message-2", role: "user", content: "Two")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1", "conversation-2"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let ledger = ChatConversationLedger(layout: layout)
+        let task = try ledger.createTask(
+            jobId: "job-multi-conversation",
+            selectedConversationIDs: ["conversation-1", "conversation-2"],
+            archiveRoot: fixture.rootURL
+        )
+        var invalid = proposal(for: task)
+        invalid.segments[0].sourceMessages = task.inputMessages.map(\.reference)
+
+        XCTAssertThrowsError(try ledger.apply(invalid)) { error in
+            XCTAssertEqual(error as? ChatConversationLedgerError, .invalidSourceReference)
+        }
+        XCTAssertTrue(try ledger.load().receipts.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: layout.chatConversationReceiptURL(jobId: task.jobId).path))
+    }
+
+    func testRejectsTaskWhoseEmbeddedJobIDDoesNotMatchItsSafeFilename() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let ledger = ChatConversationLedger(layout: layout)
+        let task = try ledger.createTask(
+            jobId: "job-safe",
+            selectedConversationIDs: ["conversation-1"],
+            archiveRoot: fixture.rootURL
+        )
+        var tampered = task
+        tampered.jobId = "../outside"
+        try JSONEncoder().encode(tampered).write(
+            to: layout.chatConversationJobURL(jobId: "job-safe"),
+            options: .atomic
+        )
+
+        XCTAssertThrowsError(try ledger.apply(proposal(for: task))) { error in
+            XCTAssertEqual(error as? ChatConversationLedgerError, .invalidJobId)
+        }
+        XCTAssertTrue(try ledger.load().receipts.isEmpty)
+    }
+
+    func testRejectNormalizesJobIDAndRecoversMissingReceipt() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let ledger = ChatConversationLedger(layout: layout)
+        _ = try ledger.createTask(jobId: "job-rejected", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
+
+        _ = try ledger.reject(jobId: "job-rejected", reason: "Declined")
+        try FileManager.default.removeItem(at: layout.chatConversationReceiptURL(jobId: "job-rejected"))
+        let repeated = try ledger.reject(jobId: " job-rejected ", reason: "Ignored on repeat")
+
+        XCTAssertEqual(repeated.status, .rejected)
+        XCTAssertEqual(try ledger.load().receipts.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: layout.chatConversationReceiptURL(jobId: "job-rejected").path))
+    }
+
+    func testTwoLedgerInstancesDoNotAcceptConflictingTasks() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "One")])
+        try fixture.writeConversation(id: "conversation-2", messages: [fixture.message(id: "message-2", role: "user", content: "Two")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1", "conversation-2"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let firstLedger = ChatConversationLedger(layout: layout)
+        let secondLedger = ChatConversationLedger(layout: layout)
+        let firstTask = try firstLedger.createTask(jobId: "job-first", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
+        let secondTask = try secondLedger.createTask(jobId: "job-second", selectedConversationIDs: ["conversation-2"], archiveRoot: fixture.rootURL)
+        let resultLock = NSLock()
+        var results: [Result<ChatConversationReceipt, Error>] = []
+        let finished = expectation(description: "both applies finish")
+        finished.expectedFulfillmentCount = 2
+
+        DispatchQueue.concurrentPerform(iterations: 2) { index in
+            let result = Result {
+                try (index == 0 ? firstLedger : secondLedger).apply(proposal(for: index == 0 ? firstTask : secondTask))
+            }
+            resultLock.lock()
+            results.append(result)
+            resultLock.unlock()
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+
+        XCTAssertEqual(results.compactMap { try? $0.get() }.filter { $0.status == .accepted }.count, 1)
+        XCTAssertEqual(results.compactMap { result -> ChatConversationLedgerError? in
+            guard case .failure(let error) = result else { return nil }
+            return error as? ChatConversationLedgerError
+        }, [.staleLedger])
+    }
+
     private func proposal(
         for task: ChatConversationProcessingTask,
         topicTarget: ChatConversationTopicTarget = .new(id: "topic:planning", name: "Planning")
@@ -238,5 +413,32 @@ private final class ChatLedgerFixture {
 
     private func writeJSON(_ value: Any, to url: URL) throws {
         try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: url)
+    }
+}
+
+private enum ReceiptWriteFailure: Error {
+    case failed
+}
+
+private final class FailingOnSecondSaveLedgerStore: ChatConversationLedgerDocumentStore, @unchecked Sendable {
+    private let backing: JSONChatConversationLedgerStore
+    private let lock = NSLock()
+    private var saveCount = 0
+
+    init(layout: EvolutionLedgerLayout) {
+        backing = JSONChatConversationLedgerStore(layout: layout)
+    }
+
+    func load() throws -> ChatConversationLedgerDocument {
+        try backing.load()
+    }
+
+    func save(_ document: ChatConversationLedgerDocument) throws {
+        lock.lock()
+        saveCount += 1
+        let shouldFail = saveCount == 2
+        lock.unlock()
+        if shouldFail { throw ReceiptWriteFailure.failed }
+        try backing.save(document)
     }
 }

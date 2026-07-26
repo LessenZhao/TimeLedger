@@ -181,6 +181,7 @@ public struct ChatConversationMark: Codable, Sendable, Hashable {
 }
 
 public enum ChatConversationReceiptStatus: String, Codable, Sendable, Hashable {
+    case pending
     case accepted
     case rejected
     case noOp
