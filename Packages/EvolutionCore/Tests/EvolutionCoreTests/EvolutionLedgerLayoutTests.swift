@@ -7,6 +7,10 @@ final class EvolutionLedgerLayoutTests: XCTestCase {
         let layout = EvolutionLedgerLayout(rootURL: root)
 
         XCTAssertEqual(layout.ledgerFileURL.path, root.appendingPathComponent("records/ledger.json").path)
+        XCTAssertEqual(layout.chatConversationLedgerFileURL.path, root.appendingPathComponent("records/chatgpt-ledger.json").path)
+        XCTAssertEqual(layout.chatConversationJobsDirectoryURL.path, root.appendingPathComponent("exchange/chatgpt/jobs").path)
+        XCTAssertEqual(layout.chatConversationProposalInboxDirectoryURL.path, root.appendingPathComponent("exchange/chatgpt/inbox").path)
+        XCTAssertEqual(layout.chatConversationProcessedDirectoryURL.path, root.appendingPathComponent("exchange/chatgpt/processed").path)
         XCTAssertEqual(layout.inboxDirectoryURL.path, root.appendingPathComponent("exchange/inbox").path)
         XCTAssertEqual(layout.processedDirectoryURL.path, root.appendingPathComponent("exchange/processed").path)
         XCTAssertEqual(layout.jobsDirectoryURL.path, root.appendingPathComponent("exchange/jobs").path)

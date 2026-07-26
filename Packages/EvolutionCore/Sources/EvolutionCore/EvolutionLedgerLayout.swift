@@ -15,6 +15,34 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
         recordsDirectoryURL.appendingPathComponent("ledger.json", isDirectory: false)
     }
 
+    public var chatConversationLedgerFileURL: URL {
+        recordsDirectoryURL.appendingPathComponent("chatgpt-ledger.json", isDirectory: false)
+    }
+
+    public var chatConversationExchangeDirectoryURL: URL {
+        rootURL.appendingPathComponent("exchange/chatgpt", isDirectory: true)
+    }
+
+    public var chatConversationJobsDirectoryURL: URL {
+        chatConversationExchangeDirectoryURL.appendingPathComponent("jobs", isDirectory: true)
+    }
+
+    public var chatConversationProposalInboxDirectoryURL: URL {
+        chatConversationExchangeDirectoryURL.appendingPathComponent("inbox", isDirectory: true)
+    }
+
+    public var chatConversationProcessedDirectoryURL: URL {
+        chatConversationExchangeDirectoryURL.appendingPathComponent("processed", isDirectory: true)
+    }
+
+    public func chatConversationJobURL(jobId: String) -> URL {
+        chatConversationJobsDirectoryURL.appendingPathComponent("\(jobId).json", isDirectory: false)
+    }
+
+    public func chatConversationReceiptURL(jobId: String) -> URL {
+        chatConversationProcessedDirectoryURL.appendingPathComponent("\(jobId).json", isDirectory: false)
+    }
+
     public var inboxDirectoryURL: URL {
         rootURL.appendingPathComponent("exchange/inbox", isDirectory: true)
     }
@@ -38,6 +66,9 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
     public var requiredDirectories: [URL] {
         [
             recordsDirectoryURL,
+            chatConversationJobsDirectoryURL,
+            chatConversationProposalInboxDirectoryURL,
+            chatConversationProcessedDirectoryURL,
             inboxDirectoryURL,
             processedDirectoryURL,
             jobsDirectoryURL,
