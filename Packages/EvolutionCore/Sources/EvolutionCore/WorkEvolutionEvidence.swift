@@ -6,6 +6,8 @@ public enum WorktreeChangeKind: String, Codable, Sendable, Hashable { case stage
 public enum VerificationCheckStatus: String, Codable, Sendable, Hashable { case passed, failed, notRun }
 
 public struct MessageReference: Codable, Sendable, Hashable, Identifiable {
+    public static let sensitiveExcerptRedaction = "（敏感内容已隐藏）"
+
     public var id: String
     public var source: ContextSource
     public var threadId: String
@@ -28,6 +30,19 @@ public struct MessageReference: Codable, Sendable, Hashable, Identifiable {
         self.sourceLine = sourceLine
         self.excerpt = excerpt
         self.contentHash = contentHash
+    }
+
+    func matchesCanonical(_ canonical: MessageReference) -> Bool {
+        id == canonical.id
+            && source == canonical.source
+            && threadId == canonical.threadId
+            && eventId == canonical.eventId
+            && createdAt == canonical.createdAt
+            && role == canonical.role
+            && sourceFile == canonical.sourceFile
+            && sourceLine == canonical.sourceLine
+            && contentHash == canonical.contentHash
+            && (excerpt == canonical.excerpt || excerpt == Self.sensitiveExcerptRedaction)
     }
 }
 

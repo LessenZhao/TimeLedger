@@ -21,6 +21,22 @@ final class EvolutionProposalInboxTests: XCTestCase {
         XCTAssertEqual(try fixture.ledger.read(.all).days.map(\.date), [fixture.dateKey])
     }
 
+    func testTrustedPackageImportsWhenSensitiveExcerptIsRedactedButReferenceIsPreserved() throws {
+        let fixture = try InboxTestFixture()
+        var proposal = fixture.proposal
+        proposal.days[0].sourceSlices[0].messageReferences[0].excerpt = MessageReference.sensitiveExcerptRedaction
+        try ISO8601Codec.encoder.encode(proposal).write(to: fixture.inboxURL, options: .atomic)
+
+        let receipt = try XCTUnwrap(
+            EvolutionProposalInbox(layout: fixture.layout, ledger: fixture.ledger)
+                .importPending()
+                .first
+        )
+
+        XCTAssertEqual(receipt.status, .imported)
+        XCTAssertEqual(try fixture.ledger.read(.all).days.first?.sourceSlices.first?.messageReferences.first?.excerpt, MessageReference.sensitiveExcerptRedaction)
+    }
+
     func testTamperedEvidenceIsRejectedWithoutChangingLedger() throws {
         let fixture = try InboxTestFixture()
         var bundle = fixture.bundle

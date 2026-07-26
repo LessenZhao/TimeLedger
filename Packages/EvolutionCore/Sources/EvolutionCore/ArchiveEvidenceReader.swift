@@ -177,7 +177,9 @@ public struct ArchiveEvidenceReader: Sendable {
               reference.threadId == session.externalThreadId else {
             return false
         }
-        return try conversation(session: session).contains { $0.reference == reference }
+        return try conversation(session: session).contains {
+            reference.matchesCanonical($0.reference)
+        }
     }
 
     private func readMessages(path: String, source: ContextSource) throws -> [PreparedMessage] {

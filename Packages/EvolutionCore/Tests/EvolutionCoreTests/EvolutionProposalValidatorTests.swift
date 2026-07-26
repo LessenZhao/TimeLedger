@@ -141,6 +141,24 @@ final class EvolutionProposalValidatorTests: XCTestCase {
         }
     }
 
+    func testAllowsFixedSensitiveExcerptRedactionWithoutDroppingCanonicalReference() throws {
+        let fixture = try ProposalFixture()
+        var redacted = fixture.proposal
+        let originalDigest = redacted.sourceDigest
+        redacted.days[0].sourceSlices[0].messageReferences[0].excerpt = MessageReference.sensitiveExcerptRedaction
+
+        XCTAssertEqual(redacted.sourceDigest, originalDigest)
+        XCTAssertNoThrow(try EvolutionProposalValidator().validate(redacted))
+
+        var invented = fixture.proposal
+        invented.days[0].sourceSlices[0].messageReferences[0].excerpt = "任意伪造摘要"
+        XCTAssertThrowsError(try EvolutionProposalValidator().validate(invented)) {
+            guard case .canonicalMessageMismatch = $0 as? EvolutionProposalValidationError else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+    }
+
     func testEvidenceMustBelongToOwnersDeclaredSourceSlices() throws {
         let fixture = try ProposalFixture()
         let thoughtMessage = try XCTUnwrap(

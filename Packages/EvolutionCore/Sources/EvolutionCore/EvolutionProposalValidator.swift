@@ -101,7 +101,7 @@ public struct EvolutionProposalValidator: Sendable {
         let projectByID = Dictionary(uniqueKeysWithValues: proposal.projects.map { ($0.id, $0) })
         let worktreeByID = Dictionary(uniqueKeysWithValues: proposal.worktreeEvidence.map { ($0.id, $0) })
 
-        var canonicalMessagesBySession: [String: Set<MessageReference>] = [:]
+        var canonicalMessagesBySession: [String: [String: MessageReference]] = [:]
         for session in proposal.sessions {
             let expected = EvolutionStableID.sourceSession(source: session.source, externalThreadId: session.externalThreadId)
             guard session.id == expected else {
@@ -114,7 +114,9 @@ public struct EvolutionProposalValidator: Sendable {
             guard session.contentHash == ContentHasher.hashParts(canonicalConversation.map(\.reference.id).sorted()) else {
                 throw EvolutionProposalValidationError.canonicalMessageMismatch(session.id)
             }
-            canonicalMessagesBySession[session.id] = Set(canonicalConversation.map(\.reference))
+            canonicalMessagesBySession[session.id] = Dictionary(
+                uniqueKeysWithValues: canonicalConversation.map { ($0.reference.id, $0.reference) }
+            )
         }
 
         var routesByID: [String: (projectId: String, route: ProjectRoute)] = [:]
@@ -193,7 +195,8 @@ public struct EvolutionProposalValidator: Sendable {
                           message.createdAt <= proposal.sourceCutoffAt else {
                         throw EvolutionProposalValidationError.cutoffViolation(message.id)
                     }
-                    guard canonicalMessagesBySession[session.id]?.contains(message) == true else {
+                    guard let canonical = canonicalMessagesBySession[session.id]?[message.id],
+                          message.matchesCanonical(canonical) else {
                         throw EvolutionProposalValidationError.canonicalMessageMismatch(message.id)
                     }
                     let expectedMessageID = EvolutionStableID.message(

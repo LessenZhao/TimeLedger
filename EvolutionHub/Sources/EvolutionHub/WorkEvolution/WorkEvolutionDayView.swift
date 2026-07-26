@@ -11,20 +11,29 @@ struct WorkEvolutionDayView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 if let actionError {
                     Label(actionError, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
+                if day != nil {
+                    dayOverview
+                }
                 projectValueSection
-                independentThoughtSection
-                recognizedLaterSection
-                userContentSection
+                if day?.independentThoughts.isEmpty == false {
+                    independentThoughtSection
+                }
+                if !recognizedNodes.isEmpty {
+                    recognizedLaterSection
+                }
+                if !recognizedAnnotations.isEmpty {
+                    userContentSection
+                }
                 sourceSection
             }
-            .padding(20)
+            .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
@@ -57,7 +66,7 @@ struct WorkEvolutionDayView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(dateKey)
                     .font(.largeTitle.bold())
@@ -98,8 +107,64 @@ struct WorkEvolutionDayView: View {
         }
     }
 
+    private var dayOverview: some View {
+        let slices = (day?.projectSlices ?? []).sorted(by: sliceOrdering)
+        let decisions = slices.flatMap(\.decisions)
+        let realizedValues = slices
+            .flatMap(\.values)
+            .filter { $0.status == .realized }
+            .sorted(by: valueOrdering)
+        let primaryValue = realizedValues.first
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("今日结论")
+                    .font(.headline)
+                Spacer()
+                HStack(spacing: 6) {
+                    SummaryMetric(value: slices.count, label: "项目")
+                    SummaryMetric(value: decisions.count, label: "关键决策")
+                    SummaryMetric(value: realizedValues.count, label: "已实现价值")
+                }
+            }
+
+            if let primaryValue {
+                Text(primaryValue.title)
+                    .font(.title2.bold())
+                    .textSelection(.enabled)
+                Text(primaryValue.detail)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            } else if let progress = slices.first?.progress.nonEmpty {
+                Text(progress)
+                    .font(.title3.weight(.semibold))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            } else {
+                Text("当天尚未形成已实现价值。")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [Color.accentColor.opacity(0.13), Color.accentColor.opacity(0.04)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 14)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.accentColor.opacity(0.20)))
+    }
+
     private var projectValueSection: some View {
-        LedgerSection(title: "当天产生的价值", systemImage: "sparkles") {
+        LedgerSection(title: "项目进展", systemImage: "square.stack.3d.up") {
             let slices = (day?.projectSlices ?? []).sorted(by: sliceOrdering)
             if slices.isEmpty {
                 EmptyLedgerMessage(text: "当天没有项目价值切片。")
@@ -122,7 +187,11 @@ struct WorkEvolutionDayView: View {
     }
 
     private var independentThoughtSection: some View {
-        LedgerSection(title: "独立思考 / 跨项目价值", systemImage: "lightbulb.max") {
+        CollapsibleLedgerSection(
+            title: "独立思考 / 跨项目价值",
+            systemImage: "lightbulb.max",
+            count: day?.independentThoughts.count ?? 0
+        ) {
             let thoughts = (day?.independentThoughts ?? []).sorted { ($0.title, $0.id) < ($1.title, $1.id) }
             if thoughts.isEmpty {
                 EmptyLedgerMessage(text: "当天没有独立思考记录。")
@@ -157,7 +226,11 @@ struct WorkEvolutionDayView: View {
     }
 
     private var recognizedLaterSection: some View {
-        LedgerSection(title: "后来认识", systemImage: "clock.arrow.circlepath") {
+        CollapsibleLedgerSection(
+            title: "后来认识",
+            systemImage: "clock.arrow.circlepath",
+            count: recognizedNodes.count
+        ) {
             if recognizedNodes.isEmpty {
                 EmptyLedgerMessage(text: "当天没有新增的演化认识。")
             } else {
@@ -208,7 +281,11 @@ struct WorkEvolutionDayView: View {
     }
 
     private var userContentSection: some View {
-        LedgerSection(title: "用户内容", systemImage: "person.text.rectangle") {
+        CollapsibleLedgerSection(
+            title: "用户内容",
+            systemImage: "person.text.rectangle",
+            count: recognizedAnnotations.count
+        ) {
             if recognizedAnnotations.isEmpty {
                 EmptyLedgerMessage(text: "当天没有用户补充、纠正或后来认识。")
             } else {
@@ -240,7 +317,11 @@ struct WorkEvolutionDayView: View {
     }
 
     private var sourceSection: some View {
-        LedgerSection(title: "来源 \(day?.sourceSlices.count ?? 0) 个", systemImage: "text.quote") {
+        CollapsibleLedgerSection(
+            title: "来源会话",
+            systemImage: "text.quote",
+            count: day?.sourceSlices.count ?? 0
+        ) {
             if let coverage = day?.coverage {
                 HStack(spacing: 8) {
                     CoverageBadge(title: "纳入", count: coverage.includedSessionIds.count, color: .green)
@@ -334,49 +415,190 @@ private struct ProjectValueCard: View {
     let project: EvolutionProject?
     let onAnnotate: () -> Void
 
+    @State private var isExpanded = false
+
+    private var orderedDecisions: [DecisionRecord] {
+        slice.decisions.sorted(by: decisionOrdering)
+    }
+
+    private var orderedLearnings: [LearningRecord] {
+        slice.learnings.sorted(by: learningOrdering)
+    }
+
+    private var orderedValues: [ValueRecord] {
+        slice.values.sorted(by: valueOrdering)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
-                Text(project?.name ?? slice.projectId).font(.title3.bold())
-                FactLevelBadge(level: slice.factLevel)
+                Text(project?.name ?? slice.projectId)
+                    .font(.title2.bold())
+                ProjectProgressBadge(status: project?.progressStatus)
                 Spacer()
-                Text(slice.reviewState == .confirmed ? "已确认" : "候选")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                ReviewStateBadge(state: slice.reviewState)
                 Button(action: onAnnotate) {
-                    Label("补充切片", systemImage: "square.and.pencil")
+                    Image(systemName: "square.and.pencil")
+                }
+                .buttonStyle(.borderless)
+                .help("补充这个项目切片")
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("目标")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Text(slice.purpose)
+                    .font(.body)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Label("当前结果", systemImage: "flag.checkered")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color.accentColor)
+                Text(slice.progress)
+                    .font(.body.weight(.medium))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+
+            if let decision = orderedDecisions.first {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("关键变化", systemImage: "arrow.triangle.branch")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Text(decision.title)
+                        .font(.headline)
+                    Text(decision.decision)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                    Text("为什么：\(decision.reason)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
                 }
             }
-            LabeledContent("目的", value: slice.purpose)
-            if !slice.actions.isEmpty {
-                RecordGroup(title: "动作") {
-                    ForEach(slice.actions.sorted(), id: \.self) { action in
-                        Text("• \(action)").textSelection(.enabled)
+
+            if !orderedValues.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("今日价值", systemImage: "diamond.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    ForEach(orderedValues) { value in
+                        ValueSummaryRow(value: value)
                     }
                 }
             }
-            LabeledContent("进展", value: slice.progress)
-            RecordGroup(title: "决策") {
-                if slice.decisions.isEmpty {
-                    Text("无").foregroundStyle(.secondary)
-                } else {
-                    ForEach(slice.decisions.sorted(by: decisionOrdering)) { decision in
-                        DecisionRow(decision: decision)
+
+            Divider()
+
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !slice.actions.isEmpty {
+                        RecordGroup(title: "完整动作") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(slice.actions.sorted(), id: \.self) { action in
+                                    Label(action, systemImage: "circle.fill")
+                                        .labelStyle(BulletLabelStyle())
+                                        .lineSpacing(2)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+
+                    if !orderedDecisions.isEmpty {
+                        RecordGroup(title: "全部决策及原因") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(orderedDecisions) { decision in
+                                    DecisionRow(decision: decision)
+                                }
+                            }
+                        }
+                    }
+
+                    if !orderedLearnings.isEmpty {
+                        RecordGroup(title: "错误 / 假设变化 / 可复用方法") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(orderedLearnings) { learning in
+                                    LearningRow(learning: learning)
+                                }
+                            }
+                        }
+                    }
+
+                    HStack {
+                        FactLevelBadge(level: slice.factLevel)
+                        Text("详细内容来自完整会话和工作树证据")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                 }
+                .padding(.top, 12)
+            } label: {
+                Label(
+                    isExpanded ? "收起详细过程" : "展开详细过程",
+                    systemImage: isExpanded ? "rectangle.compress.vertical" : "rectangle.expand.vertical"
+                )
+                .font(.subheadline.weight(.semibold))
             }
-            RecordGroup(title: "错误 / 假设变化 / 方法") {
-                if slice.learnings.isEmpty {
-                    Text("无").foregroundStyle(.secondary)
-                } else {
-                    ForEach(slice.learnings.sorted(by: learningOrdering)) { learning in
-                        LearningRow(learning: learning)
-                    }
-                }
-            }
-            ValueGroups(values: slice.values)
         }
         .ledgerCard()
+    }
+}
+
+private struct ValueSummaryRow: View {
+    let value: ValueRecord
+
+    private var color: Color {
+        switch value.status {
+        case .realized: return .green
+        case .pending: return .orange
+        case .notFormed: return .secondary
+        }
+    }
+
+    private var systemImage: String {
+        switch value.status {
+        case .realized: return "checkmark.circle.fill"
+        case .pending: return "clock.fill"
+        case .notFormed: return "minus.circle.fill"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(color)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(value.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(valueKindLabel(value.kind))
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.10), in: Capsule())
+                }
+                Text(value.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            Text(valueStatusLabel(value.status))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
+        }
     }
 }
 
@@ -491,11 +713,118 @@ private struct LedgerSection<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: systemImage).font(.title2.bold())
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage).font(.title3.bold())
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CollapsibleLedgerSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let count: Int
+    let content: Content
+
+    @State private var isExpanded = false
+
+    init(
+        title: String,
+        systemImage: String,
+        count: Int,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.count = count
+        self.content = content()
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+            .padding(.top, 12)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(Color.accentColor)
+                Text(title)
+                    .font(.headline)
+                Text("\(count)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+                Spacer()
+                Text(isExpanded ? "收起" : "查看")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.10)))
+    }
+}
+
+private struct SummaryMetric: View {
+    let value: Int
+    let label: String
+
+    var body: some View {
+        Text("\(value) \(label)")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.75), in: Capsule())
+    }
+}
+
+private struct ProjectProgressBadge: View {
+    let status: ProjectProgressStatus?
+
+    private var label: String {
+        switch status {
+        case .exploring: return "探索中"
+        case .active: return "进行中"
+        case .paused: return "已暂停"
+        case .ended: return "已结束"
+        case nil: return "状态未知"
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .exploring: return .blue
+        case .active: return .green
+        case .paused: return .orange
+        case .ended, nil: return .secondary
+        }
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.12), in: Capsule())
+    }
+}
+
+private struct BulletLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            configuration.icon
+                .font(.system(size: 5))
+                .foregroundStyle(Color.secondary)
+            configuration.title
+        }
     }
 }
 
@@ -566,10 +895,10 @@ private struct SourceClassificationBadge: View {
 
 private extension View {
     func ledgerCard() -> some View {
-        padding(12)
+        padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.12)))
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.secondary.opacity(0.12)))
     }
 }
 
@@ -579,6 +908,18 @@ private func decisionOrdering(_ lhs: DecisionRecord, _ rhs: DecisionRecord) -> B
 
 private func learningOrdering(_ lhs: LearningRecord, _ rhs: LearningRecord) -> Bool {
     (lhs.kind.rawValue, lhs.observation, lhs.id) < (rhs.kind.rawValue, rhs.observation, rhs.id)
+}
+
+private func valueOrdering(_ lhs: ValueRecord, _ rhs: ValueRecord) -> Bool {
+    let statusRank: [ValueRealizationStatus: Int] = [.realized: 0, .pending: 1, .notFormed: 2]
+    let kindRank: [ValueKind: Int] = [.project: 0, .process: 1, .crossProject: 2]
+    let leftStatus = statusRank[lhs.status] ?? 3
+    let rightStatus = statusRank[rhs.status] ?? 3
+    if leftStatus != rightStatus { return leftStatus < rightStatus }
+    let leftKind = kindRank[lhs.kind] ?? 3
+    let rightKind = kindRank[rhs.kind] ?? 3
+    if leftKind != rightKind { return leftKind < rightKind }
+    return (lhs.title, lhs.id) < (rhs.title, rhs.id)
 }
 
 private func sourceClassificationLabel(_ classification: DailySourceClassification) -> String {
@@ -626,6 +967,14 @@ private func valueStatusLabel(_ status: ValueRealizationStatus) -> String {
     case .realized: return "已实现"
     case .pending: return "待验证"
     case .notFormed: return "未形成"
+    }
+}
+
+private func valueKindLabel(_ kind: ValueKind) -> String {
+    switch kind {
+    case .project: return "项目"
+    case .process: return "流程"
+    case .crossProject: return "跨项目"
     }
 }
 
