@@ -138,17 +138,52 @@ public struct ChatConversationEvidencePresentation: Sendable {
     }
 
     public static func segmentIDs(
-        for finding: ChatConversationProposalFinding,
+        for asset: ChatConversationProposalAsset,
         in segments: [ChatConversationProposalSegment]
     ) -> [String] {
-        segmentIDs(for: finding.sourceMessages, segments: segments.map { ($0.id, $0.sourceMessages) })
+        segments.contains(where: { $0.id == asset.segmentId }) ? [asset.segmentId] : []
     }
 
     public static func segmentIDs(
-        for finding: ChatConversationFinding,
+        for asset: ChatStudyAsset,
         in segments: [ChatConversationSegment]
     ) -> [String] {
-        segmentIDs(for: finding.sourceMessages, segments: segments.map { ($0.id, $0.sourceMessages) })
+        segments.contains(where: { $0.id == asset.segmentId }) ? [asset.segmentId] : []
+    }
+
+    public func sourceStatus(
+        for version: ChatStudyAssetVersion
+    ) -> ChatConversationSourceStatus {
+        if version.sourceSpans.isEmpty {
+            if version.sourceMessages.isEmpty {
+                return .unavailable
+            }
+            let allPresent = version.sourceMessages.allSatisfy { messagesByReference[$0] != nil }
+            return allPresent ? .legacyUnscoped : .unavailable
+        }
+        var sawChanged = false
+        for span in version.sourceSpans {
+            guard let message = messagesByReference[span.message] else {
+                return .unavailable
+            }
+            let contentHash = ContentHasher.hash(message.content)
+            if contentHash != span.contentHash {
+                sawChanged = true
+                continue
+            }
+            let ns = message.content as NSString
+            guard span.locationUTF16 >= 0,
+                  span.lengthUTF16 > 0,
+                  span.locationUTF16 + span.lengthUTF16 <= ns.length else {
+                sawChanged = true
+                continue
+            }
+            let text = ns.substring(with: NSRange(location: span.locationUTF16, length: span.lengthUTF16))
+            if ContentHasher.hash(text) != span.textHash {
+                sawChanged = true
+            }
+        }
+        return sawChanged ? .changed : .current
     }
 
     private static func segmentIDs(

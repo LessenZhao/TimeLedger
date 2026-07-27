@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "conversationId": "hunan-selection-1",
+  "title": "湖南省直遴选备考",
+  "sourceURL": "https://chatgpt.com/c/hunan-selection-1",
+  "createdAt": "2026-07-20T00:00:00Z",
+  "updatedAt": "2026-07-27T12:00:00Z",
+  "messages": [
+    {
+      "id": "batch1-user-strategy",
+      "role": "user",
+      "createdAt": "2026-07-20T01:00:00Z",
+      "content": "请给我三阶段备考策略。"
+    },
+    {
+      "id": "batch1-assistant-strategy",
+      "role": "assistant",
+      "createdAt": "2026-07-20T01:01:00Z",
+      "content": "第一阶段夯实基础。\n第二阶段专项突破。\n第三阶段模拟冲刺。\n"
+    },
+    {
+      "id": "batch1-user-essay",
+      "role": "user",
+      "createdAt": "2026-07-20T02:00:00Z",
+      "content": "请写一篇扩大内需完整范文。"
+    },
+    {
+      "id": "batch1-assistant-essay",
+      "role": "assistant",
+      "createdAt": "2026-07-20T02:01:00Z",
+      "content": "扩大内需标题\n第一段：总起。\n第二段：对策。\n第三段：保障。\n结尾：收束。\n"
+    },
+    {
+      "id": "batch1-user-modules",
+      "role": "user",
+      "createdAt": "2026-07-20T03:00:00Z",
+      "content": "请给两个背诵表达模块。"
+    },
+    {
+      "id": "batch1-assistant-modules",
+      "role": "assistant",
+      "createdAt": "2026-07-20T03:01:00Z",
+      "content": "模块一：以人民为中心。\n模块二：统筹发展和安全。\n"
+    },
+    {
+      "id": "batch2-user-patch",
+      "role": "user",
+      "createdAt": "2026-07-27T10:00:00Z",
+      "content": "请只改范文第二段。"
+    },
+    {
+      "id": "batch2-assistant-patch",
+      "role": "assistant",
+      "createdAt": "2026-07-27T10:01:00Z",
+      "content": "第二段：对策修订版，突出湖南场景。\n"
+    },
+    {
+      "id": "batch2-user-case",
+      "role": "user",
+      "createdAt": "2026-07-27T11:00:00Z",
+      "content": "补充一个湖南案例素材。"
+    },
+    {
+      "id": "batch2-assistant-case",
+      "role": "assistant",
+      "createdAt": "2026-07-27T11:01:00Z",
+      "content": "湖南案例：某市县域商业体系建设。\n"
+    }
+  ]
+}

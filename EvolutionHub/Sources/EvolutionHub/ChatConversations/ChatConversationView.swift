@@ -32,7 +32,7 @@ struct ChatConversationView: View {
             Divider()
             commandPanel
         }
-        .navigationTitle("ChatGPT 对话")
+        .navigationTitle("湖南省直遴选备考库")
         .onAppear {
             synchronizeDateRange()
             store.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)

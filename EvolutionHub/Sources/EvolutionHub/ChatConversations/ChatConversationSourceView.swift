@@ -8,28 +8,24 @@ enum ChatConversationSourcePurpose {
 
     var buttonLabel: String {
         switch self {
-        case .coverage:
-            return "查看处理材料"
-        case .evidence:
-            return "查看结论依据"
+        case .coverage: return "查看处理材料"
+        case .evidence: return "查看原文上下文"
         }
     }
 
     var title: String {
         switch self {
-        case .coverage:
-            return "已覆盖原始消息"
-        case .evidence:
-            return "结论引用的原始消息"
+        case .coverage: return "已覆盖原始消息"
+        case .evidence: return "资产引用的原始消息"
         }
     }
 
     var explanation: String {
         switch self {
         case .coverage:
-            return "这些消息已被本次处理覆盖；它们不一定都直接证明同一条结论。"
+            return "这些消息已被本次处理覆盖；它们不一定都直接证明同一条资产。"
         case .evidence:
-            return "这些消息是该结论引用的对话材料；它们仍保留在所属会话片段中。"
+            return "这些消息是该资产引用的对话材料；可选择连续文本加入备考库。"
         }
     }
 }
@@ -38,17 +34,8 @@ struct ChatConversationSourceView: View {
     @ObservedObject var store: ChatConversationHubStore
     let references: [ChatConversationMessageReference]
     let purpose: ChatConversationSourcePurpose
+    var destination: ChatConversationSourceDestination = .readOnly
     @State private var isInspectorPresented = false
-
-    init(
-        store: ChatConversationHubStore,
-        references: [ChatConversationMessageReference],
-        purpose: ChatConversationSourcePurpose = .coverage
-    ) {
-        self.store = store
-        self.references = references
-        self.purpose = purpose
-    }
 
     var body: some View {
         Button {
@@ -61,7 +48,8 @@ struct ChatConversationSourceView: View {
             ChatConversationSourceInspector(
                 store: store,
                 references: references,
-                purpose: purpose
+                purpose: purpose,
+                destination: destination
             )
         }
     }
@@ -72,7 +60,11 @@ private struct ChatConversationSourceInspector: View {
     @ObservedObject var store: ChatConversationHubStore
     let references: [ChatConversationMessageReference]
     let purpose: ChatConversationSourcePurpose
+    let destination: ChatConversationSourceDestination
     @State private var selectedTurnID: String?
+    @State private var selectedRange = NSRange(location: 0, length: 0)
+    @State private var activeMessage: ChatConversationSourceMessage?
+    @State private var editorSelection: ChatConversationTextSelection?
 
     private var summary: ChatConversationSourceSummary {
         store.sourceSummary(for: references)
@@ -84,120 +76,144 @@ private struct ChatConversationSourceInspector: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    Text(purpose.explanation)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    sourceSummary
-
-                    if turns.isEmpty {
-                        ContentUnavailableView(
-                            "原始消息当前不可用",
-                            systemImage: "exclamationmark.triangle",
-                            description: Text("归档刷新后可再次查看。")
-                        )
-                    } else {
-                        Text("按对话轮次查看")
-                            .font(.headline)
-                        ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-                            turnRow(turn, number: index + 1)
+            HSplitView {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        Text(purpose.explanation)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text("消息 \(summary.messageCount) · 用户 \(summary.userMessageCount) · 助手 \(summary.assistantMessageCount) · 轮次 \(summary.turnCount)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(turns) { turn in
+                            DisclosureGroup(isExpanded: expansion(for: turn.id)) {
+                                ForEach(turn.messages) { message in
+                                    Button {
+                                        activeMessage = message
+                                        selectedRange = NSRange(location: 0, length: 0)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("\(message.role.rawValue) · \(message.createdAt)")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(message.content)
+                                                .lineLimit(4)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            } label: {
+                                Text("轮次 \(turn.id)")
+                            }
                         }
                     }
+                    .padding()
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 280)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let activeMessage {
+                        Text("\(activeMessage.role.rawValue) · \(activeMessage.reference.messageId)")
+                            .font(.headline)
+                        SelectableSourceTextView(text: activeMessage.content, selectedRange: $selectedRange)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if canAddToLibrary {
+                            Button("加入备考库") {
+                                do {
+                                    let selection = try ChatConversationTextSelection.make(
+                                        conversationID: activeMessage.reference.conversationId,
+                                        message: ChatConversationMessage(
+                                            id: activeMessage.reference.messageId,
+                                            role: activeMessage.role,
+                                            createdAt: activeMessage.createdAt,
+                                            content: activeMessage.content
+                                        ),
+                                        rangeUTF16: selectedRange
+                                    )
+                                    editorSelection = selection
+                                } catch {
+                                    // Invalid selection stays local to the inspector.
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(selectedRange.length == 0)
+                        }
+                    } else {
+                        ContentUnavailableView("选择一条消息", systemImage: "text.cursor")
+                    }
+                }
+                .padding()
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle(purpose.title)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") {
-                        dismiss()
-                    }
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .sheet(item: Binding(
+                get: { editorSelection.map { SelectableEditorItem(selection: $0) } },
+                set: { editorSelection = $0?.selection }
+            )) { item in
+                ChatStudyAssetEditorSheet(previewText: item.selection.textSnapshot) { title, kind, subtype, uses in
+                    saveSelection(item.selection, title: title, kind: kind, subtype: subtype, uses: uses)
                 }
             }
         }
-        .frame(minWidth: 620, minHeight: 520)
+        .frame(minWidth: 760, minHeight: 520)
     }
 
-    private var sourceSummary: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(
-                "\(summary.turnCount) 轮 · \(summary.userMessageCount) 次你的输入 · \(summary.assistantMessageCount) 段回复 · \(summary.messageCount) 条原始消息"
+    private var canAddToLibrary: Bool {
+        if case .readOnly = destination { return false }
+        return true
+    }
+
+    private func expansion(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { selectedTurnID == nil || selectedTurnID == id },
+            set: { isExpanded in
+                selectedTurnID = isExpanded ? id : nil
+            }
+        )
+    }
+
+    private func saveSelection(
+        _ selection: ChatConversationTextSelection,
+        title: String,
+        kind: ChatStudyAssetKind,
+        subtype: String,
+        uses: Set<ChatStudyAssetUse>
+    ) {
+        switch destination {
+        case .candidate(let jobID, let segmentID):
+            try? store.addManualCandidateAsset(
+                jobID: jobID,
+                segmentID: segmentID,
+                selection: selection,
+                title: title,
+                kind: kind,
+                subtype: subtype,
+                uses: uses
             )
-            .font(.headline)
-            Text("回答的段落和换行不会增加原始消息数。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if summary.unavailableMessageCount > 0 {
-                Text("其中 \(summary.unavailableMessageCount) 条消息目前无法从归档读取。")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
+        case .formal(let segmentID):
+            try? store.addManualFormalAsset(
+                segmentID: segmentID,
+                selection: selection,
+                title: title,
+                kind: kind,
+                subtype: subtype,
+                uses: uses
+            )
+        case .readOnly:
+            break
         }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private func turnRow(_ turn: ChatConversationSourceTurn, number: Int) -> some View {
-        let isSelected = selectedTurnID == turn.id
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                selectedTurnID = isSelected ? nil : turn.id
-            } label: {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: isSelected ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                        .frame(width: 12)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("第 \(number) 轮 · \(store.conversationTitle(for: turn.conversationId))")
-                            .font(.subheadline.weight(.medium))
-                        Text("\(turn.messages.count) 条原始消息 · \(preview(for: turn))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-
-            if isSelected {
-                ForEach(turn.messages) { message in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(roleTitle(message.role)) · \(message.createdAt)")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Text(message.content)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    .padding(10)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                }
-            }
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func preview(for turn: ChatConversationSourceTurn) -> String {
-        guard let first = turn.messages.first else { return "" }
-        let normalized = first.content.replacingOccurrences(of: "\n", with: " ")
-        return String(normalized.prefix(96))
-    }
-
-    private func roleTitle(_ role: ChatConversationRole) -> String {
-        switch role {
-        case .user:
-            return "你"
-        case .assistant:
-            return "ChatGPT"
-        case .system:
-            return "系统"
-        case .tool:
-            return "工具"
-        }
+        editorSelection = nil
     }
 }
+
+private struct SelectableEditorItem: Identifiable {
+    var selection: ChatConversationTextSelection
+    var id: String { "\(selection.span.message.messageId)-\(selection.span.locationUTF16)-\(selection.span.lengthUTF16)" }
+}
+

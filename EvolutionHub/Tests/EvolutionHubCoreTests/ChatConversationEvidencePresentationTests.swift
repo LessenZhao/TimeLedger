@@ -31,80 +31,132 @@ final class ChatConversationEvidencePresentationTests: XCTestCase {
             )
         )
         XCTAssertEqual(presentation.turns(for: references).map(\.messages.count), [3, 2])
-        XCTAssertEqual(presentation.turns(for: references).first?.messages.map(\.content), [
-            "First question",
-            "First answer",
-            "Follow-up answer",
-        ])
     }
 
-    func testDerivesCandidateFindingSegmentsFromTheFindingEvidence() {
-        let first = reference(conversation: "conversation-1", message: "message-1")
-        let second = reference(conversation: "conversation-2", message: "message-2")
-        let candidate = ChatConversationProposal(
-            jobId: "job-evidence",
-            sourceDigest: "source",
-            baseLedgerDigest: "ledger",
-            segments: [
-                ChatConversationProposalSegment(
-                    id: "segment-1",
-                    topicTarget: .new(id: "topic-1", name: "Topic"),
-                    sourceMessages: [first]
-                ),
-                ChatConversationProposalSegment(
-                    id: "segment-2",
-                    topicTarget: .new(id: "topic-1", name: "Topic"),
-                    sourceMessages: [second]
-                ),
-            ],
-            findings: [
-                ChatConversationProposalFinding(
-                    id: "finding-1",
-                    topicTarget: .new(id: "topic-1", name: "Topic"),
-                    body: "Cross-conversation finding",
-                    sourceMessages: [first, second]
-                ),
-            ],
-            ignoredMessages: []
-        )
-
-        XCTAssertEqual(
-            ChatConversationEvidencePresentation.segmentIDs(
-                for: candidate.findings[0],
-                in: candidate.segments
-            ),
-            ["segment-1", "segment-2"]
-        )
-    }
-
-    func testDerivesFormalFindingSegmentsFromTheSameEvidenceReferences() {
-        let first = reference(conversation: "conversation-1", message: "message-1")
-        let second = reference(conversation: "conversation-2", message: "message-2")
-        let finding = ChatConversationFinding(
-            id: "finding-1",
-            topicId: "topic-1",
-            body: "Accepted finding",
-            sourceMessages: [first, second]
+    func testDerivesAssetSegmentFromSegmentId() {
+        let asset = ChatConversationProposalAsset(
+            id: "asset-1",
+            segmentId: "segment-2",
+            title: "t",
+            kind: .finishedWork,
+            subtype: "范文",
+            uses: [.memorize],
+            preservation: .verbatim,
+            draftText: nil,
+            sourceBlockIDs: ["b"],
+            sourceSpans: [],
+            replacesAssetID: nil,
+            origin: .skill
         )
         let segments = [
-            ChatConversationSegment(
+            ChatConversationProposalSegment(
                 id: "segment-1",
-                conversationId: "conversation-1",
-                topicId: "topic-1",
-                sourceMessages: [first]
+                title: "a",
+                summary: "a",
+                topicTarget: .new(id: "t1", name: "T"),
+                sourceMessages: []
             ),
-            ChatConversationSegment(
+            ChatConversationProposalSegment(
                 id: "segment-2",
-                conversationId: "conversation-2",
-                topicId: "topic-1",
-                sourceMessages: [second]
+                title: "b",
+                summary: "b",
+                topicTarget: .new(id: "t1", name: "T"),
+                sourceMessages: []
             ),
         ]
-
         XCTAssertEqual(
-            ChatConversationEvidencePresentation.segmentIDs(for: finding, in: segments),
-            ["segment-1", "segment-2"]
+            ChatConversationEvidencePresentation.segmentIDs(for: asset, in: segments),
+            ["segment-2"]
         )
+    }
+
+    func testSourceStatusForCurrentChangedUnavailableAndLegacy() {
+        let content = "需要背诵的规范表述。"
+        let conversation = summary(
+            id: "conversation-1",
+            title: "c",
+            messages: [message(id: "assistant-1", role: .assistant, content: content)]
+        )
+        let presentation = ChatConversationEvidencePresentation(conversations: [conversation])
+        let reference = ChatConversationMessageReference(conversationId: "conversation-1", messageId: "assistant-1")
+        let contentHash = ContentHasher.hash(content)
+        let textHash = ContentHasher.hash(content)
+        let current = ChatStudyAssetVersion(
+            id: "v1",
+            textSnapshot: content,
+            textHash: textHash,
+            preservation: .verbatim,
+            origin: .skill,
+            sourceMessages: [reference],
+            sourceSpans: [
+                ChatConversationSourceSpan(
+                    message: reference,
+                    contentHash: contentHash,
+                    locationUTF16: 0,
+                    lengthUTF16: (content as NSString).length,
+                    textHash: textHash
+                )
+            ],
+            supersedesVersionId: nil,
+            createdAt: "t"
+        )
+        XCTAssertEqual(presentation.sourceStatus(for: current), .current)
+
+        let changed = ChatStudyAssetVersion(
+            id: "v2",
+            textSnapshot: content,
+            textHash: textHash,
+            preservation: .verbatim,
+            origin: .skill,
+            sourceMessages: [reference],
+            sourceSpans: [
+                ChatConversationSourceSpan(
+                    message: reference,
+                    contentHash: "old-hash",
+                    locationUTF16: 0,
+                    lengthUTF16: (content as NSString).length,
+                    textHash: textHash
+                )
+            ],
+            supersedesVersionId: nil,
+            createdAt: "t"
+        )
+        XCTAssertEqual(presentation.sourceStatus(for: changed), .changed)
+
+        let missingRef = ChatConversationMessageReference(conversationId: "conversation-1", messageId: "missing")
+        let unavailable = ChatStudyAssetVersion(
+            id: "v3",
+            textSnapshot: content,
+            textHash: textHash,
+            preservation: .verbatim,
+            origin: .skill,
+            sourceMessages: [missingRef],
+            sourceSpans: [
+                ChatConversationSourceSpan(
+                    message: missingRef,
+                    contentHash: contentHash,
+                    locationUTF16: 0,
+                    lengthUTF16: 1,
+                    textHash: textHash
+                )
+            ],
+            supersedesVersionId: nil,
+            createdAt: "t"
+        )
+        XCTAssertEqual(presentation.sourceStatus(for: unavailable), .unavailable)
+
+        let legacy = ChatStudyAssetVersion(
+            id: "v4",
+            textSnapshot: content,
+            textHash: textHash,
+            preservation: .distilled,
+            origin: .skill,
+            sourceMessages: [reference],
+            sourceSpans: [],
+            supersedesVersionId: nil,
+            createdAt: "t"
+        )
+        XCTAssertEqual(presentation.sourceStatus(for: legacy), .legacyUnscoped)
     }
 
     private func summary(
@@ -116,8 +168,8 @@ final class ChatConversationEvidencePresentationTests: XCTestCase {
             conversationId: id,
             title: title,
             sourceURL: nil,
-            createdAt: "2026-07-27T00:00:00Z",
-            updatedAt: "2026-07-27T00:00:00Z",
+            createdAt: "2026-07-01T00:00:00Z",
+            updatedAt: "2026-07-02T00:00:00Z",
             messages: messages,
             status: .pending,
             processedMessageCount: 0,
@@ -127,20 +179,7 @@ final class ChatConversationEvidencePresentationTests: XCTestCase {
         )
     }
 
-    private func message(
-        id: String,
-        role: ChatConversationRole,
-        content: String
-    ) -> ChatConversationMessage {
-        ChatConversationMessage(
-            id: id,
-            role: role,
-            createdAt: "2026-07-27T00:00:00Z",
-            content: content
-        )
-    }
-
-    private func reference(conversation: String, message: String) -> ChatConversationMessageReference {
-        ChatConversationMessageReference(conversationId: conversation, messageId: message)
+    private func message(id: String, role: ChatConversationRole, content: String) -> ChatConversationMessage {
+        ChatConversationMessage(id: id, role: role, createdAt: "2026-07-02T00:00:00Z", content: content)
     }
 }

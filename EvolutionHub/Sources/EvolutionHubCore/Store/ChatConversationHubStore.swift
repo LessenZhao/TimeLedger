@@ -22,7 +22,10 @@ public enum ChatConversationHubStoreError: Error, Sendable, Equatable {
     case candidateNotFound(String)
     case candidateTopicNotFound(String)
     case candidateSegmentNotFound(String)
+    case candidateAssetNotFound(String)
     case emptyCandidateTopicName
+    case migrationRequired
+    case migrationNotNeeded
 }
 
 extension ChatConversationHubStoreError: LocalizedError {
@@ -38,8 +41,14 @@ extension ChatConversationHubStoreError: LocalizedError {
             return "找不到候选主题：\(id)。"
         case .candidateSegmentNotFound(let id):
             return "找不到候选片段：\(id)。"
+        case .candidateAssetNotFound(let id):
+            return "找不到候选资产：\(id)。"
         case .emptyCandidateTopicName:
             return "候选主题名称不能为空。"
+        case .migrationRequired:
+            return "正式账本仍是 schema v1，请先备份并升级备考库。"
+        case .migrationNotNeeded:
+            return "当前账本无需迁移。"
         }
     }
 }
@@ -48,7 +57,7 @@ public struct ChatConversationConversationProjection: Identifiable, Sendable, Ha
     public var conversationId: String
     public var title: String
     public var segments: [ChatConversationSegment]
-    public var findings: [ChatConversationFinding]
+    public var assets: [ChatStudyAssetRef]
 
     public var id: String { conversationId }
 }
@@ -56,7 +65,7 @@ public struct ChatConversationConversationProjection: Identifiable, Sendable, Ha
 public struct ChatConversationTopicProjection: Identifiable, Sendable, Hashable {
     public var topic: ChatConversationTopic
     public var segments: [ChatConversationSegment]
-    public var findings: [ChatConversationFinding]
+    public var assets: [ChatStudyAssetRef]
 
     public var id: String { topic.id }
 }
@@ -73,10 +82,14 @@ public final class ChatConversationHubStore: ObservableObject {
     @Published public private(set) var lastGeneratedTask: ChatConversationProcessingTask?
     @Published public private(set) var lastError: String?
     @Published public private(set) var candidates: [ChatConversationProposal] = []
+    @Published public private(set) var excludedCandidateAssetIDs: [String: Set<String>] = [:]
     @Published public private(set) var selectedCandidateJobID: String?
     @Published public private(set) var ledgerDocument: ChatConversationLedgerDocument
+    @Published public private(set) var ledgerSchemaState: ChatConversationLedgerSchemaState = .missing
+    @Published public private(set) var lastMigrationBackupURL: URL?
 
     private let ledger: ChatConversationLedger
+    private let layout: EvolutionLedgerLayout
     private let proposalInbox: ChatConversationProposalInbox
     private let jobIDGenerator: @Sendable () -> String
     private var archiveRoot: URL?
@@ -86,6 +99,7 @@ public final class ChatConversationHubStore: ObservableObject {
         layout: EvolutionLedgerLayout = .defaultDocuments(),
         jobIDGenerator: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }
     ) {
+        self.layout = layout
         self.ledger = ChatConversationLedger(layout: layout)
         self.proposalInbox = ChatConversationProposalInbox(layout: layout)
         self.jobIDGenerator = jobIDGenerator
@@ -124,36 +138,50 @@ public final class ChatConversationHubStore: ObservableObject {
     }
 
     public var conversationProjections: [ChatConversationConversationProjection] {
-        conversations.map { conversation in
-            ChatConversationConversationProjection(
+        let refs = ChatStudyAssetPresentation.refs(from: ledgerDocument)
+        return conversations.map { conversation in
+            let segments = ledgerDocument.segments.filter { $0.conversationId == conversation.conversationId }
+            return ChatConversationConversationProjection(
                 conversationId: conversation.conversationId,
                 title: conversation.title,
-                segments: ledgerDocument.segments.filter { $0.conversationId == conversation.conversationId },
-                findings: ledgerDocument.findings.filter { finding in
-                    finding.sourceMessages.contains(where: { $0.conversationId == conversation.conversationId })
-                }
+                segments: segments,
+                assets: refs.filter { $0.conversationID == conversation.conversationId }
             )
         }
     }
 
-    /// Formal views should not show every archived conversation as an empty
-    /// ledger row before it has accepted material.
     public var formalConversationProjections: [ChatConversationConversationProjection] {
-        conversationProjections.filter { !$0.segments.isEmpty || !$0.findings.isEmpty }
+        conversationProjections.filter { !$0.segments.isEmpty || !$0.assets.isEmpty }
     }
 
     public var topicProjections: [ChatConversationTopicProjection] {
-        ledgerDocument.topics.map { topic in
+        let refs = ChatStudyAssetPresentation.refs(from: ledgerDocument)
+        return ledgerDocument.topics.map { topic in
             ChatConversationTopicProjection(
                 topic: topic,
                 segments: ledgerDocument.segments.filter { $0.topicId == topic.id },
-                findings: ledgerDocument.findings.filter { $0.topicId == topic.id }
+                assets: refs.filter { $0.topicID == topic.id }
             )
         }
+    }
+
+    public var kindProjections: [ChatConversationKindProjection] {
+        ChatStudyAssetPresentation.kindProjections(from: ledgerDocument)
     }
 
     public func refresh(archiveRoot: URL) throws {
         do {
+            ledgerSchemaState = try ledger.inspectSchemaState()
+            if ledgerSchemaState == .requiresV1Migration {
+                self.archiveRoot = archiveRoot
+                conversations = []
+                selectedConversationIDs = []
+                evidencePresentation = ChatConversationEvidencePresentation(conversations: [])
+                candidates = []
+                selectedCandidateJobID = nil
+                lastError = ChatConversationHubStoreError.migrationRequired.localizedDescription
+                return
+            }
             let summaries = try ledger.readArchiveSummaries(archiveRoot: archiveRoot)
             self.archiveRoot = archiveRoot
             conversations = summaries
@@ -208,6 +236,11 @@ public final class ChatConversationHubStore: ObservableObject {
     }
 
     public func generateTask() throws -> ChatConversationProcessingTask {
+        guard ledgerSchemaState != .requiresV1Migration else {
+            let error = ChatConversationHubStoreError.migrationRequired
+            lastError = error.localizedDescription
+            throw error
+        }
         guard let archiveRoot else {
             let error = ChatConversationHubStoreError.archiveRootNotConfigured
             lastError = error.localizedDescription
@@ -253,13 +286,6 @@ public final class ChatConversationHubStore: ObservableObject {
                 updated.topicTarget = .new(id: targetID, name: normalizedName)
                 return updated
             }
-            proposal.findings = proposal.findings.map { finding in
-                guard case .new(let targetID, _) = finding.topicTarget, targetID == id else { return finding }
-                didUpdate = true
-                var updated = finding
-                updated.topicTarget = .new(id: targetID, name: normalizedName)
-                return updated
-            }
             guard didUpdate else { throw ChatConversationHubStoreError.candidateTopicNotFound(id) }
         }
     }
@@ -273,31 +299,80 @@ public final class ChatConversationHubStore: ObservableObject {
                 throw ChatConversationHubStoreError.candidateSegmentNotFound(segmentID)
             }
             proposal.segments[index].topicTarget = target
-            proposal.findings = proposal.findings.map { finding in
-                let supportingSegmentIDs = ChatConversationEvidencePresentation.segmentIDs(
-                    for: finding,
-                    in: proposal.segments
-                )
-                guard supportingSegmentIDs.contains(segmentID) else { return finding }
-                let supportingTargets = supportingSegmentIDs.compactMap { supportingID in
-                    proposal.segments.first(where: { $0.id == supportingID })?.topicTarget
+        }
+    }
+
+    public func setCandidateSegmentMetadata(
+        jobID: String,
+        segmentID: String,
+        title: String,
+        summary: String
+    ) throws {
+        try updateCandidate(jobID: jobID) { proposal in
+            guard let index = proposal.segments.firstIndex(where: { $0.id == segmentID }) else {
+                throw ChatConversationHubStoreError.candidateSegmentNotFound(segmentID)
+            }
+            proposal.segments[index].title = title
+            proposal.segments[index].summary = summary
+        }
+    }
+
+    public func setCandidateAssetIncluded(
+        jobID: String,
+        assetID: String,
+        isIncluded: Bool
+    ) throws {
+        guard candidates.contains(where: { $0.jobId == jobID }) else {
+            throw ChatConversationHubStoreError.candidateNotFound(jobID)
+        }
+        guard let candidate = candidates.first(where: { $0.jobId == jobID }),
+              candidate.assets.contains(where: { $0.id == assetID }) else {
+            throw ChatConversationHubStoreError.candidateAssetNotFound(assetID)
+        }
+        var excluded = excludedCandidateAssetIDs[jobID] ?? []
+        if isIncluded {
+            excluded.remove(assetID)
+        } else {
+            excluded.insert(assetID)
+        }
+        excludedCandidateAssetIDs[jobID] = excluded
+    }
+
+    public func updateCandidateAsset(
+        jobID: String,
+        assetID: String,
+        title: String,
+        kind: ChatStudyAssetKind,
+        subtype: String,
+        uses: Set<ChatStudyAssetUse>,
+        draftText: String?
+    ) throws {
+        try updateCandidate(jobID: jobID) { proposal in
+            guard let index = proposal.assets.firstIndex(where: { $0.id == assetID }) else {
+                throw ChatConversationHubStoreError.candidateAssetNotFound(assetID)
+            }
+            proposal.assets[index].title = title
+            proposal.assets[index].kind = kind
+            proposal.assets[index].subtype = subtype
+            proposal.assets[index].uses = uses
+            if proposal.assets[index].preservation == .distilled {
+                if let draftText, draftText != proposal.assets[index].draftText {
+                    proposal.assets[index].draftText = draftText
+                    proposal.assets[index].origin = .userEdited
                 }
-                guard Set(supportingTargets).count == 1, let supportingTarget = supportingTargets.first else {
-                    return finding
-                }
-                var updated = finding
-                updated.topicTarget = supportingTarget
-                return updated
             }
         }
     }
 
     public func confirmCandidate(jobID: String) throws -> ChatConversationReceipt {
-        guard let candidate = candidates.first(where: { $0.jobId == jobID }) else {
+        guard var candidate = candidates.first(where: { $0.jobId == jobID }) else {
             throw ChatConversationHubStoreError.candidateNotFound(jobID)
         }
+        let excluded = excludedCandidateAssetIDs[jobID] ?? []
+        candidate.assets = candidate.assets.filter { !excluded.contains($0.id) }
         do {
             let receipt = try ledger.apply(candidate)
+            excludedCandidateAssetIDs[jobID] = nil
             try reloadLedgerAndCandidates()
             lastError = nil
             return receipt
@@ -313,6 +388,7 @@ public final class ChatConversationHubStore: ObservableObject {
         }
         do {
             let receipt = try ledger.reject(jobId: jobID, reason: reason)
+            excludedCandidateAssetIDs[jobID] = nil
             if let archiveRoot {
                 try refresh(archiveRoot: archiveRoot)
             } else {
@@ -338,9 +414,119 @@ public final class ChatConversationHubStore: ObservableObject {
         try updateLedgerPresentation { try ledger.moveSegment(id: id, toTopicID: toTopicID) }
     }
 
-    public func setMark(findingID: String, isHighlighted: Bool, note: String?) throws {
+    public func setMark(assetID: String, isHighlighted: Bool, note: String?) throws {
         try updateLedgerPresentation {
-            try ledger.setMark(findingID: findingID, isHighlighted: isHighlighted, note: note)
+            try ledger.setMark(assetID: assetID, isHighlighted: isHighlighted, note: note)
+        }
+    }
+
+    public func appendUserEditedVersion(assetID: String, text: String) throws {
+        guard let asset = ledgerDocument.assets.first(where: { $0.id == assetID }),
+              let current = asset.currentVersion else {
+            throw ChatConversationHubStoreError.candidateAssetNotFound(assetID)
+        }
+        try updateLedgerPresentation {
+            try ledger.appendUserVersion(
+                assetID: assetID,
+                text: text,
+                sourceMessages: current.sourceMessages,
+                sourceSpans: current.sourceSpans,
+                preservation: current.preservation
+            )
+        }
+    }
+
+    public func addManualCandidateAsset(
+        jobID: String,
+        segmentID: String,
+        selection: ChatConversationTextSelection,
+        title: String,
+        kind: ChatStudyAssetKind,
+        subtype: String,
+        uses: Set<ChatStudyAssetUse>
+    ) throws {
+        try updateCandidate(jobID: jobID) { proposal in
+            guard proposal.segments.contains(where: { $0.id == segmentID }) else {
+                throw ChatConversationHubStoreError.candidateSegmentNotFound(segmentID)
+            }
+            let asset = ChatConversationProposalAsset(
+                id: "\(jobID)-manual-\(UUID().uuidString.lowercased())",
+                segmentId: segmentID,
+                title: title,
+                kind: kind,
+                subtype: subtype,
+                uses: uses,
+                preservation: .verbatim,
+                draftText: nil,
+                sourceBlockIDs: [],
+                sourceSpans: [selection.span],
+                replacesAssetID: nil,
+                origin: .userSelection
+            )
+            proposal.assets.append(asset)
+        }
+    }
+
+    public func addManualFormalAsset(
+        segmentID: String,
+        selection: ChatConversationTextSelection,
+        title: String,
+        kind: ChatStudyAssetKind,
+        subtype: String,
+        uses: Set<ChatStudyAssetUse>
+    ) throws {
+        let version = ChatStudyAssetVersion(
+            id: "manual-\(UUID().uuidString.lowercased())-v1",
+            textSnapshot: selection.textSnapshot,
+            textHash: ContentHasher.hash(selection.textSnapshot),
+            preservation: .verbatim,
+            origin: .userSelection,
+            sourceMessages: [selection.span.message],
+            sourceSpans: [selection.span],
+            supersedesVersionId: nil,
+            createdAt: ISO8601DateFormatter().string(from: Date())
+        )
+        let asset = ChatStudyAsset(
+            id: version.id.replacingOccurrences(of: "-v1", with: ""),
+            segmentId: segmentID,
+            title: title,
+            kind: kind,
+            subtype: subtype,
+            uses: uses,
+            versions: [version],
+            currentVersionId: version.id,
+            isUserLocked: true
+        )
+        try updateLedgerPresentation {
+            try ledger.appendUserAsset(asset)
+        }
+    }
+
+    @discardableResult
+    public func performLegacyLedgerMigration() throws -> URL {
+        guard ledgerSchemaState == .requiresV1Migration else {
+            throw ChatConversationHubStoreError.migrationNotNeeded
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = formatter.string(from: Date())
+        let backupURL = layout.recordsDirectoryURL
+            .appendingPathComponent("chatgpt-ledger.v1-backup-\(stamp).json")
+        do {
+            _ = try ledger.migrateLegacyLedger(backupURL: backupURL)
+            lastMigrationBackupURL = backupURL
+            ledgerSchemaState = try ledger.inspectSchemaState()
+            if let archiveRoot {
+                try refresh(archiveRoot: archiveRoot)
+            } else {
+                try reloadLedgerAndCandidates()
+            }
+            lastError = nil
+            return backupURL
+        } catch {
+            lastError = "迁移备考库失败：\(error.localizedDescription)"
+            throw error
         }
     }
 
@@ -360,27 +546,45 @@ public final class ChatConversationHubStore: ObservableObject {
         evidencePresentation.conversationTitle(for: conversationID)
     }
 
+    public func sourceStatus(for asset: ChatStudyAsset) -> ChatConversationSourceStatus {
+        guard let version = asset.currentVersion else { return .unavailable }
+        return evidencePresentation.sourceStatus(for: version)
+    }
+
     public func candidateSupportingSegmentIDs(
-        for finding: ChatConversationProposalFinding,
+        for asset: ChatConversationProposalAsset,
         in candidate: ChatConversationProposal
     ) -> [String] {
-        ChatConversationEvidencePresentation.segmentIDs(for: finding, in: candidate.segments)
+        ChatConversationEvidencePresentation.segmentIDs(for: asset, in: candidate.segments)
     }
 
-    public func formalSupportingSegmentIDs(for finding: ChatConversationFinding) -> [String] {
-        ChatConversationEvidencePresentation.segmentIDs(for: finding, in: ledgerDocument.segments)
+    public func formalSupportingSegmentIDs(for asset: ChatStudyAsset) -> [String] {
+        ChatConversationEvidencePresentation.segmentIDs(for: asset, in: ledgerDocument.segments)
     }
 
-    public func mark(for findingID: String) -> ChatConversationMark? {
-        ledgerDocument.marks.first(where: { $0.findingId == findingID })
+    public func isCandidateAssetIncluded(jobID: String, assetID: String) -> Bool {
+        !(excludedCandidateAssetIDs[jobID] ?? []).contains(assetID)
+    }
+
+    public func asset(id: String) -> ChatStudyAsset? {
+        ledgerDocument.assets.first(where: { $0.id == id })
     }
 
     private func updateSelectedCandidate(
         _ update: (inout ChatConversationProposal) throws -> Void
     ) throws {
-        guard let jobID = selectedCandidateJobID,
-              let index = candidates.firstIndex(where: { $0.jobId == jobID }) else {
-            throw ChatConversationHubStoreError.candidateNotFound(selectedCandidateJobID ?? "")
+        guard let jobID = selectedCandidateJobID else {
+            throw ChatConversationHubStoreError.candidateNotFound("")
+        }
+        try updateCandidate(jobID: jobID, update)
+    }
+
+    private func updateCandidate(
+        jobID: String,
+        _ update: (inout ChatConversationProposal) throws -> Void
+    ) throws {
+        guard let index = candidates.firstIndex(where: { $0.jobId == jobID }) else {
+            throw ChatConversationHubStoreError.candidateNotFound(jobID)
         }
         var candidate = candidates[index]
         try update(&candidate)
@@ -401,6 +605,12 @@ public final class ChatConversationHubStore: ObservableObject {
     }
 
     private func reloadLedgerAndCandidates() throws {
+        ledgerSchemaState = try ledger.inspectSchemaState()
+        if ledgerSchemaState == .requiresV1Migration {
+            candidates = []
+            selectedCandidateJobID = nil
+            return
+        }
         let document = try ledger.load()
         ledgerDocument = document
         let terminalJobIDs = Set(document.receipts.compactMap { receipt -> String? in
