@@ -6,6 +6,7 @@ import SwiftUI
 struct EvolutionHubApp: App {
     @StateObject private var hubStore = HubStore()
     @StateObject private var workEvolutionStore = WorkEvolutionHubStore()
+    @StateObject private var chatConversationStore = ChatConversationHubStore()
     @NSApplicationDelegateAdaptor(HubAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
@@ -14,13 +15,18 @@ struct EvolutionHubApp: App {
             RootView()
                 .environmentObject(hubStore)
                 .environmentObject(workEvolutionStore)
+                .environmentObject(chatConversationStore)
                 .frame(minWidth: 1000, minHeight: 680)
                 .task {
                     await workEvolutionStore.refresh()
+                    chatConversationStore.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
-                    Task { await workEvolutionStore.refresh() }
+                    Task {
+                        await workEvolutionStore.refresh()
+                        chatConversationStore.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
+                    }
                 }
         }
         .defaultSize(width: 1180, height: 760)

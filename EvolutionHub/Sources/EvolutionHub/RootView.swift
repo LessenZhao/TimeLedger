@@ -26,6 +26,8 @@ struct RootView: View {
                 Section("进化（Mac）") {
                     Label("工作沉淀", systemImage: "point.3.connected.trianglepath.dotted")
                         .tag(MacSection.workEvolution)
+                    Label("ChatGPT 对话", systemImage: "bubble.left.and.bubble.right")
+                        .tag(MacSection.chatConversations)
                     Label("上下文", systemImage: "tray")
                         .tag(MacSection.context)
                     Label("证据复盘", systemImage: "text.book.closed")
@@ -67,6 +69,9 @@ struct RootView: View {
             ReviewStatsPane()
         case .workEvolution:
             WorkEvolutionView()
+        case .chatConversations:
+            ChatConversationView()
+                .environmentObject(hubStore)
         case .context:
             InboxView()
                 .environmentObject(hubStore)
@@ -81,5 +86,5 @@ struct RootView: View {
 }
 
 private enum MacSection: Hashable {
-    case connection, today, thoughts, reviewStats, workEvolution, context, evidenceReview, settings
+    case connection, today, thoughts, reviewStats, workEvolution, chatConversations, context, evidenceReview, settings
 }
