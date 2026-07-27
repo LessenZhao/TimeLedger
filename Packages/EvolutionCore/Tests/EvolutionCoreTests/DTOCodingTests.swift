@@ -107,34 +107,21 @@ final class DTOCodingTests: XCTestCase {
         XCTAssertEqual(EvolutionSchema.protocolVersion, "1.0")
     }
 
-    func testChatConversationProposalDecodesLegacyCandidateWithoutDuplicateMatches() throws {
-        let legacy = """
-        {
-          "jobId": "job-1",
-          "sourceDigest": "source",
-          "baseLedgerDigest": "ledger",
-          "segments": [],
-          "findings": [],
-          "ignoredMessages": []
-        }
-        """.data(using: .utf8)!
-
-        let decoded = try JSONDecoder().decode(ChatConversationProposal.self, from: legacy)
-        XCTAssertTrue(decoded.duplicateMatches.isEmpty)
-
+    func testChatConversationProposalRoundTripsAssetsAndDuplicateMatches() throws {
         let proposal = ChatConversationProposal(
             jobId: "job-2",
             sourceDigest: "source",
             baseLedgerDigest: "ledger",
             segments: [],
-            findings: [],
-            duplicateMatches: [ChatConversationDuplicateMatch(
-                existingFindingId: "finding-existing",
-                sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
+            assets: [],
+            duplicateMatches: [ChatConversationDuplicateAssetMatch(
+                existingAssetId: "asset-existing",
+                sourceBlockIDs: ["conversation-1:message-1:line-0"]
             )],
             ignoredMessages: []
         )
         XCTAssertEqual(try roundTrip(proposal).duplicateMatches, proposal.duplicateMatches)
+        XCTAssertTrue(try roundTrip(proposal).assets.isEmpty)
     }
 
     private func roundTrip<T: Codable>(_ value: T) throws -> T {

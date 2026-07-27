@@ -55,6 +55,7 @@ final class ChatConversationLedgerTests: XCTestCase {
 
         XCTAssertEqual(task.inputMessages.filter(\.contextOnly).map(\.messageId), ["old-user", "old-assistant"])
         XCTAssertEqual(task.inputMessages.filter { !$0.contextOnly }.map(\.messageId), ["new-user", "new-assistant"])
+        XCTAssertFalse(task.inputMessages.first { $0.messageId == "new-assistant" }?.sourceBlocks.isEmpty ?? true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: layout.chatConversationJobURL(jobId: "job-1").path))
 
         let proposal = proposal(for: task)
@@ -66,7 +67,8 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertEqual(repeatedReceipt.status, .noOp)
         XCTAssertEqual(document.topics.map(\.id), ["topic:planning"])
         XCTAssertEqual(document.segments.count, 1)
-        XCTAssertEqual(document.findings.count, 1)
+        XCTAssertEqual(document.segments.first?.title, "New planning segment")
+        XCTAssertEqual(document.assets.count, 1)
         XCTAssertEqual(
             document.processedRevisions.map(\.messageId),
             ["old-user", "old-assistant", "new-user", "new-assistant"]
@@ -100,7 +102,7 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertTrue(try ledger.load().processedRevisions.isEmpty)
     }
 
-    func testRejectsFindingWhoseTopicDiffersFromItsSupportingSegment() throws {
+    func testRejectsAssetWhoseSegmentIsMissing() throws {
         let fixture = try ChatLedgerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         try fixture.writeConversation(
@@ -111,15 +113,15 @@ final class ChatConversationLedgerTests: XCTestCase {
         let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
         let ledger = ChatConversationLedger(layout: layout)
         let task = try ledger.createTask(
-            jobId: "job-topic-mismatch",
+            jobId: "job-missing-segment",
             selectedConversationIDs: ["conversation-1"],
             archiveRoot: fixture.rootURL
         )
         var invalid = proposal(for: task)
-        invalid.findings[0].topicTarget = .new(id: "topic:other", name: "Other")
+        invalid.assets[0].segmentId = "missing-segment"
 
         XCTAssertThrowsError(try ledger.apply(invalid)) { error in
-            XCTAssertEqual(error as? ChatConversationLedgerError, .findingTopicMismatch)
+            XCTAssertEqual(error as? ChatConversationLedgerError, .missingSegment("missing-segment"))
         }
         XCTAssertTrue(try ledger.load().processedRevisions.isEmpty)
     }
@@ -167,7 +169,7 @@ final class ChatConversationLedgerTests: XCTestCase {
         ])
     }
 
-    func testDuplicateMatchMustReferenceAnExistingFindingAndDoesNotCreateAnotherOne() throws {
+    func testDuplicateMatchMustReferenceAnExistingAssetAndDoesNotCreateAnotherOne() throws {
         let fixture = try ChatLedgerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "User message")])
@@ -175,39 +177,66 @@ final class ChatConversationLedgerTests: XCTestCase {
         let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
         let store = JSONChatConversationLedgerStore(layout: layout)
         let source = ChatConversationMessageReference(conversationId: "old-conversation", messageId: "old-message")
+        let version = ChatStudyAssetVersion(
+            id: "asset:existing-v1",
+            textSnapshot: "Existing asset",
+            textHash: ContentHasher.hash("Existing asset"),
+            preservation: .distilled,
+            origin: .skill,
+            sourceMessages: [source],
+            sourceSpans: [],
+            supersedesVersionId: nil,
+            createdAt: "2026-07-01T00:00:00Z"
+        )
         try store.save(ChatConversationLedgerDocument(
             topics: [ChatConversationTopic(id: "topic:existing", name: "Existing")],
-            findings: [ChatConversationFinding(
-                id: "finding:existing",
-                topicId: "topic:existing",
-                body: "Existing finding",
-                sourceMessages: [source]
-            )]
+            segments: [
+                ChatConversationSegment(
+                    id: "segment:existing",
+                    conversationId: "old-conversation",
+                    topicId: "topic:existing",
+                    title: "Existing segment",
+                    summary: "Existing summary",
+                    sourceMessages: [source]
+                ),
+            ],
+            assets: [
+                ChatStudyAsset(
+                    id: "asset:existing",
+                    segmentId: "segment:existing",
+                    title: "Existing",
+                    kind: .viewpointKnowledge,
+                    subtype: "历史结论",
+                    uses: [.review],
+                    versions: [version],
+                    currentVersionId: version.id
+                ),
+            ]
         ))
         let ledger = ChatConversationLedger(layout: layout)
         let task = try ledger.createTask(jobId: "job-duplicate", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
 
         var invalid = proposal(for: task, topicTarget: .existing(id: "topic:existing"))
-        invalid.duplicateMatches = [ChatConversationDuplicateMatch(
-            existingFindingId: "missing-finding",
-            sourceMessages: [task.inputMessages[0].reference]
+        invalid.duplicateMatches = [ChatConversationDuplicateAssetMatch(
+            existingAssetId: "missing-asset",
+            sourceBlockIDs: ["block-1"]
         )]
         XCTAssertThrowsError(try ledger.apply(invalid)) { error in
             XCTAssertEqual(error as? ChatConversationLedgerError, .invalidSourceReference)
         }
 
         var proposal = proposal(for: task, topicTarget: .existing(id: "topic:existing"))
-        proposal.findings = []
-        proposal.duplicateMatches = [ChatConversationDuplicateMatch(
-            existingFindingId: "finding:existing",
-            sourceMessages: [task.inputMessages[0].reference]
+        proposal.assets = []
+        proposal.duplicateMatches = [ChatConversationDuplicateAssetMatch(
+            existingAssetId: "asset:existing",
+            sourceBlockIDs: ["block-1"]
         )]
         _ = try ledger.apply(proposal)
 
         XCTAssertEqual(
-            try ledger.load().findings.map(\.id),
-            ["finding:existing"],
-            "The duplicate match is review-only; accepting it must not create a duplicate formal finding."
+            try ledger.load().assets.map(\.id),
+            ["asset:existing"],
+            "The duplicate match is review-only; accepting it must not create a duplicate formal asset."
         )
     }
 
@@ -354,11 +383,22 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertTrue(try ledger.load().receipts.isEmpty)
     }
 
-    func testUserTopicSegmentAndFindingEditsPersistWithoutCandidateOverwrite() throws {
+    func testUserTopicSegmentAndAssetEditsPersistWithoutCandidateOverwrite() throws {
         let fixture = try ChatLedgerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
         let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
         let store = JSONChatConversationLedgerStore(layout: layout)
+        let version = ChatStudyAssetVersion(
+            id: "asset-1-v1",
+            textSnapshot: "User-relevant asset",
+            textHash: ContentHasher.hash("User-relevant asset"),
+            preservation: .distilled,
+            origin: .skill,
+            sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")],
+            sourceSpans: [],
+            supersedesVersionId: nil,
+            createdAt: "2026-07-01T00:00:00Z"
+        )
         try store.save(ChatConversationLedgerDocument(
             topics: [
                 ChatConversationTopic(id: "topic-a", name: "Candidate topic"),
@@ -370,15 +410,21 @@ final class ChatConversationLedgerTests: XCTestCase {
                     id: "segment-1",
                     conversationId: "conversation-1",
                     topicId: "topic-a",
+                    title: "Segment title",
+                    summary: "Segment summary",
                     sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
                 )
             ],
-            findings: [
-                ChatConversationFinding(
-                    id: "finding-1",
-                    topicId: "topic-b",
-                    body: "User-relevant finding",
-                    sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
+            assets: [
+                ChatStudyAsset(
+                    id: "asset-1",
+                    segmentId: "segment-1",
+                    title: "Asset",
+                    kind: .viewpointKnowledge,
+                    subtype: "观点",
+                    uses: [.review],
+                    versions: [version],
+                    currentVersionId: version.id
                 )
             ]
         ))
@@ -386,7 +432,7 @@ final class ChatConversationLedgerTests: XCTestCase {
 
         _ = try ledger.renameTopic(id: "topic-a", name: "User name")
         _ = try ledger.moveSegment(id: "segment-1", toTopicID: "topic-b")
-        _ = try ledger.setMark(findingID: "finding-1", isHighlighted: true, note: "Keep this")
+        _ = try ledger.setMark(assetID: "asset-1", isHighlighted: true, note: "Keep this")
         _ = try ledger.mergeTopic(id: "topic-b", intoTopicID: "topic-c")
 
         let reloaded = try ChatConversationLedger(layout: layout).load()
@@ -394,8 +440,9 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertEqual(reloaded.topics.first(where: { $0.id == "topic-a" }), ChatConversationTopic(id: "topic-a", name: "User name", isUserLocked: true))
         XCTAssertEqual(reloaded.segments.first?.topicId, "topic-c")
         XCTAssertTrue(reloaded.segments.first?.isUserLocked == true)
-        XCTAssertEqual(reloaded.findings.first?.topicId, "topic-c")
-        XCTAssertEqual(reloaded.marks, [ChatConversationMark(findingId: "finding-1", isHighlighted: true, note: "Keep this")])
+        XCTAssertEqual(reloaded.assets.first?.segmentId, "segment-1")
+        XCTAssertEqual(reloaded.assets.first?.isHighlighted, true)
+        XCTAssertEqual(reloaded.assets.first?.note, "Keep this")
     }
 
     func testRejectNormalizesJobIDAndRecoversMissingReceipt() throws {
@@ -455,6 +502,40 @@ final class ChatConversationLedgerTests: XCTestCase {
         topicTarget: ChatConversationTopicTarget = .new(id: "topic:planning", name: "Planning")
     ) -> ChatConversationProposal {
         let selectedMessages = task.inputMessages.filter { !$0.contextOnly }
+        let first = selectedMessages[0]
+        let assistantBlocks = selectedMessages.first(where: { $0.role == .assistant })?.sourceBlocks ?? []
+        let asset: ChatConversationProposalAsset
+        if !assistantBlocks.isEmpty {
+            asset = ChatConversationProposalAsset(
+                id: "asset:1",
+                segmentId: "segment:1",
+                title: "A supported asset",
+                kind: .finishedWork,
+                subtype: "范文",
+                uses: [.memorize],
+                preservation: .verbatim,
+                draftText: nil,
+                sourceBlockIDs: assistantBlocks.map(\.id),
+                sourceSpans: [],
+                replacesAssetID: nil,
+                origin: .skill
+            )
+        } else {
+            asset = ChatConversationProposalAsset(
+                id: "asset:1",
+                segmentId: "segment:1",
+                title: "A supported asset",
+                kind: .viewpointKnowledge,
+                subtype: "观点",
+                uses: [.review],
+                preservation: .distilled,
+                draftText: "A supported finding",
+                sourceBlockIDs: first.sourceBlocks.map(\.id),
+                sourceSpans: [],
+                replacesAssetID: nil,
+                origin: .skill
+            )
+        }
         return ChatConversationProposal(
             jobId: task.jobId,
             sourceDigest: task.sourceDigest,
@@ -462,18 +543,13 @@ final class ChatConversationLedgerTests: XCTestCase {
             segments: [
                 ChatConversationProposalSegment(
                     id: "segment:1",
+                    title: "New planning segment",
+                    summary: "Covers the selected messages for this task.",
                     topicTarget: topicTarget,
                     sourceMessages: selectedMessages.map(\.reference)
                 ),
             ],
-            findings: [
-                ChatConversationProposalFinding(
-                    id: "finding:1",
-                    topicTarget: topicTarget,
-                    body: "A supported finding",
-                    sourceMessages: [selectedMessages[0].reference]
-                ),
-            ],
+            assets: [asset],
             ignoredMessages: []
         )
     }

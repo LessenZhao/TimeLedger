@@ -49,15 +49,17 @@ public enum ChatConversationLedgerError: Error, Sendable, Equatable {
     case staleLedger
     case incompleteInputCoverage
     case invalidSourceReference
-    case findingTopicMismatch
+    case assetSegmentMismatch
     case invalidTopicTarget
     case duplicateRecordID
     case jobAlreadyRejected
     case missingTopic(String)
     case missingSegment(String)
-    case missingFinding(String)
+    case missingAsset(String)
     case emptyTopicName
     case identicalTopicMerge
+    case lockedAsset(String)
+    case invalidAssetMaterialization(String)
 }
 
 public final class ChatConversationLedger: @unchecked Sendable {
@@ -144,12 +146,24 @@ public final class ChatConversationLedger: @unchecked Sendable {
             }
 
             let task = ChatConversationProcessingTask(
+                schemaVersion: 2,
                 jobId: normalizedJobID,
                 createdAt: timestamp(now()),
                 selectedConversationIDs: selectedIDs,
                 inputMessages: inputMessages,
                 existingTopics: document.topics.map { ChatConversationTaskTopic(id: $0.id, name: $0.name) },
-                existingFindings: document.findings.map { ChatConversationTaskFinding(id: $0.id, topicId: $0.topicId, body: $0.body) },
+                existingAssets: document.assets.map { asset in
+                    ChatConversationTaskAsset(
+                        id: asset.id,
+                        segmentId: asset.segmentId,
+                        title: asset.title,
+                        kind: asset.kind,
+                        subtype: asset.subtype,
+                        uses: asset.uses,
+                        currentText: asset.currentVersion?.textSnapshot ?? "",
+                        isUserLocked: asset.isUserLocked
+                    )
+                },
                 sourceDigest: sourceDigest(for: inputMessages),
                 baseLedgerDigest: try ledgerDigest(document)
             )
@@ -246,9 +260,6 @@ public final class ChatConversationLedger: @unchecked Sendable {
                 document.segments[index].topicId = intoTopicID
                 document.segments[index].isUserLocked = true
             }
-            for index in document.findings.indices where document.findings[index].topicId == id {
-                document.findings[index].topicId = intoTopicID
-            }
             document.topics.remove(at: sourceIndex)
         }
     }
@@ -267,32 +278,17 @@ public final class ChatConversationLedger: @unchecked Sendable {
     }
 
     public func setMark(
-        findingID: String,
+        assetID: String,
         isHighlighted: Bool,
         note: String?
     ) throws -> ChatConversationLedgerDocument {
         try updateDocument { document in
-            guard document.findings.contains(where: { $0.id == findingID }) else {
-                throw ChatConversationLedgerError.missingFinding(findingID)
+            guard let index = document.assets.firstIndex(where: { $0.id == assetID }) else {
+                throw ChatConversationLedgerError.missingAsset(assetID)
             }
             let normalizedNote = note?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-            if let index = document.marks.firstIndex(where: { $0.findingId == findingID }) {
-                if !isHighlighted, normalizedNote == nil {
-                    document.marks.remove(at: index)
-                } else {
-                    document.marks[index] = ChatConversationMark(
-                        findingId: findingID,
-                        isHighlighted: isHighlighted,
-                        note: normalizedNote
-                    )
-                }
-            } else if isHighlighted || normalizedNote != nil {
-                document.marks.append(ChatConversationMark(
-                    findingId: findingID,
-                    isHighlighted: isHighlighted,
-                    note: normalizedNote
-                ))
-            }
+            document.assets[index].isHighlighted = isHighlighted
+            document.assets[index].note = normalizedNote
         }
     }
 
@@ -370,47 +366,48 @@ public final class ChatConversationLedger: @unchecked Sendable {
         guard Set(coverage) == input, Set(coverage).count == coverage.count else {
             throw ChatConversationLedgerError.incompleteInputCoverage
         }
-        guard proposal.findings.flatMap(\.sourceMessages).allSatisfy({ input.contains($0) }),
-              proposal.segments.flatMap(\.sourceMessages).allSatisfy({ input.contains($0) }),
+        guard proposal.segments.flatMap(\.sourceMessages).allSatisfy({ input.contains($0) }),
               proposal.duplicateMatches.allSatisfy({ match in
-                  !match.sourceMessages.isEmpty &&
-                  match.sourceMessages.allSatisfy(input.contains) &&
-                  document.findings.contains(where: { $0.id == match.existingFindingId })
+                  !match.sourceBlockIDs.isEmpty &&
+                  document.assets.contains(where: { $0.id == match.existingAssetId })
               }),
               proposal.ignoredMessages.allSatisfy({ !$0.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw ChatConversationLedgerError.invalidSourceReference
         }
+        for asset in proposal.assets {
+            guard proposal.segments.contains(where: { $0.id == asset.segmentId }) else {
+                throw ChatConversationLedgerError.missingSegment(asset.segmentId)
+            }
+        }
         let newSegmentIDs = proposal.segments.map(\.id)
-        let newFindingIDs = proposal.findings.map(\.id)
+        let newAssetIDs = proposal.assets.map(\.id)
         guard Set(newSegmentIDs).count == newSegmentIDs.count,
-              Set(newFindingIDs).count == newFindingIDs.count,
+              Set(newAssetIDs).count == newAssetIDs.count,
               !newSegmentIDs.contains(where: { segmentID in
                   document.segments.contains(where: { existing in existing.id == segmentID })
-              }),
-              !newFindingIDs.contains(where: { findingID in
-                  document.findings.contains(where: { existing in existing.id == findingID })
               }) else {
             throw ChatConversationLedgerError.duplicateRecordID
         }
+        for asset in proposal.assets {
+            if let replacesID = asset.replacesAssetID {
+                guard let existing = document.assets.first(where: { $0.id == replacesID }) else {
+                    throw ChatConversationLedgerError.missingAsset(replacesID)
+                }
+                if existing.isUserLocked {
+                    throw ChatConversationLedgerError.lockedAsset(replacesID)
+                }
+            } else if document.assets.contains(where: { $0.id == asset.id }) {
+                throw ChatConversationLedgerError.duplicateRecordID
+            }
+        }
         guard proposal.segments.allSatisfy({ segment in
+            !segment.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !segment.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             Set(segment.sourceMessages.map(\.conversationId)).count == 1
         }) else {
             throw ChatConversationLedgerError.invalidSourceReference
         }
-        let segmentTargetsBySource = Dictionary(
-            uniqueKeysWithValues: proposal.segments.flatMap { segment in
-                segment.sourceMessages.map { ($0, segment.topicTarget) }
-            }
-        )
-        for finding in proposal.findings {
-            let supportingTargets = finding.sourceMessages.compactMap { segmentTargetsBySource[$0] }
-            guard supportingTargets.count == finding.sourceMessages.count,
-                  Set(supportingTargets).count == 1,
-                  supportingTargets.first == finding.topicTarget else {
-                throw ChatConversationLedgerError.findingTopicMismatch
-            }
-        }
-        for target in proposal.segments.map(\.topicTarget) + proposal.findings.map(\.topicTarget) {
+        for target in proposal.segments.map(\.topicTarget) {
             switch target {
             case .existing(let id):
                 guard document.topics.contains(where: { $0.id == id }) else {
@@ -424,7 +421,7 @@ public final class ChatConversationLedger: @unchecked Sendable {
                 }
             }
         }
-        let proposedNewTopics = proposal.segments.map(\.topicTarget) + proposal.findings.map(\.topicTarget)
+        let proposedNewTopics = proposal.segments.map(\.topicTarget)
         for target in proposedNewTopics {
             guard case .new(let id, let name) = target else { continue }
             guard proposedNewTopics.allSatisfy({ candidate in
@@ -433,6 +430,15 @@ public final class ChatConversationLedger: @unchecked Sendable {
             }) else {
                 throw ChatConversationLedgerError.invalidTopicTarget
             }
+        }
+        let materializer = ChatStudyAssetMaterializer()
+        for asset in proposal.assets {
+            _ = try materializer.materialize(
+                asset,
+                task: task,
+                createdAt: timestamp(now()),
+                existingAsset: asset.replacesAssetID.flatMap { id in document.assets.first(where: { $0.id == id }) }
+            )
         }
     }
 
@@ -451,7 +457,7 @@ public final class ChatConversationLedger: @unchecked Sendable {
         )
 
         var targetIDs: [ChatConversationTopicTarget: String] = [:]
-        for target in proposal.segments.map(\.topicTarget) + proposal.findings.map(\.topicTarget) {
+        for target in proposal.segments.map(\.topicTarget) {
             targetIDs[target] = try resolveTopic(target, in: &document)
         }
         for segment in proposal.segments {
@@ -464,17 +470,45 @@ public final class ChatConversationLedger: @unchecked Sendable {
                 id: segment.id,
                 conversationId: conversationId,
                 topicId: topicID,
+                title: segment.title,
+                summary: segment.summary,
                 sourceMessages: segment.sourceMessages
             ))
         }
-        for finding in proposal.findings {
-            guard let topicID = targetIDs[finding.topicTarget] else { throw ChatConversationLedgerError.invalidTopicTarget }
-            document.findings.append(ChatConversationFinding(
-                id: finding.id,
-                topicId: topicID,
-                body: finding.body,
-                sourceMessages: finding.sourceMessages
-            ))
+        let materializer = ChatStudyAssetMaterializer()
+        let createdAt = timestamp(now())
+        for candidate in proposal.assets {
+            let existing = candidate.replacesAssetID.flatMap { id in document.assets.first(where: { $0.id == id }) }
+            let version = try materializer.materialize(
+                candidate,
+                task: task,
+                createdAt: createdAt,
+                existingAsset: existing
+            )
+            if let replacesID = candidate.replacesAssetID,
+               let index = document.assets.firstIndex(where: { $0.id == replacesID }) {
+                document.assets[index].versions.append(version)
+                document.assets[index].currentVersionId = version.id
+                document.assets[index].title = candidate.title
+                document.assets[index].kind = candidate.kind
+                document.assets[index].subtype = candidate.subtype
+                document.assets[index].uses = candidate.uses
+                if candidate.origin == .userEdited || candidate.origin == .userSelection {
+                    document.assets[index].isUserLocked = true
+                }
+            } else {
+                document.assets.append(ChatStudyAsset(
+                    id: candidate.id,
+                    segmentId: candidate.segmentId,
+                    title: candidate.title,
+                    kind: candidate.kind,
+                    subtype: candidate.subtype,
+                    uses: candidate.uses,
+                    versions: [version],
+                    currentVersionId: version.id,
+                    isUserLocked: candidate.origin == .userSelection || candidate.origin == .userEdited
+                ))
+            }
         }
         document.processedRevisions.append(contentsOf: task.inputMessages.compactMap { message in
             guard !message.contextOnly else { return nil }
