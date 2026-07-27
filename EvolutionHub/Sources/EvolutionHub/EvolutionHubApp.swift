@@ -4,6 +4,7 @@ import SwiftUI
 
 @main
 struct EvolutionHubApp: App {
+    @AppStorage("chatgptArchiveRoot") private var storedChatGPTArchiveRoot = ""
     @StateObject private var hubStore = HubStore()
     @StateObject private var workEvolutionStore = WorkEvolutionHubStore()
     @StateObject private var chatConversationStore = ChatConversationHubStore()
@@ -18,8 +19,12 @@ struct EvolutionHubApp: App {
                 .environmentObject(chatConversationStore)
                 .frame(minWidth: 1000, minHeight: 680)
                 .task {
+                    synchronizeChatGPTArchiveRoot()
                     await workEvolutionStore.refresh()
                     chatConversationStore.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
+                }
+                .onChange(of: hubStore.settings.chatgptArchiveRoot) { _, path in
+                    storedChatGPTArchiveRoot = path
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
@@ -39,6 +44,11 @@ struct EvolutionHubApp: App {
                 .keyboardShortcut("r", modifiers: [.command])
             }
         }
+    }
+
+    private func synchronizeChatGPTArchiveRoot() {
+        guard hubStore.settings.chatgptArchiveRoot != storedChatGPTArchiveRoot else { return }
+        hubStore.settings.chatgptArchiveRoot = storedChatGPTArchiveRoot
     }
 }
 
