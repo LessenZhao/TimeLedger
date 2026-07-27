@@ -32,12 +32,28 @@ struct ChatConversationLedgerView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     switch mode {
                     case .conversation:
-                        ForEach(store.conversationProjections, id: \.id) { (projection: ChatConversationConversationProjection) in
-                            conversationProjection(projection)
+                        if store.formalConversationProjections.isEmpty {
+                            ContentUnavailableView(
+                                "尚未确认正式内容",
+                                systemImage: "checkmark.seal",
+                                description: Text("确认候选后，这里会按会话显示片段、结论和证据链。")
+                            )
+                        } else {
+                            ForEach(store.formalConversationProjections, id: \.id) { projection in
+                                conversationProjection(projection)
+                            }
                         }
                     case .topic:
-                        ForEach(store.topicProjections, id: \.id) { (projection: ChatConversationTopicProjection) in
-                            topicProjection(projection)
+                        if store.topicProjections.isEmpty {
+                            ContentUnavailableView(
+                                "尚未确认正式主题",
+                                systemImage: "tag",
+                                description: Text("确认候选后，这里会按主题汇总片段、结论和证据链。")
+                            )
+                        } else {
+                            ForEach(store.topicProjections, id: \.id) { projection in
+                                topicProjection(projection)
+                            }
                         }
                     }
                 }
@@ -49,72 +65,115 @@ struct ChatConversationLedgerView: View {
 
     @ViewBuilder
     private func conversationProjection(_ projection: ChatConversationConversationProjection) -> some View {
-        DisclosureGroup("\(projection.title) · \(projection.segments.count) 个片段") {
-            ForEach(projection.segments, id: \.id) { (segment: ChatConversationSegment) in
-                HStack {
-                    Text("\(topicName(segment.topicId)) · \(segment.sourceMessages.count) 条来源")
-                        .font(.caption)
-                    Menu("移动") {
-                        ForEach(store.ledgerDocument.topics, id: \.id) { (topic: ChatConversationTopic) in
-                            Button(topic.name) {
-                                try? store.moveSegment(id: segment.id, toTopicID: topic.id)
-                            }
-                        }
+        DisclosureGroup("\(projection.title) · \(projection.segments.count) 个会话片段 / \(projection.findings.count) 条结论") {
+            VStack(alignment: .leading, spacing: 8) {
+                if !projection.segments.isEmpty {
+                    Text("会话片段")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(projection.segments, id: \.id) { segment in
+                        formalSegmentRow(segment, allowsMove: true)
                     }
-                    .font(.caption)
-                    ChatConversationSourceView(store: store, references: segment.sourceMessages)
+                }
+
+                if !projection.findings.isEmpty {
+                    Text("正式结论")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(projection.findings, id: \.id) { finding in
+                        findingRow(finding)
+                    }
                 }
             }
-            ForEach(projection.findings, id: \.id) { (finding: ChatConversationFinding) in
-                findingRow(finding)
-            }
+            .padding(.top, 4)
         }
     }
 
     @ViewBuilder
     private func topicProjection(_ projection: ChatConversationTopicProjection) -> some View {
-        DisclosureGroup("\(projection.topic.name) · \(projection.segments.count) 个片段 / \(projection.findings.count) 个内容点") {
-            HStack {
-                TextField("主题名称", text: topicNameBinding(projection.topic))
-                    .textFieldStyle(.roundedBorder)
-                Menu("合并到") {
-                    ForEach(store.ledgerDocument.topics.filter { $0.id != projection.topic.id }, id: \.id) { (target: ChatConversationTopic) in
-                        Button(target.name) {
-                            try? store.mergeTopic(id: projection.topic.id, intoTopicID: target.id)
+        DisclosureGroup("\(projection.topic.name) · \(projection.segments.count) 个会话片段 / \(projection.findings.count) 条结论") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    TextField("主题名称", text: topicNameBinding(projection.topic))
+                        .textFieldStyle(.roundedBorder)
+                    Menu("合并到") {
+                        ForEach(store.ledgerDocument.topics.filter { $0.id != projection.topic.id }, id: \.id) { target in
+                            Button(target.name) {
+                                try? store.mergeTopic(id: projection.topic.id, intoTopicID: target.id)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
+                if !projection.findings.isEmpty {
+                    Text("正式结论")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(projection.findings, id: \.id) { finding in
+                        findingRow(finding)
+                    }
+                }
+
+                if !projection.segments.isEmpty {
+                    Text("会话片段")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(projection.segments, id: \.id) { segment in
+                        formalSegmentRow(segment, allowsMove: false)
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func formalSegmentRow(_ segment: ChatConversationSegment, allowsMove: Bool) -> some View {
+        let summary = store.sourceSummary(for: segment.sourceMessages)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(store.conversationTitle(for: segment.conversationId)) · \(topicName(segment.topicId))")
+                    .font(.caption.weight(.medium))
+                Text(sourceSummaryText(summary, prefix: "已覆盖"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if allowsMove {
+                Menu("移动") {
+                    ForEach(store.ledgerDocument.topics, id: \.id) { topic in
+                        Button(topic.name) {
+                            try? store.moveSegment(id: segment.id, toTopicID: topic.id)
                         }
                     }
                 }
                 .font(.caption)
             }
-            ForEach(projection.segments, id: \.id) { (segment: ChatConversationSegment) in
-                HStack {
-                    Text("\(segment.conversationId) · \(segment.sourceMessages.count) 条来源")
-                        .font(.caption)
-                    ChatConversationSourceView(store: store, references: segment.sourceMessages)
-                }
-            }
-            ForEach(projection.findings, id: \.id) { (finding: ChatConversationFinding) in
-                findingRow(finding)
-            }
+            Spacer()
+            ChatConversationSourceView(store: store, references: segment.sourceMessages, purpose: .coverage)
         }
     }
 
     @ViewBuilder
     private func findingRow(_ finding: ChatConversationFinding) -> some View {
         let mark = store.mark(for: finding.id)
-        HStack(alignment: .top) {
-            Toggle(
-                isOn: Binding(
-                    get: { mark?.isHighlighted ?? false },
-                    set: { try? store.setMark(findingID: finding.id, isHighlighted: $0, note: mark?.note) }
-                )
-            ) {
-                Image(systemName: "star.fill")
+        let segmentIDs = store.formalSupportingSegmentIDs(for: finding)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                Toggle(
+                    isOn: Binding(
+                        get: { mark?.isHighlighted ?? false },
+                        set: { try? store.setMark(findingID: finding.id, isHighlighted: $0, note: mark?.note) }
+                    )
+                ) {
+                    Image(systemName: "star.fill")
+                }
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                Text(finding.body)
+                    .font(.caption)
+                Spacer()
+                ChatConversationSourceView(store: store, references: finding.sourceMessages, purpose: .evidence)
             }
-            .toggleStyle(.checkbox)
-            .labelsHidden()
-            Text(finding.body)
+            Text("关联会话片段：\(segmentLabels(segmentIDs))")
                 .font(.caption)
+                .foregroundStyle(.secondary)
             TextField(
                 "备注",
                 text: Binding(
@@ -123,10 +182,9 @@ struct ChatConversationLedgerView: View {
                 )
             )
             .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 180)
-            Spacer()
-            ChatConversationSourceView(store: store, references: finding.sourceMessages)
+            .frame(maxWidth: 300)
         }
+        .padding(.vertical, 3)
     }
 
     private func topicNameBinding(_ topic: ChatConversationTopic) -> Binding<String> {
@@ -138,5 +196,18 @@ struct ChatConversationLedgerView: View {
 
     private func topicName(_ id: String) -> String {
         store.ledgerDocument.topics.first(where: { $0.id == id })?.name ?? id
+    }
+
+    private func sourceSummaryText(_ summary: ChatConversationSourceSummary, prefix: String) -> String {
+        "\(prefix) \(summary.messageCount) 条原始消息 · \(summary.userMessageCount) 次你的输入 · \(summary.assistantMessageCount) 段回复"
+    }
+
+    private func segmentLabels(_ ids: [String]) -> String {
+        let labels = ids.compactMap { id -> String? in
+            guard let segment = store.ledgerDocument.segments.first(where: { $0.id == id }) else { return nil }
+            let summary = store.sourceSummary(for: segment.sourceMessages)
+            return "\(store.conversationTitle(for: segment.conversationId))（\(summary.messageCount) 条材料）"
+        }
+        return labels.isEmpty ? "未找到关联会话片段" : labels.joined(separator: "、")
     }
 }

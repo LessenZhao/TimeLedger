@@ -20,9 +20,11 @@ struct ChatConversationView: View {
                 ChatConversationListView(store: store)
                     .frame(minWidth: 260, idealWidth: 330, maxWidth: 460)
 
-                VStack(spacing: 0) {
-                    ChatConversationReviewView(store: store)
-                    Divider()
+                VSplitView {
+                    ScrollView {
+                        ChatConversationReviewView(store: store)
+                    }
+                    .frame(minHeight: 260, idealHeight: 420)
                     ChatConversationLedgerView(store: store)
                 }
                 .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
@@ -93,7 +95,13 @@ struct ChatConversationView: View {
                     .textSelection(.enabled)
             }
 
-            if let command = store.lastGeneratedCommand {
+            if store.hasPendingCandidates {
+                Text("候选已生成，待人工确认")
+                    .font(.subheadline.weight(.semibold))
+                Text("先在上方核对主题、会话片段、候选结论和引用材料；确认或拒绝后再生成下一项任务。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let command = store.lastGeneratedCommand {
                 Text("下一步：在 Codex 中显式执行")
                     .font(.subheadline.weight(.semibold))
                 HStack {

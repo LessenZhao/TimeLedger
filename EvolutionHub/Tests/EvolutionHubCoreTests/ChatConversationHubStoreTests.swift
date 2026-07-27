@@ -105,7 +105,12 @@ final class ChatConversationHubStoreTests: XCTestCase {
             updatedAt: "2026-07-20T10:00:00Z",
             messages: [fixture.message(id: "message-1", content: "Source message")]
         )
-        try fixture.writeManifest(ids: ["conversation-1"])
+        try fixture.writeConversation(
+            id: "empty-conversation",
+            updatedAt: "2026-07-20T10:00:00Z",
+            messages: [fixture.message(id: "empty-message", content: "Not yet accepted")]
+        )
+        try fixture.writeManifest(ids: ["conversation-1", "empty-conversation"])
         let store = ChatConversationHubStore(layout: fixture.layout, jobIDGenerator: { "job-review" })
         try store.refresh(archiveRoot: fixture.archiveRoot)
         store.setSelectedConversationIDs(["conversation-1"])
@@ -136,6 +141,8 @@ final class ChatConversationHubStoreTests: XCTestCase {
 
         try store.refresh(archiveRoot: fixture.archiveRoot)
         XCTAssertEqual(store.candidates, [candidate])
+        XCTAssertTrue(store.hasPendingCandidates)
+        XCTAssertNil(store.lastGeneratedCommand)
         store.selectCandidate(jobID: task.jobId)
         try store.renameCandidateTopic(id: "topic-1", name: "User topic")
         let receipt = try store.confirmCandidate(jobID: task.jobId)
@@ -145,6 +152,10 @@ final class ChatConversationHubStoreTests: XCTestCase {
         XCTAssertEqual(store.conversationProjections.first?.segments.map(\.id), ["segment-1"])
         XCTAssertEqual(store.topicProjections.first?.topic.name, "User topic")
         XCTAssertEqual(store.topicProjections.first?.findings.map(\.id), ["finding-1"])
+        XCTAssertEqual(
+            Set(store.formalConversationProjections.map(\.conversationId)),
+            ["conversation-1"]
+        )
         XCTAssertEqual(
             store.conversationProjections.first?.segments.first?.sourceMessages,
             store.topicProjections.first?.segments.first?.sourceMessages

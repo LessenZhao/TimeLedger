@@ -1,0 +1,180 @@
+import EvolutionCore
+import Foundation
+
+public struct ChatConversationSourceSummary: Sendable, Hashable {
+    public var messageCount: Int
+    public var userMessageCount: Int
+    public var assistantMessageCount: Int
+    public var unavailableMessageCount: Int
+    public var turnCount: Int
+
+    public init(
+        messageCount: Int,
+        userMessageCount: Int,
+        assistantMessageCount: Int,
+        unavailableMessageCount: Int,
+        turnCount: Int
+    ) {
+        self.messageCount = messageCount
+        self.userMessageCount = userMessageCount
+        self.assistantMessageCount = assistantMessageCount
+        self.unavailableMessageCount = unavailableMessageCount
+        self.turnCount = turnCount
+    }
+}
+
+public struct ChatConversationSourceMessage: Identifiable, Sendable, Hashable {
+    public var reference: ChatConversationMessageReference
+    public var role: ChatConversationRole
+    public var createdAt: String
+    public var content: String
+
+    public var id: ChatConversationMessageReference { reference }
+
+    public init(reference: ChatConversationMessageReference, message: ChatConversationMessage) {
+        self.reference = reference
+        self.role = message.role
+        self.createdAt = message.createdAt
+        self.content = message.content
+    }
+}
+
+public struct ChatConversationSourceTurn: Identifiable, Sendable, Hashable {
+    public var id: String
+    public var conversationId: String
+    public var messages: [ChatConversationSourceMessage]
+
+    public init(id: String, conversationId: String, messages: [ChatConversationSourceMessage]) {
+        self.id = id
+        self.conversationId = conversationId
+        self.messages = messages
+    }
+}
+
+/// Presentation-only evidence resolver. It keeps raw message identity intact,
+/// but derives human-readable turns and fragment relationships for both drafts
+/// and accepted ledger records.
+public struct ChatConversationEvidencePresentation: Sendable {
+    private var messagesByReference: [ChatConversationMessageReference: ChatConversationMessage]
+    private var messageOrderByReference: [ChatConversationMessageReference: Int]
+    private var titlesByConversationID: [String: String]
+
+    public init(conversations: [ChatConversationArchiveSummary]) {
+        var messages: [ChatConversationMessageReference: ChatConversationMessage] = [:]
+        var order: [ChatConversationMessageReference: Int] = [:]
+        var titles: [String: String] = [:]
+
+        for conversation in conversations {
+            titles[conversation.conversationId] = conversation.title
+            for (index, message) in conversation.messages.enumerated() {
+                let reference = ChatConversationMessageReference(
+                    conversationId: conversation.conversationId,
+                    messageId: message.id
+                )
+                messages[reference] = message
+                order[reference] = index
+            }
+        }
+
+        self.messagesByReference = messages
+        self.messageOrderByReference = order
+        self.titlesByConversationID = titles
+    }
+
+    public func sourceMessage(for reference: ChatConversationMessageReference) -> ChatConversationMessage? {
+        messagesByReference[reference]
+    }
+
+    public func conversationTitle(for conversationID: String) -> String {
+        titlesByConversationID[conversationID] ?? conversationID
+    }
+
+    public func summary(for references: [ChatConversationMessageReference]) -> ChatConversationSourceSummary {
+        let available = references.compactMap { messagesByReference[$0] }
+        let turns = turns(for: references)
+        return ChatConversationSourceSummary(
+            messageCount: references.count,
+            userMessageCount: available.filter { $0.role == .user }.count,
+            assistantMessageCount: available.filter { $0.role == .assistant }.count,
+            unavailableMessageCount: references.count - available.count,
+            turnCount: turns.count
+        )
+    }
+
+    /// A turn begins with a user message and includes the visible assistant
+    /// messages that follow before the next user message. A leading assistant
+    /// message is kept as a readable preface instead of being discarded.
+    public func turns(for references: [ChatConversationMessageReference]) -> [ChatConversationSourceTurn] {
+        let distinctReferences = orderedDistinct(references)
+        let conversationOrder = orderedDistinct(distinctReferences.map(\.conversationId))
+        var turns: [ChatConversationSourceTurn] = []
+
+        for conversationID in conversationOrder {
+            let orderedReferences = distinctReferences
+                .enumerated()
+                .filter { $0.element.conversationId == conversationID }
+                .sorted { lhs, rhs in
+                    let lhsOrder = messageOrderByReference[lhs.element] ?? Int.max
+                    let rhsOrder = messageOrderByReference[rhs.element] ?? Int.max
+                    return lhsOrder == rhsOrder ? lhs.offset < rhs.offset : lhsOrder < rhsOrder
+                }
+                .map(\.element)
+
+            var currentMessages: [ChatConversationSourceMessage] = []
+            for reference in orderedReferences {
+                guard let message = messagesByReference[reference] else { continue }
+                if message.role == .user, !currentMessages.isEmpty {
+                    turns.append(makeTurn(conversationID: conversationID, messages: currentMessages))
+                    currentMessages = []
+                }
+                currentMessages.append(ChatConversationSourceMessage(reference: reference, message: message))
+            }
+            if !currentMessages.isEmpty {
+                turns.append(makeTurn(conversationID: conversationID, messages: currentMessages))
+            }
+        }
+
+        return turns
+    }
+
+    public static func segmentIDs(
+        for finding: ChatConversationProposalFinding,
+        in segments: [ChatConversationProposalSegment]
+    ) -> [String] {
+        segmentIDs(for: finding.sourceMessages, segments: segments.map { ($0.id, $0.sourceMessages) })
+    }
+
+    public static func segmentIDs(
+        for finding: ChatConversationFinding,
+        in segments: [ChatConversationSegment]
+    ) -> [String] {
+        segmentIDs(for: finding.sourceMessages, segments: segments.map { ($0.id, $0.sourceMessages) })
+    }
+
+    private static func segmentIDs(
+        for references: [ChatConversationMessageReference],
+        segments: [(String, [ChatConversationMessageReference])]
+    ) -> [String] {
+        let evidence = Set(references)
+        return segments.compactMap { id, sourceMessages in
+            sourceMessages.contains(where: evidence.contains) ? id : nil
+        }
+    }
+
+    private func makeTurn(
+        conversationID: String,
+        messages: [ChatConversationSourceMessage]
+    ) -> ChatConversationSourceTurn {
+        let firstID = messages.first?.reference.messageId ?? UUID().uuidString
+        return ChatConversationSourceTurn(
+            id: "\(conversationID):\(firstID)",
+            conversationId: conversationID,
+            messages: messages
+        )
+    }
+
+    private func orderedDistinct<T: Hashable>(_ values: [T]) -> [T] {
+        var seen: Set<T> = []
+        return values.filter { seen.insert($0).inserted }
+    }
+}

@@ -80,7 +80,7 @@ public final class ChatConversationHubStore: ObservableObject {
     private let proposalInbox: ChatConversationProposalInbox
     private let jobIDGenerator: @Sendable () -> String
     private var archiveRoot: URL?
-    private var messagesByReference: [ChatConversationMessageReference: ChatConversationMessage] = [:]
+    private var evidencePresentation = ChatConversationEvidencePresentation(conversations: [])
 
     public init(
         layout: EvolutionLedgerLayout = .defaultDocuments(),
@@ -107,7 +107,15 @@ public final class ChatConversationHubStore: ObservableObject {
     }
 
     public var lastGeneratedCommand: String? {
-        lastGeneratedTask.map { "$chatgpt-ledger process \($0.jobId)" }
+        guard let task = lastGeneratedTask,
+              !candidates.contains(where: { $0.jobId == task.jobId }) else {
+            return nil
+        }
+        return "$chatgpt-ledger process \(task.jobId)"
+    }
+
+    public var hasPendingCandidates: Bool {
+        !candidates.isEmpty
     }
 
     public var selectedCandidate: ChatConversationProposal? {
@@ -128,6 +136,12 @@ public final class ChatConversationHubStore: ObservableObject {
         }
     }
 
+    /// Formal views should not show every archived conversation as an empty
+    /// ledger row before it has accepted material.
+    public var formalConversationProjections: [ChatConversationConversationProjection] {
+        conversationProjections.filter { !$0.segments.isEmpty || !$0.findings.isEmpty }
+    }
+
     public var topicProjections: [ChatConversationTopicProjection] {
         ledgerDocument.topics.map { topic in
             ChatConversationTopicProjection(
@@ -143,13 +157,7 @@ public final class ChatConversationHubStore: ObservableObject {
             let summaries = try ledger.readArchiveSummaries(archiveRoot: archiveRoot)
             self.archiveRoot = archiveRoot
             conversations = summaries
-            messagesByReference = Dictionary(
-                uniqueKeysWithValues: summaries.flatMap { summary in
-                    summary.messages.map {
-                        (ChatConversationMessageReference(conversationId: summary.conversationId, messageId: $0.id), $0)
-                    }
-                }
-            )
+            evidencePresentation = ChatConversationEvidencePresentation(conversations: summaries)
             selectedConversationIDs.formIntersection(Set(summaries.filter(isSelectable).map(\.conversationId)))
             try reloadLedgerAndCandidates()
             lastError = nil
@@ -157,7 +165,7 @@ public final class ChatConversationHubStore: ObservableObject {
             self.archiveRoot = archiveRoot
             conversations = []
             selectedConversationIDs = []
-            messagesByReference = [:]
+            evidencePresentation = ChatConversationEvidencePresentation(conversations: [])
             candidates = []
             selectedCandidateJobID = nil
             lastError = "读取 ChatGPT 归档失败：\(error.localizedDescription)"
@@ -321,7 +329,30 @@ public final class ChatConversationHubStore: ObservableObject {
     }
 
     public func sourceMessage(for reference: ChatConversationMessageReference) -> ChatConversationMessage? {
-        messagesByReference[reference]
+        evidencePresentation.sourceMessage(for: reference)
+    }
+
+    public func sourceSummary(for references: [ChatConversationMessageReference]) -> ChatConversationSourceSummary {
+        evidencePresentation.summary(for: references)
+    }
+
+    public func sourceTurns(for references: [ChatConversationMessageReference]) -> [ChatConversationSourceTurn] {
+        evidencePresentation.turns(for: references)
+    }
+
+    public func conversationTitle(for conversationID: String) -> String {
+        evidencePresentation.conversationTitle(for: conversationID)
+    }
+
+    public func candidateSupportingSegmentIDs(
+        for finding: ChatConversationProposalFinding,
+        in candidate: ChatConversationProposal
+    ) -> [String] {
+        ChatConversationEvidencePresentation.segmentIDs(for: finding, in: candidate.segments)
+    }
+
+    public func formalSupportingSegmentIDs(for finding: ChatConversationFinding) -> [String] {
+        ChatConversationEvidencePresentation.segmentIDs(for: finding, in: ledgerDocument.segments)
     }
 
     public func mark(for findingID: String) -> ChatConversationMark? {

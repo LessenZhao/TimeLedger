@@ -41,10 +41,11 @@ struct ChatConversationReviewView: View {
 
     @ViewBuilder
     private func candidateDetail(_ candidate: ChatConversationProposal) -> some View {
+        let topicGroups = candidateTopicGroups(candidate)
         let newTopics = candidateTopics(candidate)
         HStack(spacing: 12) {
-            Label("片段 \(candidate.segments.count)", systemImage: "rectangle.3.group")
-            Label("内容点 \(candidate.findings.count)", systemImage: "text.bubble")
+            Label("候选片段 \(candidate.segments.count)", systemImage: "rectangle.3.group")
+            Label("候选结论 \(candidate.findings.count)", systemImage: "text.bubble")
             Label("忽略 \(candidate.ignoredMessages.count)", systemImage: "eye.slash")
             Spacer()
             Button("确认写入") {
@@ -65,62 +66,39 @@ struct ChatConversationReviewView: View {
             .buttonStyle(.bordered)
         }
 
-        if !newTopics.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("候选新主题（可改名）")
-                    .font(.subheadline.weight(.semibold))
-                ForEach(newTopics, id: \.id) { (topic: CandidateTopic) in
-                    TextField(topic.id, text: candidateTopicNameBinding(topic))
+        Text("候选尚未写入正式账本。先核对每条结论的主题、会话片段和引用材料。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+        ForEach(topicGroups) { group in
+            VStack(alignment: .leading, spacing: 10) {
+                Text(group.isNew ? "建议新主题" : "归入已有主题")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if let candidateTopic = group.candidateTopic {
+                    TextField(candidateTopic.id, text: candidateTopicNameBinding(candidateTopic))
                         .textFieldStyle(.roundedBorder)
+                } else {
+                    Text(group.title)
+                        .font(.headline)
                 }
-            }
-        }
 
-        VStack(alignment: .leading, spacing: 6) {
-            Text("片段与主题归属")
-                .font(.subheadline.weight(.semibold))
-            ForEach(candidate.segments, id: \.id) { (segment: ChatConversationProposalSegment) in
-                HStack {
-                    Text("\(segment.id) · \(segment.sourceMessages.count) 条来源")
-                        .font(.caption)
-                    Menu(topicLabel(segment.topicTarget)) {
-                        ForEach(store.ledgerDocument.topics, id: \.id) { (topic: ChatConversationTopic) in
-                            Button(topic.name) {
-                                try? store.setCandidateSegmentTopic(
-                                    segmentID: segment.id,
-                                    target: .existing(id: topic.id)
-                                )
-                            }
-                        }
-                        ForEach(newTopics, id: \.id) { (topic: CandidateTopic) in
-                            Button("新主题：\(topic.name)") {
-                                try? store.setCandidateSegmentTopic(
-                                    segmentID: segment.id,
-                                    target: .new(id: topic.id, name: topic.name)
-                                )
-                            }
-                        }
-                    }
-                    .font(.caption)
-                    Spacer()
-                    ChatConversationSourceView(store: store, references: segment.sourceMessages)
-                }
-            }
-        }
-
-        if !candidate.findings.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("建议内容点")
+                Text("会话片段")
                     .font(.subheadline.weight(.semibold))
-                ForEach(candidate.findings, id: \.id) { (finding: ChatConversationProposalFinding) in
-                    HStack(alignment: .top) {
-                        Text(finding.body)
-                            .font(.caption)
-                        Spacer()
-                        ChatConversationSourceView(store: store, references: finding.sourceMessages)
+                ForEach(group.segments, id: \.id) { segment in
+                    candidateSegmentRow(segment, newTopics: newTopics)
+                }
+
+                if !group.findings.isEmpty {
+                    Text("候选结论")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(group.findings, id: \.id) { finding in
+                        candidateFindingRow(finding, candidate: candidate)
                     }
                 }
             }
+            .padding(12)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
         }
 
         if !candidate.duplicateMatches.isEmpty {
@@ -133,7 +111,7 @@ struct ChatConversationReviewView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                         Spacer()
-                        ChatConversationSourceView(store: store, references: match.sourceMessages)
+                        ChatConversationSourceView(store: store, references: match.sourceMessages, purpose: .evidence)
                     }
                 }
             }
@@ -149,6 +127,61 @@ struct ChatConversationReviewView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private func candidateSegmentRow(
+        _ segment: ChatConversationProposalSegment,
+        newTopics: [CandidateTopic]
+    ) -> some View {
+        let summary = store.sourceSummary(for: segment.sourceMessages)
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(store.conversationTitle(for: segment.sourceMessages.first?.conversationId ?? "")) · 会话片段")
+                    .font(.caption.weight(.medium))
+                Text(sourceSummaryText(summary, prefix: "已覆盖"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Menu(topicLabel(segment.topicTarget)) {
+                ForEach(store.ledgerDocument.topics, id: \.id) { topic in
+                    Button(topic.name) {
+                        try? store.setCandidateSegmentTopic(
+                            segmentID: segment.id,
+                            target: .existing(id: topic.id)
+                        )
+                    }
+                }
+                ForEach(newTopics, id: \.id) { topic in
+                    Button("新主题：\(topic.name)") {
+                        try? store.setCandidateSegmentTopic(
+                            segmentID: segment.id,
+                            target: .new(id: topic.id, name: topic.name)
+                        )
+                    }
+                }
+            }
+            .font(.caption)
+            Spacer()
+            ChatConversationSourceView(store: store, references: segment.sourceMessages, purpose: .coverage)
+        }
+    }
+
+    private func candidateFindingRow(
+        _ finding: ChatConversationProposalFinding,
+        candidate: ChatConversationProposal
+    ) -> some View {
+        let supportingSegmentIDs = store.candidateSupportingSegmentIDs(for: finding, in: candidate)
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(finding.body)
+                    .font(.caption)
+                Text("关联片段：\(supportingSegmentLabels(supportingSegmentIDs, candidate: candidate))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            ChatConversationSourceView(store: store, references: finding.sourceMessages, purpose: .evidence)
         }
     }
 
@@ -175,6 +208,38 @@ struct ChatConversationReviewView: View {
         return topics.map { CandidateTopic(id: $0.key, name: $0.value) }.sorted { $0.id < $1.id }
     }
 
+    private func candidateTopicGroups(_ candidate: ChatConversationProposal) -> [CandidateTopicGroup] {
+        let targets = (candidate.segments.map(\.topicTarget) + candidate.findings.map(\.topicTarget)).reduce(into: [ChatConversationTopicTarget]()) { result, target in
+            if !result.contains(target) {
+                result.append(target)
+            }
+        }
+        return targets.map { target in
+            CandidateTopicGroup(
+                target: target,
+                title: topicLabel(target),
+                segments: candidate.segments.filter { $0.topicTarget == target },
+                findings: candidate.findings.filter { $0.topicTarget == target }
+            )
+        }
+    }
+
+    private func sourceSummaryText(_ summary: ChatConversationSourceSummary, prefix: String) -> String {
+        "\(prefix) \(summary.messageCount) 条原始消息 · \(summary.userMessageCount) 次你的输入 · \(summary.assistantMessageCount) 段回复"
+    }
+
+    private func supportingSegmentLabels(
+        _ segmentIDs: [String],
+        candidate: ChatConversationProposal
+    ) -> String {
+        let labels = segmentIDs.compactMap { segmentID in
+            candidate.segments.first(where: { $0.id == segmentID }).flatMap { segment in
+                segment.sourceMessages.first.map { store.conversationTitle(for: $0.conversationId) }
+            }
+        }
+        return labels.isEmpty ? "未找到关联片段" : labels.joined(separator: "、")
+    }
+
     private func topicLabel(_ target: ChatConversationTopicTarget) -> String {
         switch target {
         case .existing(let id):
@@ -192,4 +257,30 @@ struct ChatConversationReviewView: View {
 private struct CandidateTopic: Identifiable {
     let id: String
     let name: String
+}
+
+private struct CandidateTopicGroup: Identifiable {
+    let target: ChatConversationTopicTarget
+    let title: String
+    let segments: [ChatConversationProposalSegment]
+    let findings: [ChatConversationProposalFinding]
+
+    var id: String {
+        switch target {
+        case .existing(let id):
+            return "existing:\(id)"
+        case .new(let id, _):
+            return "new:\(id)"
+        }
+    }
+
+    var isNew: Bool {
+        if case .new = target { return true }
+        return false
+    }
+
+    var candidateTopic: CandidateTopic? {
+        guard case .new(let id, let name) = target else { return nil }
+        return CandidateTopic(id: id, name: name)
+    }
 }
