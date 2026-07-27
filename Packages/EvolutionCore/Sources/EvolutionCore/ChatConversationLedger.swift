@@ -103,6 +103,114 @@ public final class ChatConversationLedger: @unchecked Sendable {
         return try store.load()
     }
 
+    public func inspectSchemaState() throws -> ChatConversationLedgerSchemaState {
+        lock.lock()
+        defer { lock.unlock() }
+        let url = layout.chatConversationLedgerFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return .missing
+        }
+        let data = try Data(contentsOf: url)
+        return try ChatConversationLedgerMigrator().inspect(data: data)
+    }
+
+    @discardableResult
+    public func migrateLegacyLedger(backupURL: URL) throws -> ChatConversationLedgerDocument {
+        lock.lock()
+        defer { lock.unlock() }
+        return try withExclusiveLedgerLock {
+            let ledgerURL = layout.chatConversationLedgerFileURL
+            guard FileManager.default.fileExists(atPath: ledgerURL.path) else {
+                throw ChatConversationLedgerMigrationError.missingLedger
+            }
+            let originalData = try Data(contentsOf: ledgerURL)
+            let state = try ChatConversationLedgerMigrator().inspect(data: originalData)
+            guard state == .requiresV1Migration else {
+                if case .unsupported(let version) = state {
+                    throw ChatConversationLedgerMigrationError.unsupportedSchema(version)
+                }
+                throw ChatConversationLedgerMigrationError.notV1
+            }
+
+            try originalData.write(to: backupURL, options: .atomic)
+            let backupData = try Data(contentsOf: backupURL)
+            let originalHash = ContentHasher.hash(String(decoding: originalData, as: UTF8.self))
+            let backupHash = ContentHasher.hash(String(decoding: backupData, as: UTF8.self))
+            guard originalHash == backupHash else {
+                throw ChatConversationLedgerMigrationError.backupHashMismatch
+            }
+
+            let migrated = try ChatConversationLedgerMigrator().migrateV1(
+                data: backupData,
+                migratedAt: timestamp(now())
+            )
+            let legacy = try JSONDecoder().decode(LegacyCountProbe.self, from: originalData)
+            guard migrated.topics.count == legacy.topics.count,
+                  migrated.segments.count == legacy.segments.count,
+                  migrated.assets.count == legacy.findings.count,
+                  migrated.processedRevisions.count == legacy.processedRevisions.count,
+                  migrated.receipts.count == legacy.receipts.count else {
+                throw ChatConversationLedgerMigrationError.conservationFailed("count mismatch")
+            }
+
+            try store.save(migrated)
+            let reloaded = try store.load()
+            guard reloaded.schemaVersion == 2,
+                  reloaded.topics.count == legacy.topics.count,
+                  reloaded.segments.count == legacy.segments.count,
+                  reloaded.assets.count == legacy.findings.count,
+                  reloaded.processedRevisions.count == legacy.processedRevisions.count,
+                  reloaded.receipts.count == legacy.receipts.count else {
+                throw ChatConversationLedgerMigrationError.conservationFailed("reload mismatch")
+            }
+            return reloaded
+        }
+    }
+
+    public func appendUserVersion(
+        assetID: String,
+        text: String,
+        sourceMessages: [ChatConversationMessageReference],
+        sourceSpans: [ChatConversationSourceSpan],
+        preservation: ChatStudyAssetPreservation = .distilled
+    ) throws -> ChatConversationLedgerDocument {
+        try updateDocument { document in
+            guard let index = document.assets.firstIndex(where: { $0.id == assetID }) else {
+                throw ChatConversationLedgerError.missingAsset(assetID)
+            }
+            guard !text.isEmpty else {
+                throw ChatConversationLedgerError.invalidAssetMaterialization("empty user version text")
+            }
+            let current = document.assets[index]
+            let version = ChatStudyAssetVersion(
+                id: "\(assetID)-v\(current.versions.count + 1)",
+                textSnapshot: text,
+                textHash: ContentHasher.hash(text),
+                preservation: preservation,
+                origin: .userEdited,
+                sourceMessages: sourceMessages,
+                sourceSpans: sourceSpans,
+                supersedesVersionId: current.currentVersionId,
+                createdAt: timestamp(now())
+            )
+            document.assets[index].versions.append(version)
+            document.assets[index].currentVersionId = version.id
+            document.assets[index].isUserLocked = true
+        }
+    }
+
+    public func appendUserAsset(_ asset: ChatStudyAsset) throws -> ChatConversationLedgerDocument {
+        try updateDocument { document in
+            guard document.segments.contains(where: { $0.id == asset.segmentId }) else {
+                throw ChatConversationLedgerError.missingSegment(asset.segmentId)
+            }
+            guard !document.assets.contains(where: { $0.id == asset.id }) else {
+                throw ChatConversationLedgerError.duplicateRecordID
+            }
+            document.assets.append(asset)
+        }
+    }
+
     public func readArchiveSummaries(archiveRoot: URL) throws -> [ChatConversationArchiveSummary] {
         lock.lock()
         defer { lock.unlock() }
@@ -688,3 +796,13 @@ private enum ChatConversationLedgerFileLockError: Error {
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
+
+private struct LegacyCountProbe: Decodable {
+    var topics: [LegacyCountItem]
+    var segments: [LegacyCountItem]
+    var findings: [LegacyCountItem]
+    var processedRevisions: [LegacyCountItem]
+    var receipts: [LegacyCountItem]
+}
+
+private struct LegacyCountItem: Decodable {}
