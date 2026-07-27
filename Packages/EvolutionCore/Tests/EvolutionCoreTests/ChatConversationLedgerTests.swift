@@ -100,6 +100,30 @@ final class ChatConversationLedgerTests: XCTestCase {
         XCTAssertTrue(try ledger.load().processedRevisions.isEmpty)
     }
 
+    func testRejectsFindingWhoseTopicDiffersFromItsSupportingSegment() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(
+            id: "conversation-1",
+            messages: [fixture.message(id: "message-1", role: "user", content: "One")]
+        )
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let ledger = ChatConversationLedger(layout: layout)
+        let task = try ledger.createTask(
+            jobId: "job-topic-mismatch",
+            selectedConversationIDs: ["conversation-1"],
+            archiveRoot: fixture.rootURL
+        )
+        var invalid = proposal(for: task)
+        invalid.findings[0].topicTarget = .new(id: "topic:other", name: "Other")
+
+        XCTAssertThrowsError(try ledger.apply(invalid)) { error in
+            XCTAssertEqual(error as? ChatConversationLedgerError, .findingTopicMismatch)
+        }
+        XCTAssertTrue(try ledger.load().processedRevisions.isEmpty)
+    }
+
     func testRecoversMissingReceiptAndRejectsOldTaskWithoutChangingItsMessages() throws {
         let fixture = try ChatLedgerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }

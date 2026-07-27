@@ -43,6 +43,7 @@ struct ChatConversationReviewView: View {
     private func candidateDetail(_ candidate: ChatConversationProposal) -> some View {
         let topicGroups = candidateTopicGroups(candidate)
         let newTopics = candidateTopics(candidate)
+        let unmappedFindings = unmappedCandidateFindings(candidate)
         HStack(spacing: 12) {
             Label("候选片段 \(candidate.segments.count)", systemImage: "rectangle.3.group")
             Label("候选结论 \(candidate.findings.count)", systemImage: "text.bubble")
@@ -101,6 +102,21 @@ struct ChatConversationReviewView: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
         }
 
+        if !unmappedFindings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("无法归属的候选结论")
+                    .font(.subheadline.weight(.semibold))
+                Text("这些结论没有与所属会话片段保持同一主题，不能确认写入。请重新生成候选。")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                ForEach(unmappedFindings, id: \.id) { finding in
+                    candidateFindingRow(finding, candidate: candidate)
+                }
+            }
+            .padding(12)
+            .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+
         if !candidate.duplicateMatches.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text("与已有内容点的重复匹配")
@@ -143,25 +159,27 @@ struct ChatConversationReviewView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Menu(topicLabel(segment.topicTarget)) {
-                ForEach(store.ledgerDocument.topics, id: \.id) { topic in
-                    Button(topic.name) {
-                        try? store.setCandidateSegmentTopic(
-                            segmentID: segment.id,
-                            target: .existing(id: topic.id)
-                        )
+            if hasAlternativeTopic(for: segment, newTopics: newTopics) {
+                Menu("移动到…") {
+                    ForEach(store.ledgerDocument.topics, id: \.id) { topic in
+                        let target = ChatConversationTopicTarget.existing(id: topic.id)
+                        if target != segment.topicTarget {
+                            Button(topic.name) {
+                                try? store.setCandidateSegmentTopic(segmentID: segment.id, target: target)
+                            }
+                        }
+                    }
+                    ForEach(newTopics, id: \.id) { topic in
+                        let target = ChatConversationTopicTarget.new(id: topic.id, name: topic.name)
+                        if target != segment.topicTarget {
+                            Button("新主题：\(topic.name)") {
+                                try? store.setCandidateSegmentTopic(segmentID: segment.id, target: target)
+                            }
+                        }
                     }
                 }
-                ForEach(newTopics, id: \.id) { topic in
-                    Button("新主题：\(topic.name)") {
-                        try? store.setCandidateSegmentTopic(
-                            segmentID: segment.id,
-                            target: .new(id: topic.id, name: topic.name)
-                        )
-                    }
-                }
+                .font(.caption)
             }
-            .font(.caption)
             Spacer()
             ChatConversationSourceView(store: store, references: segment.sourceMessages, purpose: .coverage)
         }
@@ -209,7 +227,7 @@ struct ChatConversationReviewView: View {
     }
 
     private func candidateTopicGroups(_ candidate: ChatConversationProposal) -> [CandidateTopicGroup] {
-        let targets = (candidate.segments.map(\.topicTarget) + candidate.findings.map(\.topicTarget)).reduce(into: [ChatConversationTopicTarget]()) { result, target in
+        let targets = candidate.segments.map(\.topicTarget).reduce(into: [ChatConversationTopicTarget]()) { result, target in
             if !result.contains(target) {
                 result.append(target)
             }
@@ -219,9 +237,37 @@ struct ChatConversationReviewView: View {
                 target: target,
                 title: topicLabel(target),
                 segments: candidate.segments.filter { $0.topicTarget == target },
-                findings: candidate.findings.filter { $0.topicTarget == target }
+                findings: candidate.findings.filter {
+                    $0.topicTarget == target && resolvedTopicTarget(for: $0, candidate: candidate) == target
+                }
             )
         }
+    }
+
+    private func unmappedCandidateFindings(_ candidate: ChatConversationProposal) -> [ChatConversationProposalFinding] {
+        candidate.findings.filter { finding in
+            resolvedTopicTarget(for: finding, candidate: candidate) != finding.topicTarget
+        }
+    }
+
+    private func resolvedTopicTarget(
+        for finding: ChatConversationProposalFinding,
+        candidate: ChatConversationProposal
+    ) -> ChatConversationTopicTarget? {
+        let supportingSegmentIDs = store.candidateSupportingSegmentIDs(for: finding, in: candidate)
+        let targets = supportingSegmentIDs.compactMap { supportingID in
+            candidate.segments.first(where: { $0.id == supportingID })?.topicTarget
+        }
+        guard Set(targets).count == 1 else { return nil }
+        return targets.first
+    }
+
+    private func hasAlternativeTopic(
+        for segment: ChatConversationProposalSegment,
+        newTopics: [CandidateTopic]
+    ) -> Bool {
+        store.ledgerDocument.topics.contains { .existing(id: $0.id) != segment.topicTarget }
+            || newTopics.contains { .new(id: $0.id, name: $0.name) != segment.topicTarget }
     }
 
     private func sourceSummaryText(_ summary: ChatConversationSourceSummary, prefix: String) -> String {

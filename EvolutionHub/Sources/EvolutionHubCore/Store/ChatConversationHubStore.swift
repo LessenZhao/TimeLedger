@@ -273,6 +273,22 @@ public final class ChatConversationHubStore: ObservableObject {
                 throw ChatConversationHubStoreError.candidateSegmentNotFound(segmentID)
             }
             proposal.segments[index].topicTarget = target
+            proposal.findings = proposal.findings.map { finding in
+                let supportingSegmentIDs = ChatConversationEvidencePresentation.segmentIDs(
+                    for: finding,
+                    in: proposal.segments
+                )
+                guard supportingSegmentIDs.contains(segmentID) else { return finding }
+                let supportingTargets = supportingSegmentIDs.compactMap { supportingID in
+                    proposal.segments.first(where: { $0.id == supportingID })?.topicTarget
+                }
+                guard Set(supportingTargets).count == 1, let supportingTarget = supportingTargets.first else {
+                    return finding
+                }
+                var updated = finding
+                updated.topicTarget = supportingTarget
+                return updated
+            }
         }
     }
 

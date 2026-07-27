@@ -144,7 +144,14 @@ final class ChatConversationHubStoreTests: XCTestCase {
         XCTAssertTrue(store.hasPendingCandidates)
         XCTAssertNil(store.lastGeneratedCommand)
         store.selectCandidate(jobID: task.jobId)
-        try store.renameCandidateTopic(id: "topic-1", name: "User topic")
+        try store.setCandidateSegmentTopic(
+            segmentID: "segment-1",
+            target: .new(id: "topic-2", name: "Moved topic")
+        )
+        let movedCandidate = try XCTUnwrap(store.selectedCandidate)
+        XCTAssertEqual(movedCandidate.segments[0].topicTarget, .new(id: "topic-2", name: "Moved topic"))
+        XCTAssertEqual(movedCandidate.findings[0].topicTarget, .new(id: "topic-2", name: "Moved topic"))
+        try store.renameCandidateTopic(id: "topic-2", name: "User topic")
         let receipt = try store.confirmCandidate(jobID: task.jobId)
 
         XCTAssertEqual(receipt.status, .accepted)

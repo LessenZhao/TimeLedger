@@ -49,6 +49,7 @@ public enum ChatConversationLedgerError: Error, Sendable, Equatable {
     case staleLedger
     case incompleteInputCoverage
     case invalidSourceReference
+    case findingTopicMismatch
     case invalidTopicTarget
     case duplicateRecordID
     case jobAlreadyRejected
@@ -395,6 +396,19 @@ public final class ChatConversationLedger: @unchecked Sendable {
             Set(segment.sourceMessages.map(\.conversationId)).count == 1
         }) else {
             throw ChatConversationLedgerError.invalidSourceReference
+        }
+        let segmentTargetsBySource = Dictionary(
+            uniqueKeysWithValues: proposal.segments.flatMap { segment in
+                segment.sourceMessages.map { ($0, segment.topicTarget) }
+            }
+        )
+        for finding in proposal.findings {
+            let supportingTargets = finding.sourceMessages.compactMap { segmentTargetsBySource[$0] }
+            guard supportingTargets.count == finding.sourceMessages.count,
+                  Set(supportingTargets).count == 1,
+                  supportingTargets.first == finding.topicTarget else {
+                throw ChatConversationLedgerError.findingTopicMismatch
+            }
         }
         for target in proposal.segments.map(\.topicTarget) + proposal.findings.map(\.topicTarget) {
             switch target {
