@@ -16,7 +16,17 @@ struct ChatConversationView: View {
         VStack(spacing: 0) {
             controls
             Divider()
-            ChatConversationListView(store: store)
+            HSplitView {
+                ChatConversationListView(store: store)
+                    .frame(minWidth: 260, idealWidth: 330, maxWidth: 460)
+
+                VStack(spacing: 0) {
+                    ChatConversationReviewView(store: store)
+                    Divider()
+                    ChatConversationLedgerView(store: store)
+                }
+                .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
+            }
             Divider()
             commandPanel
         }

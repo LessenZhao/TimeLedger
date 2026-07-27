@@ -96,6 +96,103 @@ final class ChatConversationHubStoreTests: XCTestCase {
         XCTAssertEqual(store.conversations.first?.issue, .missingStructuredData)
         XCTAssertFalse(store.isSelectable(conversationID: "missing-data"))
     }
+
+    @MainActor
+    func testCandidateConfirmationAndBothProjectionsReuseTheSameFormalSources() throws {
+        let fixture = try ChatConversationHubFixture()
+        try fixture.writeConversation(
+            id: "conversation-1",
+            updatedAt: "2026-07-20T10:00:00Z",
+            messages: [fixture.message(id: "message-1", content: "Source message")]
+        )
+        try fixture.writeManifest(ids: ["conversation-1"])
+        let store = ChatConversationHubStore(layout: fixture.layout, jobIDGenerator: { "job-review" })
+        try store.refresh(archiveRoot: fixture.archiveRoot)
+        store.setSelectedConversationIDs(["conversation-1"])
+        let task = try store.generateTask()
+        let source = try XCTUnwrap(task.inputMessages.first(where: { !$0.contextOnly })?.reference)
+        let candidate = ChatConversationProposal(
+            jobId: task.jobId,
+            sourceDigest: task.sourceDigest,
+            baseLedgerDigest: task.baseLedgerDigest,
+            segments: [
+                ChatConversationProposalSegment(
+                    id: "segment-1",
+                    topicTarget: .new(id: "topic-1", name: "Candidate topic"),
+                    sourceMessages: [source]
+                )
+            ],
+            findings: [
+                ChatConversationProposalFinding(
+                    id: "finding-1",
+                    topicTarget: .new(id: "topic-1", name: "Candidate topic"),
+                    body: "Supported finding",
+                    sourceMessages: [source]
+                )
+            ],
+            ignoredMessages: []
+        )
+        try fixture.writeCandidate(candidate)
+
+        try store.refresh(archiveRoot: fixture.archiveRoot)
+        XCTAssertEqual(store.candidates, [candidate])
+        store.selectCandidate(jobID: task.jobId)
+        try store.renameCandidateTopic(id: "topic-1", name: "User topic")
+        let receipt = try store.confirmCandidate(jobID: task.jobId)
+
+        XCTAssertEqual(receipt.status, .accepted)
+        XCTAssertTrue(store.candidates.isEmpty)
+        XCTAssertEqual(store.conversationProjections.first?.segments.map(\.id), ["segment-1"])
+        XCTAssertEqual(store.topicProjections.first?.topic.name, "User topic")
+        XCTAssertEqual(store.topicProjections.first?.findings.map(\.id), ["finding-1"])
+        XCTAssertEqual(
+            store.conversationProjections.first?.segments.first?.sourceMessages,
+            store.topicProjections.first?.segments.first?.sourceMessages
+        )
+        XCTAssertEqual(
+            store.conversationProjections.first?.findings.first?.sourceMessages,
+            store.topicProjections.first?.findings.first?.sourceMessages
+        )
+        XCTAssertEqual(store.sourceMessage(for: source)?.content, "Source message")
+    }
+
+    @MainActor
+    func testRejectingCandidateLeavesSourcePendingAndRemovesItFromReview() throws {
+        let fixture = try ChatConversationHubFixture()
+        try fixture.writeConversation(
+            id: "conversation-1",
+            updatedAt: "2026-07-20T10:00:00Z",
+            messages: [fixture.message(id: "message-1", content: "Source message")]
+        )
+        try fixture.writeManifest(ids: ["conversation-1"])
+        let store = ChatConversationHubStore(layout: fixture.layout, jobIDGenerator: { "job-reject" })
+        try store.refresh(archiveRoot: fixture.archiveRoot)
+        store.setSelectedConversationIDs(["conversation-1"])
+        let task = try store.generateTask()
+        let source = try XCTUnwrap(task.inputMessages.first(where: { !$0.contextOnly })?.reference)
+        try fixture.writeCandidate(ChatConversationProposal(
+            jobId: task.jobId,
+            sourceDigest: task.sourceDigest,
+            baseLedgerDigest: task.baseLedgerDigest,
+            segments: [
+                ChatConversationProposalSegment(
+                    id: "segment-1",
+                    topicTarget: .new(id: "topic-1", name: "Candidate topic"),
+                    sourceMessages: [source]
+                )
+            ],
+            findings: [],
+            ignoredMessages: []
+        ))
+        try store.refresh(archiveRoot: fixture.archiveRoot)
+
+        let receipt = try store.rejectCandidate(jobID: task.jobId, reason: "Not useful")
+
+        XCTAssertEqual(receipt.status, .rejected)
+        XCTAssertTrue(store.candidates.isEmpty)
+        XCTAssertEqual(store.conversations.first?.pendingMessageCount, 1)
+        XCTAssertTrue(store.ledgerDocument.processedRevisions.isEmpty)
+    }
 }
 
 private struct ChatConversationHubFixture {
@@ -150,5 +247,13 @@ private struct ChatConversationHubFixture {
         })
         let url = archiveRoot.appendingPathComponent("_archive-index.json")
         try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(to: url)
+    }
+
+    func writeCandidate(_ candidate: ChatConversationProposal) throws {
+        try JSONEncoder().encode(candidate).write(
+            to: layout.chatConversationProposalInboxDirectoryURL
+                .appendingPathComponent("\(candidate.jobId).json"),
+            options: .atomic
+        )
     }
 }

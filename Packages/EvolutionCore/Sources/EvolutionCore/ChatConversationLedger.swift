@@ -52,6 +52,11 @@ public enum ChatConversationLedgerError: Error, Sendable, Equatable {
     case invalidTopicTarget
     case duplicateRecordID
     case jobAlreadyRejected
+    case missingTopic(String)
+    case missingSegment(String)
+    case missingFinding(String)
+    case emptyTopicName
+    case identicalTopicMerge
 }
 
 public final class ChatConversationLedger: @unchecked Sendable {
@@ -214,6 +219,82 @@ public final class ChatConversationLedger: @unchecked Sendable {
         }
     }
 
+    public func renameTopic(id: String, name: String) throws -> ChatConversationLedgerDocument {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { throw ChatConversationLedgerError.emptyTopicName }
+        return try updateDocument { document in
+            guard let index = document.topics.firstIndex(where: { $0.id == id }) else {
+                throw ChatConversationLedgerError.missingTopic(id)
+            }
+            document.topics[index].name = normalizedName
+            document.topics[index].isUserLocked = true
+        }
+    }
+
+    public func mergeTopic(id: String, intoTopicID: String) throws -> ChatConversationLedgerDocument {
+        guard id != intoTopicID else { throw ChatConversationLedgerError.identicalTopicMerge }
+        return try updateDocument { document in
+            guard let sourceIndex = document.topics.firstIndex(where: { $0.id == id }) else {
+                throw ChatConversationLedgerError.missingTopic(id)
+            }
+            guard let targetIndex = document.topics.firstIndex(where: { $0.id == intoTopicID }) else {
+                throw ChatConversationLedgerError.missingTopic(intoTopicID)
+            }
+            document.topics[targetIndex].isUserLocked = true
+            for index in document.segments.indices where document.segments[index].topicId == id {
+                document.segments[index].topicId = intoTopicID
+                document.segments[index].isUserLocked = true
+            }
+            for index in document.findings.indices where document.findings[index].topicId == id {
+                document.findings[index].topicId = intoTopicID
+            }
+            document.topics.remove(at: sourceIndex)
+        }
+    }
+
+    public func moveSegment(id: String, toTopicID: String) throws -> ChatConversationLedgerDocument {
+        try updateDocument { document in
+            guard document.topics.contains(where: { $0.id == toTopicID }) else {
+                throw ChatConversationLedgerError.missingTopic(toTopicID)
+            }
+            guard let segmentIndex = document.segments.firstIndex(where: { $0.id == id }) else {
+                throw ChatConversationLedgerError.missingSegment(id)
+            }
+            document.segments[segmentIndex].topicId = toTopicID
+            document.segments[segmentIndex].isUserLocked = true
+        }
+    }
+
+    public func setMark(
+        findingID: String,
+        isHighlighted: Bool,
+        note: String?
+    ) throws -> ChatConversationLedgerDocument {
+        try updateDocument { document in
+            guard document.findings.contains(where: { $0.id == findingID }) else {
+                throw ChatConversationLedgerError.missingFinding(findingID)
+            }
+            let normalizedNote = note?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            if let index = document.marks.firstIndex(where: { $0.findingId == findingID }) {
+                if !isHighlighted, normalizedNote == nil {
+                    document.marks.remove(at: index)
+                } else {
+                    document.marks[index] = ChatConversationMark(
+                        findingId: findingID,
+                        isHighlighted: isHighlighted,
+                        note: normalizedNote
+                    )
+                }
+            } else if isHighlighted || normalizedNote != nil {
+                document.marks.append(ChatConversationMark(
+                    findingId: findingID,
+                    isHighlighted: isHighlighted,
+                    note: normalizedNote
+                ))
+            }
+        }
+    }
+
     public func reject(jobId: String, reason: String) throws -> ChatConversationReceipt {
         let normalizedJobID = try normalizedJobID(jobId)
         lock.lock()
@@ -290,6 +371,11 @@ public final class ChatConversationLedger: @unchecked Sendable {
         }
         guard proposal.findings.flatMap(\.sourceMessages).allSatisfy({ input.contains($0) }),
               proposal.segments.flatMap(\.sourceMessages).allSatisfy({ input.contains($0) }),
+              proposal.duplicateMatches.allSatisfy({ match in
+                  !match.sourceMessages.isEmpty &&
+                  match.sourceMessages.allSatisfy(input.contains) &&
+                  document.findings.contains(where: { $0.id == match.existingFindingId })
+              }),
               proposal.ignoredMessages.allSatisfy({ !$0.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw ChatConversationLedgerError.invalidSourceReference
         }
@@ -444,6 +530,20 @@ public final class ChatConversationLedger: @unchecked Sendable {
         return try operation()
     }
 
+    private func updateDocument(
+        _ update: (inout ChatConversationLedgerDocument) throws -> Void
+    ) throws -> ChatConversationLedgerDocument {
+        lock.lock()
+        defer { lock.unlock() }
+        return try withExclusiveLedgerLock {
+            var document = try store.load()
+            try update(&document)
+            document.updatedAt = timestamp(now())
+            try store.save(document)
+            return document
+        }
+    }
+
     private func effectiveProcessedRevisions(
         in document: ChatConversationLedgerDocument
     ) -> [ChatConversationProcessedRevision] {
@@ -535,4 +635,8 @@ private final class ChatConversationLedgerFileLock {
 private enum ChatConversationLedgerFileLockError: Error {
     case openFailed
     case lockFailed
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }

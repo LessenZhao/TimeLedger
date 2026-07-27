@@ -143,6 +143,50 @@ final class ChatConversationLedgerTests: XCTestCase {
         ])
     }
 
+    func testDuplicateMatchMustReferenceAnExistingFindingAndDoesNotCreateAnotherOne() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        try fixture.writeConversation(id: "conversation-1", messages: [fixture.message(id: "message-1", role: "user", content: "User message")])
+        try fixture.writeManifest(conversationIDs: ["conversation-1"])
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let store = JSONChatConversationLedgerStore(layout: layout)
+        let source = ChatConversationMessageReference(conversationId: "old-conversation", messageId: "old-message")
+        try store.save(ChatConversationLedgerDocument(
+            topics: [ChatConversationTopic(id: "topic:existing", name: "Existing")],
+            findings: [ChatConversationFinding(
+                id: "finding:existing",
+                topicId: "topic:existing",
+                body: "Existing finding",
+                sourceMessages: [source]
+            )]
+        ))
+        let ledger = ChatConversationLedger(layout: layout)
+        let task = try ledger.createTask(jobId: "job-duplicate", selectedConversationIDs: ["conversation-1"], archiveRoot: fixture.rootURL)
+
+        var invalid = proposal(for: task, topicTarget: .existing(id: "topic:existing"))
+        invalid.duplicateMatches = [ChatConversationDuplicateMatch(
+            existingFindingId: "missing-finding",
+            sourceMessages: [task.inputMessages[0].reference]
+        )]
+        XCTAssertThrowsError(try ledger.apply(invalid)) { error in
+            XCTAssertEqual(error as? ChatConversationLedgerError, .invalidSourceReference)
+        }
+
+        var proposal = proposal(for: task, topicTarget: .existing(id: "topic:existing"))
+        proposal.findings = []
+        proposal.duplicateMatches = [ChatConversationDuplicateMatch(
+            existingFindingId: "finding:existing",
+            sourceMessages: [task.inputMessages[0].reference]
+        )]
+        _ = try ledger.apply(proposal)
+
+        XCTAssertEqual(
+            try ledger.load().findings.map(\.id),
+            ["finding:existing"],
+            "The duplicate match is review-only; accepting it must not create a duplicate formal finding."
+        )
+    }
+
     func testRejectsUnsafeJobIDAndOnlyUsesUserAssistantContextInOrder() throws {
         let fixture = try ChatLedgerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
@@ -284,6 +328,50 @@ final class ChatConversationLedgerTests: XCTestCase {
             XCTAssertEqual(error as? ChatConversationLedgerError, .invalidJobId)
         }
         XCTAssertTrue(try ledger.load().receipts.isEmpty)
+    }
+
+    func testUserTopicSegmentAndFindingEditsPersistWithoutCandidateOverwrite() throws {
+        let fixture = try ChatLedgerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let layout = EvolutionLedgerLayout(rootURL: fixture.rootURL.appendingPathComponent("Personal Evolution"))
+        let store = JSONChatConversationLedgerStore(layout: layout)
+        try store.save(ChatConversationLedgerDocument(
+            topics: [
+                ChatConversationTopic(id: "topic-a", name: "Candidate topic"),
+                ChatConversationTopic(id: "topic-b", name: "Move target"),
+                ChatConversationTopic(id: "topic-c", name: "Merge target"),
+            ],
+            segments: [
+                ChatConversationSegment(
+                    id: "segment-1",
+                    conversationId: "conversation-1",
+                    topicId: "topic-a",
+                    sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
+                )
+            ],
+            findings: [
+                ChatConversationFinding(
+                    id: "finding-1",
+                    topicId: "topic-b",
+                    body: "User-relevant finding",
+                    sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
+                )
+            ]
+        ))
+        let ledger = ChatConversationLedger(layout: layout)
+
+        _ = try ledger.renameTopic(id: "topic-a", name: "User name")
+        _ = try ledger.moveSegment(id: "segment-1", toTopicID: "topic-b")
+        _ = try ledger.setMark(findingID: "finding-1", isHighlighted: true, note: "Keep this")
+        _ = try ledger.mergeTopic(id: "topic-b", intoTopicID: "topic-c")
+
+        let reloaded = try ChatConversationLedger(layout: layout).load()
+        XCTAssertEqual(reloaded.topics.map(\.id), ["topic-a", "topic-c"])
+        XCTAssertEqual(reloaded.topics.first(where: { $0.id == "topic-a" }), ChatConversationTopic(id: "topic-a", name: "User name", isUserLocked: true))
+        XCTAssertEqual(reloaded.segments.first?.topicId, "topic-c")
+        XCTAssertTrue(reloaded.segments.first?.isUserLocked == true)
+        XCTAssertEqual(reloaded.findings.first?.topicId, "topic-c")
+        XCTAssertEqual(reloaded.marks, [ChatConversationMark(findingId: "finding-1", isHighlighted: true, note: "Keep this")])
     }
 
     func testRejectNormalizesJobIDAndRecoversMissingReceipt() throws {
