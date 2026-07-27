@@ -4,6 +4,7 @@ import Foundation
 public enum ChatConversationProposalInboxError: Error, Sendable, Equatable {
     case invalidJobId(String)
     case jobIdMismatch(filename: String, proposal: String)
+    case disallowedDiskCandidate(String)
 }
 
 /// Read-only boundary for Skill-produced ChatGPT candidates. This type never
@@ -40,7 +41,23 @@ public struct ChatConversationProposalInbox: @unchecked Sendable {
             guard proposal.jobId == jobId else {
                 throw ChatConversationProposalInboxError.jobIdMismatch(filename: jobId, proposal: proposal.jobId)
             }
+            try validateDiskCandidate(proposal)
             return proposal
+        }
+    }
+
+    private func validateDiskCandidate(_ proposal: ChatConversationProposal) throws {
+        for asset in proposal.assets {
+            guard asset.origin == .skill else {
+                throw ChatConversationProposalInboxError.disallowedDiskCandidate(
+                    "disk candidate origin must be skill: \(asset.id)"
+                )
+            }
+            guard asset.sourceSpans.isEmpty else {
+                throw ChatConversationProposalInboxError.disallowedDiskCandidate(
+                    "disk candidate must not include sourceSpans: \(asset.id)"
+                )
+            }
         }
     }
 

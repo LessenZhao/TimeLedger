@@ -28,6 +28,44 @@ final class ChatConversationProposalInboxTests: XCTestCase {
             XCTAssertEqual(error as? ChatConversationProposalInboxError, .jobIdMismatch(filename: "job-1", proposal: "different-job"))
         }
     }
+
+    func testRejectsDiskCandidateWithUserOriginOrSourceSpans() throws {
+        let fixture = try ChatProposalInboxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var proposal = fixture.proposal(jobId: "job-bad")
+        proposal.assets = [
+            ChatConversationProposalAsset(
+                id: "asset-1",
+                segmentId: "segment-1",
+                title: "t",
+                kind: .finishedWork,
+                subtype: "范文",
+                uses: [.memorize],
+                preservation: .verbatim,
+                draftText: nil,
+                sourceBlockIDs: ["b1"],
+                sourceSpans: [
+                    ChatConversationSourceSpan(
+                        message: ChatConversationMessageReference(conversationId: "c", messageId: "m"),
+                        contentHash: "h",
+                        locationUTF16: 0,
+                        lengthUTF16: 1,
+                        textHash: "t"
+                    ),
+                ],
+                replacesAssetID: nil,
+                origin: .userSelection
+            ),
+        ]
+        try fixture.write(proposal, named: "job-bad.json")
+
+        XCTAssertThrowsError(try ChatConversationProposalInbox(layout: fixture.layout).readPending()) { error in
+            XCTAssertEqual(
+                error as? ChatConversationProposalInboxError,
+                .disallowedDiskCandidate("disk candidate origin must be skill: asset-1")
+            )
+        }
+    }
 }
 
 private struct ChatProposalInboxFixture {
@@ -49,11 +87,13 @@ private struct ChatProposalInboxFixture {
             segments: [
                 ChatConversationProposalSegment(
                     id: "segment-1",
+                    title: "Segment",
+                    summary: "Summary",
                     topicTarget: .new(id: "topic-1", name: "Topic"),
                     sourceMessages: [ChatConversationMessageReference(conversationId: "conversation-1", messageId: "message-1")]
                 )
             ],
-            findings: [],
+            assets: [],
             ignoredMessages: []
         )
     }
