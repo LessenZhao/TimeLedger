@@ -27,10 +27,109 @@ final class ChatConversationEvidencePresentationTests: XCTestCase {
                 userMessageCount: 2,
                 assistantMessageCount: 3,
                 unavailableMessageCount: 0,
-                turnCount: 2
+                turnCount: 2,
+                attachmentMessageCount: 0
             )
         )
         XCTAssertEqual(presentation.turns(for: references).map(\.messages.count), [3, 2])
+    }
+
+    func testSummarizesAttachmentReferencesWithoutReadingAttachmentBodies() {
+        let conversation = summary(
+            id: "conversation-1",
+            title: "c",
+            messages: [
+                message(
+                    id: "assistant-1",
+                    role: .assistant,
+                    content: """
+                    已整理完成。
+                    [下载Word版](sandbox:/mnt/data/hunan-selection.docx)
+                    """
+                ),
+                message(id: "assistant-2", role: .assistant, content: "普通会话正文"),
+            ]
+        )
+        let presentation = ChatConversationEvidencePresentation(conversations: [conversation])
+        let references = conversation.messages.map {
+            ChatConversationMessageReference(conversationId: conversation.conversationId, messageId: $0.id)
+        }
+
+        XCTAssertEqual(presentation.summary(for: references).attachmentMessageCount, 1)
+    }
+
+    func testBuildsCandidateAndFormalAssetSourceContexts() throws {
+        let user = ChatConversationMessageReference(conversationId: "conversation-1", messageId: "user-1")
+        let assistant = ChatConversationMessageReference(conversationId: "conversation-1", messageId: "assistant-1")
+        let candidateAsset = ChatConversationProposalAsset(
+            id: "asset-1",
+            segmentId: "segment-1",
+            title: "范文",
+            kind: .finishedWork,
+            subtype: "范文",
+            uses: [.memorize],
+            preservation: .verbatim,
+            draftText: nil,
+            sourceBlockIDs: ["b1"],
+            sourceSpans: [],
+            replacesAssetID: nil,
+            origin: .skill
+        )
+        let candidate = ChatConversationProposal(
+            jobId: "job-1",
+            sourceDigest: "source",
+            baseLedgerDigest: "ledger",
+            segments: [
+                ChatConversationProposalSegment(
+                    id: "segment-1",
+                    title: "完整范文",
+                    summary: "生成并修改完整范文",
+                    topicTarget: .new(id: "topic-1", name: "写作训练"),
+                    sourceMessages: [user, assistant]
+                )
+            ],
+            assets: [candidateAsset],
+            ignoredMessages: []
+        )
+
+        XCTAssertEqual(
+            ChatConversationEvidencePresentation.sourceContext(for: candidateAsset, in: candidate),
+            ChatConversationAssetSourceContext(
+                references: [user, assistant],
+                destination: .candidate(jobID: "job-1", segmentID: "segment-1")
+            )
+        )
+
+        let formalVersion = ChatStudyAssetVersion(
+            id: "asset-1-v1",
+            textSnapshot: "正文",
+            textHash: ContentHasher.hash("正文"),
+            preservation: .verbatim,
+            origin: .skill,
+            sourceMessages: [assistant],
+            sourceSpans: [],
+            supersedesVersionId: nil,
+            createdAt: "2026-07-27T00:00:00Z"
+        )
+        let formalAsset = ChatStudyAsset(
+            id: "asset-1",
+            segmentId: "segment-1",
+            title: "范文",
+            kind: .finishedWork,
+            subtype: "范文",
+            uses: [.memorize],
+            versions: [formalVersion],
+            currentVersionId: formalVersion.id,
+            isHighlighted: false
+        )
+
+        XCTAssertEqual(
+            ChatConversationEvidencePresentation.sourceContext(for: formalAsset),
+            ChatConversationAssetSourceContext(
+                references: [assistant],
+                destination: .formal(segmentID: "segment-1")
+            )
+        )
     }
 
     func testDerivesAssetSegmentFromSegmentId() {

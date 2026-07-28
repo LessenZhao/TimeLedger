@@ -3,32 +3,54 @@ import EvolutionCore
 import EvolutionHubCore
 import SwiftUI
 
-/// An explicit hand-off surface: the app prepares immutable input, then the
-/// user runs the displayed Skill command in Codex. No model runs in the Hub.
+/// Workspace order is product priority: 会话 → 待确认 → 正式库.
+private enum ChatWorkspaceTab: String, CaseIterable, Identifiable {
+    case sessions = "会话"
+    case review = "待确认"
+    case library = "正式库"
+
+    var id: Self { self }
+}
+
+/// Explicit hand-off surface for ChatGPT prep materials.
+///
+/// - 会话: left = imported history; center = read source
+/// - 待确认: candidate review stage
+/// - 正式库: material catalog + read/edit/source/excerpt
+/// Imported conversation list appears only in 会话, not as a permanent far-left column.
 struct ChatConversationView: View {
     @EnvironmentObject private var store: ChatConversationHubStore
     @EnvironmentObject private var hubStore: HubStore
     @State private var usesDateRange = false
     @State private var rangeStart = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var rangeEnd = Date()
+    @State private var workspaceTab: ChatWorkspaceTab = .sessions
+    @State private var stageMode: ChatStageMode = .source
+    @State private var focusedConversationID: String?
 
     var body: some View {
         VStack(spacing: 0) {
             controls
             Divider()
-            HSplitView {
-                ChatConversationListView(store: store)
-                    .frame(minWidth: 260, idealWidth: 330, maxWidth: 460)
-
-                VSplitView {
-                    ScrollView {
-                        ChatConversationReviewView(store: store)
-                    }
-                    .frame(minHeight: 260, idealHeight: 420)
-                    ChatConversationLedgerView(store: store)
+            workspaceHeader
+            Divider()
+            Group {
+                switch workspaceTab {
+                case .sessions:
+                    sessionsWorkspace
+                case .review:
+                    ChatConversationReviewView(
+                        store: store,
+                        stageMode: $stageMode
+                    )
+                case .library:
+                    ChatConversationLedgerView(
+                        store: store,
+                        stageMode: $stageMode
+                    )
                 }
-                .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
             commandPanel
         }
@@ -36,9 +58,126 @@ struct ChatConversationView: View {
         .onAppear {
             synchronizeDateRange()
             store.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
+            if store.hasPendingCandidates {
+                workspaceTab = .review
+            } else {
+                workspaceTab = .sessions
+                stageMode = .source
+            }
         }
         .onChange(of: hubStore.settings.chatgptArchiveRoot) { _, path in
             store.refresh(archiveRootPath: path)
+        }
+        .onChange(of: store.hasPendingCandidates) { _, hasPending in
+            if hasPending {
+                workspaceTab = .review
+            }
+        }
+        .onChange(of: workspaceTab) { _, tab in
+            switch tab {
+            case .sessions:
+                stageMode = .source
+            case .review:
+                if stageMode == .edit {
+                    stageMode = .read
+                }
+            case .library:
+                if stageMode != .source && stageMode != .excerpt {
+                    stageMode = .read
+                }
+            }
+        }
+    }
+
+    private var workspaceHeader: some View {
+        HStack(spacing: 12) {
+            Picker("工作区", selection: $workspaceTab) {
+                ForEach(ChatWorkspaceTab.allCases) { tab in
+                    if tab == .review, !store.candidates.isEmpty {
+                        Text("\(tab.rawValue) \(store.candidates.count)").tag(tab)
+                    } else {
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 360)
+
+            Group {
+                switch workspaceTab {
+                case .sessions:
+                    Text("点选导入会话阅读原文；勾选后可生成处理任务。")
+                case .review:
+                    Text("核对候选后确认写入；不会自动应用。")
+                case .library:
+                    Text("正式材料：左栏目录，中栏阅读/编辑/原文/摘录。")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var sessionsWorkspace: some View {
+        HSplitView {
+            ChatConversationListView(
+                store: store,
+                focusedConversationID: $focusedConversationID,
+                onOpenConversation: { id in
+                    focusedConversationID = id
+                    stageMode = .source
+                }
+            )
+            .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
+
+            sessionStage
+                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var sessionStage: some View {
+        if let focusedConversationID,
+           let conversation = store.conversation(id: focusedConversationID) {
+            let references = store.messageReferences(forConversationID: focusedConversationID)
+            let segmentID = store.preferredFormalSegmentID(forConversationID: focusedConversationID)
+            let destination: ChatConversationSourceDestination = {
+                if let segmentID {
+                    return .formal(segmentID: segmentID)
+                }
+                return .readOnly
+            }()
+
+            VStack(spacing: 0) {
+                ChatStageHeader(
+                    mode: $stageMode,
+                    title: conversation.title,
+                    subtitle: segmentID == nil
+                        ? "只读预览 · 确认进库并产生片段后可摘录"
+                        : "可摘录到正式库",
+                    enabledModes: segmentID == nil ? [.source] : [.source, .excerpt]
+                )
+                Divider()
+                ChatConversationSourceStage(
+                    store: store,
+                    references: references,
+                    purpose: .coverage,
+                    destination: destination,
+                    allowsExcerpt: segmentID != nil
+                )
+            }
+        } else {
+            ContentUnavailableView(
+                "选择导入会话",
+                systemImage: "bubble.left.and.bubble.right",
+                description: Text("左侧是导入的历史会话。点一项即可阅读全文；勾选多项后可生成处理任务。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
         }
     }
 
@@ -98,7 +237,7 @@ struct ChatConversationView: View {
             if store.hasPendingCandidates {
                 Text("候选已生成，待人工确认")
                     .font(.subheadline.weight(.semibold))
-                Text("先在上方核对主题、会话片段、候选结论和引用材料；确认或拒绝后再生成下一项任务。")
+                Text("切换到「待确认」核对片段、候选正文和引用来源；确认或拒绝后再生成下一项任务。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if let command = store.lastGeneratedCommand {
@@ -119,7 +258,7 @@ struct ChatConversationView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("选择有待处理消息的会话后生成不可变任务。日期和状态筛选只影响可见会话，不改变已选择的处理范围。")
+                Text("工作区顺序：会话 → 待确认 → 正式库。导入会话只在「会话」里出现；勾选后生成任务，点标题阅读原文。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

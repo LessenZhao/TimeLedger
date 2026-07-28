@@ -69,7 +69,7 @@ public struct ChatConversationTextSelection: Sendable, Hashable {
     }
 }
 
-public enum ChatConversationSourceDestination: Hashable {
+public enum ChatConversationSourceDestination: Sendable, Hashable {
     case candidate(jobID: String, segmentID: String)
     case formal(segmentID: String)
     case readOnly

@@ -44,7 +44,8 @@ struct ChatStudyAssetEditorSheet: View {
                         dismiss()
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || subtype.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                              || subtype.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || uses.isEmpty)
                 }
             }
         }

@@ -166,6 +166,7 @@ final class ChatConversationHubStoreTests: XCTestCase {
 
         XCTAssertEqual(receipt.status, .accepted)
         XCTAssertTrue(store.candidates.isEmpty)
+        XCTAssertNil(store.lastGeneratedCommand)
         XCTAssertEqual(store.conversationProjections.first?.segments.map(\.id), ["segment-1"])
         XCTAssertEqual(store.topicProjections.first?.topic.name, "User topic")
         XCTAssertEqual(store.topicProjections.first?.assets.map(\.assetID), ["asset-1"])
@@ -191,6 +192,34 @@ final class ChatConversationHubStoreTests: XCTestCase {
         XCTAssertEqual(receipt.status, .accepted)
         XCTAssertEqual(store.ledgerDocument.segments.count, 1)
         XCTAssertEqual(store.ledgerDocument.assets.count, 1)
+    }
+
+    @MainActor
+    func testCandidateMetadataAndDistilledBodyCanBeCorrectedBeforeConfirmation() throws {
+        let store = try makeStoreWithCandidate(
+            assetCount: 1,
+            preservation: .distilled
+        )
+        let candidate = try XCTUnwrap(store.selectedCandidate)
+        let asset = try XCTUnwrap(candidate.assets.first)
+
+        try store.updateCandidateAsset(
+            jobID: candidate.jobId,
+            assetID: asset.id,
+            title: "用户修正标题",
+            kind: .methodStrategy,
+            subtype: "备考策略",
+            uses: [.practice, .review],
+            draftText: "用户修正后的提炼正文"
+        )
+
+        let updated = try XCTUnwrap(store.selectedCandidate?.assets.first)
+        XCTAssertEqual(updated.title, "用户修正标题")
+        XCTAssertEqual(updated.kind, .methodStrategy)
+        XCTAssertEqual(updated.subtype, "备考策略")
+        XCTAssertEqual(updated.uses, [.practice, .review])
+        XCTAssertEqual(updated.draftText, "用户修正后的提炼正文")
+        XCTAssertEqual(updated.origin, .userEdited)
     }
 
     @MainActor
@@ -360,7 +389,10 @@ private extension ChatStudyAsset {
 }
 
 @MainActor
-private func makeStoreWithCandidate(assetCount: Int) throws -> ChatConversationHubStore {
+private func makeStoreWithCandidate(
+    assetCount: Int,
+    preservation: ChatStudyAssetPreservation = .verbatim
+) throws -> ChatConversationHubStore {
     let fixture = try ChatConversationHubFixture()
     try fixture.writeConversation(
         id: "conversation-1",
@@ -388,8 +420,8 @@ private func makeStoreWithCandidate(assetCount: Int) throws -> ChatConversationH
                 kind: .finishedWork,
                 subtype: "范文",
                 uses: [.memorize],
-                preservation: .verbatim,
-                draftText: nil,
+                preservation: preservation,
+                draftText: preservation == .distilled ? "原始提炼正文" : nil,
                 sourceBlockIDs: blocks.map(\.id),
                 sourceSpans: [],
                 replacesAssetID: nil,

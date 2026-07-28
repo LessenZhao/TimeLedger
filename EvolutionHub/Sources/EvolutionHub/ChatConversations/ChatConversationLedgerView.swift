@@ -35,52 +35,65 @@ private enum KindUseFilter: String, CaseIterable, Identifiable {
 
 struct ChatConversationLedgerView: View {
     @ObservedObject var store: ChatConversationHubStore
+    @Binding var stageMode: ChatStageMode
+
     @State private var mode: LedgerProjectionMode = .conversation
     @State private var conversationFilter: ConversationAssetFilter = .all
     @State private var kindUseFilter: KindUseFilter = .all
+    @State private var selectedAssetID: String?
     @State private var versionAssetID: String?
-    @State private var editAssetID: String?
     @State private var editText = ""
+    @State private var editBaseline = ""
+    @State private var saveError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Group {
             if store.ledgerSchemaState == .requiresV1Migration {
                 migrationBanner
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("湖南省直遴选备考库")
-                            .font(.headline)
-                        Text("只处理你主动选择的会话")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Picker("投影", selection: $mode) {
-                        ForEach(LedgerProjectionMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 240)
-                    Spacer()
-                }
-
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        switch mode {
-                        case .conversation:
-                            conversationMode
-                        case .topic:
-                            topicMode
-                        case .kind:
-                            kindMode
-                        }
-                    }
+                HSplitView {
+                    catalogPane
+                        .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
+                    stagePane
+                        .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            ensureValidSelection()
+            syncEditBuffer()
+        }
+        .onChange(of: mode) { _, _ in
+            ensureValidSelection()
+        }
+        .onChange(of: conversationFilter) { _, _ in
+            ensureValidSelection()
+        }
+        .onChange(of: kindUseFilter) { _, _ in
+            ensureValidSelection()
+        }
+        .onChange(of: store.ledgerDocument.assets.map(\.id)) { _, _ in
+            ensureValidSelection()
+        }
+        .onChange(of: selectedAssetID) { _, _ in
+            syncEditBuffer()
+            saveError = nil
+            if stageMode == .source || stageMode == .excerpt {
+                // keep source-oriented modes
+            } else if stageMode == .edit {
+                // keep editing
+            } else {
+                stageMode = .read
+            }
+        }
+        .onChange(of: stageMode) { _, newMode in
+            if newMode == .edit {
+                syncEditBuffer()
+            }
+        }
         .sheet(item: Binding(
             get: { versionAssetID.map(Identified.init) },
             set: { versionAssetID = $0?.id }
@@ -89,30 +102,116 @@ struct ChatConversationLedgerView: View {
                 versionSheet(asset)
             }
         }
-        .sheet(item: Binding(
-            get: { editAssetID.map(Identified.init) },
-            set: { editAssetID = $0?.id }
-        )) { item in
-            NavigationStack {
-                Form {
-                    TextEditor(text: $editText)
-                        .frame(minHeight: 180)
+    }
+
+    private var catalogPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("材料目录")
+                    .font(.headline)
+
+                Picker("投影", selection: $mode) {
+                    ForEach(LedgerProjectionMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
                 }
-                .navigationTitle("创建修改版")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { editAssetID = nil }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") {
-                            try? store.appendUserEditedVersion(assetID: item.id, text: editText)
-                            editAssetID = nil
+                .pickerStyle(.segmented)
+
+                filterControl
+            }
+            .padding(14)
+
+            Divider()
+
+            if visibleCatalogAssetIDs.isEmpty {
+                ContentUnavailableView(
+                    "尚未确认正式内容",
+                    systemImage: "checkmark.seal",
+                    description: Text("确认候选后，这里会显示片段目录与备考资产。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        switch mode {
+                        case .conversation:
+                            conversationCatalog
+                        case .topic:
+                            topicCatalog
+                        case .kind:
+                            kindCatalog
                         }
-                        .disabled(editText.isEmpty)
                     }
+                    .padding(12)
                 }
             }
-            .frame(minWidth: 480, minHeight: 320)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var filterControl: some View {
+        switch mode {
+        case .conversation:
+            Picker("过滤", selection: $conversationFilter) {
+                ForEach(ConversationAssetFilter.allCases) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+        case .kind:
+            Picker("用途", selection: $kindUseFilter) {
+                ForEach(KindUseFilter.allCases) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+        case .topic:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var stagePane: some View {
+        if let selectedAssetID, let asset = store.asset(id: selectedAssetID) {
+            VStack(spacing: 0) {
+                ChatStageHeader(
+                    mode: $stageMode,
+                    title: asset.title,
+                    subtitle: stageSubtitle(for: asset)
+                )
+                Divider()
+                stageBody(asset)
+            }
+        } else {
+            ContentUnavailableView(
+                "选择一份材料",
+                systemImage: "doc.richtext",
+                description: Text("从左侧目录点选资产后，在这里阅读完整正文。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
+        }
+    }
+
+    private func stageSubtitle(for asset: ChatStudyAsset) -> String {
+        switch stageMode {
+        case .read: return "正式库 · 阅读"
+        case .edit: return "正式库 · Markdown 源码编辑（保存=新版本）"
+        case .source: return "正式库 · 原文大阅读"
+        case .excerpt: return "正式库 · 选中摘录入库"
+        }
+    }
+
+    @ViewBuilder
+    private func stageBody(_ asset: ChatStudyAsset) -> some View {
+        switch stageMode {
+        case .read:
+            formalReader(asset, showSourceButton: false)
+        case .edit:
+            formalEditor(asset)
+        case .source, .excerpt:
+            formalSourceStage(asset, excerptMode: stageMode == .excerpt)
         }
     }
 
@@ -136,30 +235,32 @@ struct ChatConversationLedgerView: View {
     }
 
     @ViewBuilder
-    private var conversationMode: some View {
-        if store.formalConversationProjections.isEmpty {
-            ContentUnavailableView(
-                "尚未确认正式内容",
-                systemImage: "checkmark.seal",
-                description: Text("确认候选后，这里会按会话显示片段目录与备考资产。")
-            )
-        } else {
-            ForEach(store.formalConversationProjections, id: \.id) { projection in
-                DisclosureGroup("\(projection.title) · \(projection.segments.count) 片段 / \(projection.assets.count) 资产") {
-                    Picker("过滤", selection: $conversationFilter) {
-                        ForEach(ConversationAssetFilter.allCases) { filter in
-                            Text(filter.rawValue).tag(filter)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+    private var conversationCatalog: some View {
+        ForEach(store.formalConversationProjections, id: \.id) { projection in
+            let assets = filteredAssets(projection.assets)
+            if !assets.isEmpty {
+                catalogSection(
+                    title: projection.title,
+                    subtitle: "\(projection.segments.count) 片段 · \(assets.count) 资产"
+                ) {
                     ForEach(projection.segments, id: \.id) { segment in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(segment.title).font(.subheadline.weight(.semibold))
-                            Text(segment.summary).font(.caption).foregroundStyle(.secondary)
-                            let assets = filteredAssets(projection.assets.filter { $0.segmentID == segment.id })
-                            ForEach(assets) { ref in
-                                if let asset = store.asset(id: ref.assetID) {
-                                    formalAssetCard(asset)
+                        let segmentAssets = assets.filter { $0.segmentID == segment.id }
+                        if !segmentAssets.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(segment.title)
+                                        .font(.subheadline.weight(.semibold))
+                                    if !segment.summary.isEmpty {
+                                        Text(segment.summary)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                }
+                                .padding(.horizontal, 4)
+
+                                ForEach(segmentAssets) { ref in
+                                    catalogAssetButton(ref)
                                 }
                             }
                         }
@@ -170,21 +271,15 @@ struct ChatConversationLedgerView: View {
     }
 
     @ViewBuilder
-    private var topicMode: some View {
-        if store.topicProjections.isEmpty {
-            ContentUnavailableView("尚未确认正式主题", systemImage: "tag")
-        } else {
-            ForEach(store.topicProjections, id: \.id) { projection in
-                DisclosureGroup("\(projection.topic.name) · \(projection.assets.count) 资产") {
-                    ForEach(projection.segments, id: \.id) { segment in
-                        Text("\(segment.title)：\(segment.summary)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+    private var topicCatalog: some View {
+        ForEach(store.topicProjections, id: \.id) { projection in
+            if !projection.assets.isEmpty {
+                catalogSection(
+                    title: projection.topic.name,
+                    subtitle: "\(projection.assets.count) 资产"
+                ) {
                     ForEach(projection.assets) { ref in
-                        if let asset = store.asset(id: ref.assetID) {
-                            formalAssetCard(asset)
-                        }
+                        catalogAssetButton(ref)
                     }
                 }
             }
@@ -192,35 +287,61 @@ struct ChatConversationLedgerView: View {
     }
 
     @ViewBuilder
-    private var kindMode: some View {
-        Picker("用途", selection: $kindUseFilter) {
-            ForEach(KindUseFilter.allCases) { filter in
-                Text(filter.rawValue).tag(filter)
-            }
-        }
-        .pickerStyle(.segmented)
-        if store.kindProjections.isEmpty {
-            ContentUnavailableView("尚未确认正式资产", systemImage: "books.vertical")
-        } else {
-            ForEach(store.kindProjections, id: \.id) { projection in
-                let assets = projection.assets.filter(matchesKindUseFilter)
-                if !assets.isEmpty {
-                    DisclosureGroup("\(ChatStudyAssetKindLabel.title(for: projection.kind)) · \(assets.count)") {
-                        ForEach(assets) { ref in
-                            if let asset = store.asset(id: ref.assetID) {
-                                formalAssetCard(asset)
-                            }
-                        }
+    private var kindCatalog: some View {
+        ForEach(store.kindProjections, id: \.id) { projection in
+            let assets = projection.assets.filter(matchesKindUseFilter)
+            if !assets.isEmpty {
+                catalogSection(
+                    title: ChatStudyAssetKindLabel.title(for: projection.kind),
+                    subtitle: "\(assets.count) 资产"
+                ) {
+                    ForEach(assets) { ref in
+                        catalogAssetButton(ref)
                     }
                 }
             }
         }
     }
 
+    private func catalogSection<Content: View>(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+            content()
+        }
+    }
+
+    private func catalogAssetButton(_ ref: ChatStudyAssetRef) -> some View {
+        Button {
+            selectedAssetID = ref.assetID
+        } label: {
+            ChatStudyAssetCatalogRow(
+                title: ref.title,
+                kind: ref.kind,
+                subtype: ref.subtype,
+                uses: ref.uses,
+                isHighlighted: ref.isHighlighted,
+                isSelected: selectedAssetID == ref.assetID
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder
-    private func formalAssetCard(_ asset: ChatStudyAsset) -> some View {
+    private func formalReader(_ asset: ChatStudyAsset, showSourceButton: Bool) -> some View {
         let version = asset.currentVersion
-        ChatStudyAssetCard(
+        let sourceContext = store.formalSourceContext(for: asset)
+        ChatStudyAssetReaderPane(
             title: asset.title,
             kind: asset.kind,
             subtype: asset.subtype,
@@ -231,23 +352,95 @@ struct ChatConversationLedgerView: View {
             isHighlighted: asset.isHighlighted,
             note: asset.note,
             sourceStatus: store.sourceStatus(for: asset),
-            onOpenSource: nil,
+            // Secondary sheet entry only; primary is center-stage 「原文」.
+            sourceView: showSourceButton ? sourceContext.map {
+                ChatConversationSourceView(
+                    store: store,
+                    references: $0.references,
+                    purpose: .evidence,
+                    destination: $0.destination
+                )
+            } : nil,
             onShowVersions: { versionAssetID = asset.id },
             onEditVersion: {
-                editText = version?.textSnapshot ?? ""
-                editAssetID = asset.id
+                stageMode = .edit
+                syncEditBuffer()
             }
         )
+    }
+
+    private func formalEditor(_ asset: ChatStudyAsset) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Text("Markdown 源码")
+                    .font(.headline)
+                Text("保存将调用 appendUserEditedVersion，旧版本保留")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("放弃更改") {
+                    syncEditBuffer()
+                    saveError = nil
+                }
+                .disabled(editText == editBaseline)
+                Button("保存为新版本") {
+                    saveEditedVersion(assetID: asset.id)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || editText == editBaseline)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if let saveError {
+                Text(saveError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+            }
+
+            Divider()
+
+            TextEditor(text: $editText)
+                .font(.system(.body, design: .monospaced))
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func formalSourceStage(_ asset: ChatStudyAsset, excerptMode: Bool) -> some View {
+        if let context = store.formalSourceContext(for: asset) {
+            ChatConversationSourceStage(
+                store: store,
+                references: context.references,
+                purpose: .evidence,
+                destination: context.destination,
+                allowsExcerpt: true,
+                excerptMode: excerptMode
+            )
+        } else {
+            ContentUnavailableView(
+                "没有可打开的原文引用",
+                systemImage: "text.badge.xmark",
+                description: Text("该材料未绑定 sourceMessages，无法对照原文。仍可在阅读模式查看已确认快照。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
+        }
     }
 
     private func versionSheet(_ asset: ChatStudyAsset) -> some View {
         NavigationStack {
             List(asset.versions.sorted(by: { $0.createdAt > $1.createdAt }), id: \.id) { version in
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(version.id).font(.headline)
                     Text(version.createdAt).font(.caption).foregroundStyle(.secondary)
-                    Text(version.textSnapshot)
+                    MarkdownBodyView(text: version.textSnapshot, bodyFontSize: 14)
                 }
+                .padding(.vertical, 4)
             }
             .navigationTitle("历史版本")
             .toolbar {
@@ -256,7 +449,53 @@ struct ChatConversationLedgerView: View {
                 }
             }
         }
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 560, minHeight: 420)
+    }
+
+    private var visibleCatalogAssetIDs: [String] {
+        switch mode {
+        case .conversation:
+            return store.formalConversationProjections
+                .flatMap { filteredAssets($0.assets) }
+                .map(\.assetID)
+        case .topic:
+            return store.topicProjections.flatMap(\.assets).map(\.assetID)
+        case .kind:
+            return store.kindProjections
+                .flatMap { $0.assets.filter(matchesKindUseFilter) }
+                .map(\.assetID)
+        }
+    }
+
+    private func ensureValidSelection() {
+        let ids = visibleCatalogAssetIDs
+        if let selectedAssetID, ids.contains(selectedAssetID) {
+            return
+        }
+        selectedAssetID = ids.first
+        syncEditBuffer()
+    }
+
+    private func syncEditBuffer() {
+        guard let selectedAssetID, let asset = store.asset(id: selectedAssetID) else {
+            editText = ""
+            editBaseline = ""
+            return
+        }
+        let text = asset.currentVersion?.textSnapshot ?? ""
+        editText = text
+        editBaseline = text
+    }
+
+    private func saveEditedVersion(assetID: String) {
+        do {
+            try store.appendUserEditedVersion(assetID: assetID, text: editText)
+            syncEditBuffer()
+            saveError = nil
+            stageMode = .read
+        } catch {
+            saveError = error.localizedDescription
+        }
     }
 
     private func filteredAssets(_ assets: [ChatStudyAssetRef]) -> [ChatStudyAssetRef] {

@@ -7,19 +7,35 @@ public struct ChatConversationSourceSummary: Sendable, Hashable {
     public var assistantMessageCount: Int
     public var unavailableMessageCount: Int
     public var turnCount: Int
+    public var attachmentMessageCount: Int
 
     public init(
         messageCount: Int,
         userMessageCount: Int,
         assistantMessageCount: Int,
         unavailableMessageCount: Int,
-        turnCount: Int
+        turnCount: Int,
+        attachmentMessageCount: Int
     ) {
         self.messageCount = messageCount
         self.userMessageCount = userMessageCount
         self.assistantMessageCount = assistantMessageCount
         self.unavailableMessageCount = unavailableMessageCount
         self.turnCount = turnCount
+        self.attachmentMessageCount = attachmentMessageCount
+    }
+}
+
+public struct ChatConversationAssetSourceContext: Sendable, Hashable {
+    public var references: [ChatConversationMessageReference]
+    public var destination: ChatConversationSourceDestination
+
+    public init(
+        references: [ChatConversationMessageReference],
+        destination: ChatConversationSourceDestination
+    ) {
+        self.references = references
+        self.destination = destination
     }
 }
 
@@ -97,8 +113,51 @@ public struct ChatConversationEvidencePresentation: Sendable {
             userMessageCount: available.filter { $0.role == .user }.count,
             assistantMessageCount: available.filter { $0.role == .assistant }.count,
             unavailableMessageCount: references.count - available.count,
-            turnCount: turns.count
+            turnCount: turns.count,
+            attachmentMessageCount: available.filter {
+                Self.containsAttachmentReference(in: $0.content)
+            }.count
         )
+    }
+
+    public static func sourceContext(
+        for asset: ChatConversationProposalAsset,
+        in candidate: ChatConversationProposal
+    ) -> ChatConversationAssetSourceContext? {
+        guard let segment = candidate.segments.first(where: { $0.id == asset.segmentId }),
+              !segment.sourceMessages.isEmpty else {
+            return nil
+        }
+        return ChatConversationAssetSourceContext(
+            references: segment.sourceMessages,
+            destination: .candidate(jobID: candidate.jobId, segmentID: segment.id)
+        )
+    }
+
+    public static func sourceContext(
+        for asset: ChatStudyAsset
+    ) -> ChatConversationAssetSourceContext? {
+        guard let version = asset.currentVersion,
+              !version.sourceMessages.isEmpty else {
+            return nil
+        }
+        return ChatConversationAssetSourceContext(
+            references: version.sourceMessages,
+            destination: .formal(segmentID: asset.segmentId)
+        )
+    }
+
+    public static func containsAttachmentReference(in content: String) -> Bool {
+        let lowered = content.lowercased()
+        if lowered.contains("sandbox:/mnt/data/") {
+            return true
+        }
+        let markdownAttachmentPattern =
+            #"\]\((?:file:|https?://|sandbox:)[^)\n]+\.(?:pdf|docx?|xlsx?|pptx?|zip)(?:[?#][^)\n]*)?\)"#
+        return lowered.range(
+            of: markdownAttachmentPattern,
+            options: .regularExpression
+        ) != nil
     }
 
     /// A turn begins with a user message and includes the visible assistant

@@ -122,7 +122,10 @@ public final class ChatConversationHubStore: ObservableObject {
 
     public var lastGeneratedCommand: String? {
         guard let task = lastGeneratedTask,
-              !candidates.contains(where: { $0.jobId == task.jobId }) else {
+              !candidates.contains(where: { $0.jobId == task.jobId }),
+              !ledgerDocument.receipts.contains(where: {
+                  $0.jobId == task.jobId && Self.isTerminal($0.status)
+              }) else {
             return nil
         }
         return "$chatgpt-ledger process \(task.jobId)"
@@ -546,9 +549,52 @@ public final class ChatConversationHubStore: ObservableObject {
         evidencePresentation.conversationTitle(for: conversationID)
     }
 
+    /// All message references for a conversation, archive order. Used by the
+    /// session stage and excerpt selection wiring.
+    public func messageReferences(forConversationID conversationID: String) -> [ChatConversationMessageReference] {
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
+            return []
+        }
+        return conversation.messages.map {
+            ChatConversationMessageReference(
+                conversationId: conversationID,
+                messageId: $0.id
+            )
+        }
+    }
+
+    public func conversation(id conversationID: String) -> ChatConversationArchiveSummary? {
+        conversations.first(where: { $0.conversationId == conversationID })
+    }
+
+    /// Prefer a formal segment already linked to this conversation so session
+    /// excerpts can call addManualFormalAsset without a schema migration.
+    public func preferredFormalSegmentID(forConversationID conversationID: String) -> String? {
+        if let exact = ledgerDocument.segments.first(where: { segment in
+            segment.sourceMessages.contains(where: { $0.conversationId == conversationID })
+        }) {
+            return exact.id
+        }
+        return ledgerDocument.segments.first?.id
+    }
+
+
     public func sourceStatus(for asset: ChatStudyAsset) -> ChatConversationSourceStatus {
         guard let version = asset.currentVersion else { return .unavailable }
         return evidencePresentation.sourceStatus(for: version)
+    }
+
+    public func candidateSourceContext(
+        for asset: ChatConversationProposalAsset,
+        in candidate: ChatConversationProposal
+    ) -> ChatConversationAssetSourceContext? {
+        ChatConversationEvidencePresentation.sourceContext(for: asset, in: candidate)
+    }
+
+    public func formalSourceContext(
+        for asset: ChatStudyAsset
+    ) -> ChatConversationAssetSourceContext? {
+        ChatConversationEvidencePresentation.sourceContext(for: asset)
     }
 
     public func candidateSupportingSegmentIDs(
@@ -630,6 +676,15 @@ public final class ChatConversationHubStore: ObservableObject {
 
     private func isSelectable(_ conversation: ChatConversationArchiveSummary) -> Bool {
         conversation.issue == nil && conversation.pendingMessageCount > 0
+    }
+
+    private static func isTerminal(_ status: ChatConversationReceiptStatus) -> Bool {
+        switch status {
+        case .accepted, .rejected, .noOp:
+            return true
+        case .pending:
+            return false
+        }
     }
 }
 
