@@ -7,30 +7,53 @@ private enum ReviewSelection: Hashable {
     case asset(String)
 }
 
-struct ChatConversationReviewView: View {
+struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
     @ObservedObject var store: ChatConversationHubStore
     @Binding var stageMode: ChatStageMode
+    @ViewBuilder var leftHeaderPrefix: () -> LeftHeaderPrefix
     @State private var editingAsset: ChatCandidateAssetEditorItem?
     @State private var selection: ReviewSelection?
+
+    init(
+        store: ChatConversationHubStore,
+        stageMode: Binding<ChatStageMode>,
+        @ViewBuilder leftHeaderPrefix: @escaping () -> LeftHeaderPrefix = { EmptyView() }
+    ) {
+        self.store = store
+        self._stageMode = stageMode
+        self.leftHeaderPrefix = leftHeaderPrefix
+    }
 
     var body: some View {
         Group {
             if let candidate = store.selectedCandidate {
                 candidateWorkspace(candidate)
-            } else if store.candidates.isEmpty {
-                ContentUnavailableView(
-                    "暂无待确认候选",
-                    systemImage: "tray",
-                    description: Text("Skill 发布的候选会在这里等待人工确认；不会自动应用。")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ContentUnavailableView(
-                    "选择一份候选",
-                    systemImage: "checklist",
-                    description: Text("选择候选后，在左侧目录检查片段与资产，在右侧阅读正文。")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        leftHeaderPrefix()
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: ChatChromeMetrics.headerHeight)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    Divider()
+                    if store.candidates.isEmpty {
+                        ContentUnavailableView(
+                            "暂无待确认候选",
+                            systemImage: "tray",
+                            description: Text("Skill 发布的候选会在这里等待人工确认；不会自动应用。")
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ContentUnavailableView(
+                            "选择一份候选",
+                            systemImage: "checklist",
+                            description: Text("选择候选后，在左侧目录检查片段与资产，在右侧阅读正文。")
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,15 +79,16 @@ struct ChatConversationReviewView: View {
 
     @ViewBuilder
     private func candidateWorkspace(_ candidate: ChatConversationProposal) -> some View {
-        VStack(spacing: 0) {
-            toolbar(candidate)
-            Divider()
-            HSplitView {
+        HSplitView {
+            VStack(spacing: 0) {
+                leftHeader(candidate)
+                Divider()
                 catalogPane(candidate)
-                    .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
-                detailPane(candidate)
-                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
+
+            detailPane(candidate)
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear {
             ensureSelection(in: candidate)
@@ -78,8 +102,10 @@ struct ChatConversationReviewView: View {
         }
     }
 
-    private func toolbar(_ candidate: ChatConversationProposal) -> some View {
-        HStack(spacing: 12) {
+    private func leftHeader(_ candidate: ChatConversationProposal) -> some View {
+        HStack(spacing: 8) {
+            leftHeaderPrefix()
+
             if store.candidates.count > 1 {
                 Picker("候选", selection: candidateSelection) {
                     ForEach(store.candidates, id: \.jobId) { item in
@@ -87,124 +113,151 @@ struct ChatConversationReviewView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(width: 140)
+                .controlSize(.small)
             }
 
-            Label("片段 \(candidate.segments.count)", systemImage: "rectangle.3.group")
+            Text(reviewCatalogSummary(candidate))
+                .font(.caption)
                 .foregroundStyle(.secondary)
-            Label("资产 \(candidate.assets.count)", systemImage: "books.vertical")
-                .foregroundStyle(.secondary)
-            Label("忽略 \(candidate.ignoredMessages.count)", systemImage: "eye.slash")
-                .foregroundStyle(.secondary)
+                .lineLimit(1)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: ChatChromeMetrics.headerHeight)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
 
-            Button("拒绝候选") {
+    private func rightHeaderActions(_ candidate: ChatConversationProposal) -> some View {
+        HStack(spacing: 8) {
+            Button("拒绝") {
                 _ = try? store.rejectCandidate(jobID: candidate.jobId, reason: "User rejected candidate")
             }
-            .buttonStyle(.bordered)
+            .controlSize(.small)
 
             Button("确认写入") {
                 _ = try? store.confirmCandidate(jobID: candidate.jobId)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
     private func catalogPane(_ candidate: ChatConversationProposal) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                Text("候选目录")
-                    .font(.headline)
-                    .padding(.horizontal, 4)
+        let activeSegmentID = focusedSegmentID(in: candidate)
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+                Text("片段目录")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
 
-                ForEach(candidate.segments) { segment in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button {
-                            selection = .segment(segment.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(segment.title.isEmpty ? "未命名片段" : segment.title)
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(.primary)
-                                if !segment.summary.isEmpty {
-                                    Text(segment.summary)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                }
-                                Text(topicLabel(segment.topicTarget))
-                                    .font(.caption2)
+                ForEach(Array(candidate.segments.enumerated()), id: \.element.id) { index, segment in
+                    let assets = candidate.assets.filter { $0.segmentId == segment.id }
+                    let includedCount = assets.filter {
+                        store.isCandidateAssetIncluded(jobID: candidate.jobId, assetID: $0.id)
+                    }.count
+                    let isFocused = activeSegmentID == segment.id
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        CatalogTreeSegmentRow(
+                            index: index + 1,
+                            title: segment.title,
+                            meta: segmentMeta(
+                                sourceCount: segment.sourceMessages.count,
+                                assetCount: assets.count,
+                                includedCount: includedCount
+                            ),
+                            isFocused: isFocused,
+                            showsSummary: isFocused,
+                            summary: segment.summary,
+                            isExpanded: isFocused,
+                            action: {
+                                selection = .segment(segment.id)
+                            }
+                        )
+
+                        // Only expand assets under the active segment (outline → checklist).
+                        if isFocused {
+                            if assets.isEmpty {
+                                Text("该片段暂无资产候选")
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(selection == .segment(segment.id) ? Color.accentColor.opacity(0.12) : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(
-                                        selection == .segment(segment.id) ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.15),
-                                        lineWidth: 1
+                                    .padding(.leading, 40)
+                                    .padding(.vertical, 4)
+                            } else {
+                                ForEach(assets) { asset in
+                                    CatalogTreeAssetRow(
+                                        title: asset.title,
+                                        kind: asset.kind,
+                                        uses: asset.uses,
+                                        isSelected: {
+                                            if case .asset(let id) = selection { return id == asset.id }
+                                            return false
+                                        }(),
+                                        isIncluded: store.isCandidateAssetIncluded(
+                                            jobID: candidate.jobId,
+                                            assetID: asset.id
+                                        ),
+                                        indent: 36,
+                                        action: {
+                                            selection = .asset(asset.id)
+                                        },
+                                        onToggleInclude: {
+                                            let current = store.isCandidateAssetIncluded(
+                                                jobID: candidate.jobId,
+                                                assetID: asset.id
+                                            )
+                                            try? store.setCandidateAssetIncluded(
+                                                jobID: candidate.jobId,
+                                                assetID: asset.id,
+                                                isIncluded: !current
+                                            )
+                                        }
                                     )
-                            )
-                        }
-                        .buttonStyle(.plain)
-
-                        let assets = candidate.assets.filter { $0.segmentId == segment.id }
-                        ForEach(assets) { asset in
-                            Button {
-                                selection = .asset(asset.id)
-                            } label: {
-                                ChatStudyAssetCatalogRow(
-                                    title: asset.title,
-                                    kind: asset.kind,
-                                    subtype: asset.subtype,
-                                    uses: asset.uses,
-                                    isSelected: selection == .asset(asset.id),
-                                    isIncluded: store.isCandidateAssetIncluded(
-                                        jobID: candidate.jobId,
-                                        assetID: asset.id
-                                    )
-                                )
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
 
                 if !candidate.ignoredMessages.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("明确忽略")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
                         ForEach(Array(candidate.ignoredMessages.enumerated()), id: \.offset) { _, item in
                             Text("\(item.sourceMessage.messageId)：\(item.reason)")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
                     }
-                    .padding(.top, 4)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 10)
                 }
             }
-            .padding(12)
+            .padding(10)
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-        @ViewBuilder
+    @ViewBuilder
     private func detailPane(_ candidate: ChatConversationProposal) -> some View {
         VStack(spacing: 0) {
             ChatStageHeader(
                 mode: $stageMode,
                 title: detailTitle(candidate),
-                subtitle: "待确认 · 人工核对后写入",
+                subtitle: nil,
                 enabledModes: [.read, .source, .excerpt]
-            )
+            ) {
+                if stageMode == .source || stageMode == .excerpt {
+                    SourceCatalogToggle()
+                }
+                rightHeaderActions(candidate)
+            }
             Divider()
             Group {
                 switch selection {
@@ -217,7 +270,8 @@ struct ChatConversationReviewView: View {
                                 purpose: .coverage,
                                 destination: .candidate(jobID: candidate.jobId, segmentID: segment.id),
                                 allowsExcerpt: true,
-                                excerptMode: stageMode == .excerpt
+                                excerptMode: stageMode == .excerpt,
+                                showsToolbar: false
                             )
                         } else {
                             segmentEditor(segment, candidate: candidate)
@@ -235,7 +289,8 @@ struct ChatConversationReviewView: View {
                                     purpose: .evidence,
                                     destination: context.destination,
                                     allowsExcerpt: true,
-                                    excerptMode: stageMode == .excerpt
+                                    excerptMode: stageMode == .excerpt,
+                                    showsToolbar: false
                                 )
                             } else {
                                 emptyDetail
@@ -324,22 +379,31 @@ struct ChatConversationReviewView: View {
                     Text("该片段下的资产")
                         .font(.headline)
                     ForEach(assets) { asset in
-                        Button {
-                            selection = .asset(asset.id)
-                        } label: {
-                            ChatStudyAssetCatalogRow(
-                                title: asset.title,
-                                kind: asset.kind,
-                                subtype: asset.subtype,
-                                uses: asset.uses,
-                                isSelected: false,
-                                isIncluded: store.isCandidateAssetIncluded(
+                        CatalogTreeAssetRow(
+                            title: asset.title,
+                            kind: asset.kind,
+                            uses: asset.uses,
+                            isSelected: false,
+                            isIncluded: store.isCandidateAssetIncluded(
+                                jobID: candidate.jobId,
+                                assetID: asset.id
+                            ),
+                            indent: 8,
+                            action: {
+                                selection = .asset(asset.id)
+                            },
+                            onToggleInclude: {
+                                let current = store.isCandidateAssetIncluded(
                                     jobID: candidate.jobId,
                                     assetID: asset.id
                                 )
-                            )
-                        }
-                        .buttonStyle(.plain)
+                                try? store.setCandidateAssetIncluded(
+                                    jobID: candidate.jobId,
+                                    assetID: asset.id,
+                                    isIncluded: !current
+                                )
+                            }
+                        )
                     }
                 }
             }
@@ -402,13 +466,36 @@ struct ChatConversationReviewView: View {
             break
         }
 
-        if let firstAsset = candidate.assets.first {
-            selection = .asset(firstAsset.id)
-        } else if let firstSegment = candidate.segments.first {
+        // Outline-first: land on the segment directory, then drill into assets.
+        if let firstSegment = candidate.segments.first {
             selection = .segment(firstSegment.id)
+        } else if let firstAsset = candidate.assets.first {
+            selection = .asset(firstAsset.id)
         } else {
             selection = nil
         }
+    }
+
+    private func focusedSegmentID(in candidate: ChatConversationProposal) -> String? {
+        switch selection {
+        case .segment(let id):
+            return id
+        case .asset(let id):
+            return candidate.assets.first(where: { $0.id == id })?.segmentId
+        case nil:
+            return candidate.segments.first?.id
+        }
+    }
+
+    private func segmentMeta(sourceCount: Int, assetCount: Int, includedCount: Int) -> String {
+        "来源 \(sourceCount) · 资产 \(assetCount) · 纳入 \(includedCount)"
+    }
+
+    private func reviewCatalogSummary(_ candidate: ChatConversationProposal) -> String {
+        let included = candidate.assets.filter {
+            store.isCandidateAssetIncluded(jobID: candidate.jobId, assetID: $0.id)
+        }.count
+        return "片段 \(candidate.segments.count) · 资产 \(candidate.assets.count) · 纳入 \(included)"
     }
 
     private var candidateSelection: Binding<String?> {

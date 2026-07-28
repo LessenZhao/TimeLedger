@@ -70,7 +70,6 @@ struct WorkEvolutionView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("工作沉淀")
         .onAppear {
             selectFallbackDayIfNeeded()
             selectFallbackProjectIfNeeded()

@@ -464,7 +464,7 @@ private func makeStoreWithAcceptedAsset(kind: ChatStudyAssetKind) throws -> Chat
     return store
 }
 
-private struct ChatConversationHubFixture {
+struct ChatConversationHubFixture {
     let root: URL
     let archiveRoot: URL
     let layout: EvolutionLedgerLayout

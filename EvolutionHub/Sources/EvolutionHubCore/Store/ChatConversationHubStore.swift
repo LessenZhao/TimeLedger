@@ -87,6 +87,9 @@ public final class ChatConversationHubStore: ObservableObject {
     @Published public private(set) var ledgerDocument: ChatConversationLedgerDocument
     @Published public private(set) var ledgerSchemaState: ChatConversationLedgerSchemaState = .missing
     @Published public private(set) var lastMigrationBackupURL: URL?
+    @Published public private(set) var starredConversationIDs: Set<String> = []
+    @Published public private(set) var starredTurnIDs: Set<String> = []
+    @Published public var showsOnlyStarredConversations = false
 
     private let ledger: ChatConversationLedger
     private let layout: EvolutionLedgerLayout
@@ -109,15 +112,55 @@ public final class ChatConversationHubStore: ObservableObject {
         self.lastError = nil
         self.selectedCandidateJobID = nil
         self.ledgerDocument = .empty
+        let marks = Self.loadUserMarks(layout: layout)
+        self.starredConversationIDs = Set(marks.starredConversationIDs)
+        self.starredTurnIDs = Set(marks.starredTurnIDs)
     }
 
     public var visibleConversations: [ChatConversationArchiveSummary] {
         conversations.filter { conversation in
             guard statusFilter.contains(conversation.status) else { return false }
+            if showsOnlyStarredConversations,
+               !starredConversationIDs.contains(conversation.conversationId) {
+                return false
+            }
             guard let dateRange else { return true }
             guard let updatedAt = ISO8601Codec.date(from: conversation.updatedAt) else { return false }
             return dateRange.contains(updatedAt)
         }
+    }
+
+    public var visibleConversationDayGroups: [ChatConversationDayGroup] {
+        ChatConversationDayGrouping.groups(
+            from: visibleConversations,
+            starredConversationIDs: starredConversationIDs
+        )
+    }
+
+    public func isConversationStarred(_ conversationID: String) -> Bool {
+        starredConversationIDs.contains(conversationID)
+    }
+
+    public func isTurnStarred(_ turnID: String) -> Bool {
+        starredTurnIDs.contains(turnID)
+    }
+
+    public func toggleConversationStar(conversationID: String) {
+        if starredConversationIDs.contains(conversationID) {
+            starredConversationIDs.remove(conversationID)
+        } else {
+            starredConversationIDs.insert(conversationID)
+        }
+        persistUserMarks()
+    }
+
+    public func toggleTurnStar(turnID: String) {
+        if starredTurnIDs.contains(turnID) {
+            starredTurnIDs.remove(turnID)
+        } else {
+            starredTurnIDs.insert(turnID)
+        }
+        persistUserMarks()
     }
 
     public var lastGeneratedCommand: String? {
@@ -671,6 +714,34 @@ public final class ChatConversationHubStore: ObservableObject {
         if let selectedCandidateJobID,
            !candidates.contains(where: { $0.jobId == selectedCandidateJobID }) {
             self.selectedCandidateJobID = nil
+        }
+    }
+
+    private func persistUserMarks() {
+        do {
+            try layout.ensureDirectories()
+            let document = ChatConversationUserMarksDocument(
+                schemaVersion: ChatConversationUserMarksDocument.currentSchemaVersion,
+                starredConversationIDs: starredConversationIDs.sorted(),
+                starredTurnIDs: starredTurnIDs.sorted()
+            )
+            let data = try JSONEncoder().encode(document)
+            try data.write(to: layout.chatConversationUserMarksFileURL, options: .atomic)
+        } catch {
+            lastError = "保存星标失败：\(error.localizedDescription)"
+        }
+    }
+
+    private static func loadUserMarks(layout: EvolutionLedgerLayout) -> ChatConversationUserMarksDocument {
+        let url = layout.chatConversationUserMarksFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return .empty
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(ChatConversationUserMarksDocument.self, from: data)
+        } catch {
+            return .empty
         }
     }
 

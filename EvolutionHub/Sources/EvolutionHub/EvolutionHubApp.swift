@@ -35,6 +35,7 @@ struct EvolutionHubApp: App {
                 }
         }
         .defaultSize(width: 1180, height: 760)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("同步") {

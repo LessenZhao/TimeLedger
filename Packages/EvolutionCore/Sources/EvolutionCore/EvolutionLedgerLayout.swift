@@ -19,6 +19,11 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
         recordsDirectoryURL.appendingPathComponent("chatgpt-ledger.json", isDirectory: false)
     }
 
+    /// Local user marks (stars) for imported ChatGPT sessions/turns. Not part of the formal ledger.
+    public var chatConversationUserMarksFileURL: URL {
+        recordsDirectoryURL.appendingPathComponent("chatgpt-user-marks.json", isDirectory: false)
+    }
+
     public var chatConversationExchangeDirectoryURL: URL {
         rootURL.appendingPathComponent("exchange/chatgpt", isDirectory: true)
     }

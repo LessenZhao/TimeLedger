@@ -92,7 +92,6 @@ struct ReviewStatsPane: View {
             }
         }
         .padding()
-        .navigationTitle("复盘")
     }
 }
 

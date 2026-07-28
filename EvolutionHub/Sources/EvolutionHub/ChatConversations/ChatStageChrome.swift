@@ -12,26 +12,45 @@ enum ChatStageMode: String, CaseIterable, Identifiable {
     static let displayOrder: [ChatStageMode] = [.read, .edit, .source, .excerpt]
 }
 
-/// Fixed stage chrome: 阅读 | 编辑 | 原文 | 摘录
-struct ChatStageHeader: View {
+/// One-row stage column header. No meta labels like「主操作」.
+struct ChatStageHeader<Trailing: View>: View {
     @Binding var mode: ChatStageMode
     var title: String? = nil
     var subtitle: String? = nil
     var enabledModes: Set<ChatStageMode> = Set(ChatStageMode.allCases)
+    @ViewBuilder var trailing: () -> Trailing
+
+    init(
+        mode: Binding<ChatStageMode>,
+        title: String? = nil,
+        subtitle: String? = nil,
+        enabledModes: Set<ChatStageMode> = Set(ChatStageMode.allCases),
+        @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }
+    ) {
+        self._mode = mode
+        self.title = title
+        self.subtitle = subtitle
+        self.enabledModes = enabledModes
+        self.trailing = trailing
+    }
 
     private var visibleModes: [ChatStageMode] {
         ChatStageMode.displayOrder.filter { enabledModes.contains($0) }
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Picker("主操作", selection: modeBinding) {
-                ForEach(visibleModes) { item in
-                    Text(item.rawValue).tag(item)
+        HStack(spacing: 8) {
+            if visibleModes.count > 1 {
+                Picker("模式", selection: modeBinding) {
+                    ForEach(visibleModes) { item in
+                        Text(item.rawValue).tag(item)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: CGFloat(max(120, visibleModes.count * 56)))
+                .controlSize(.small)
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 360)
 
             if let title, !title.isEmpty {
                 Text(title)
@@ -46,10 +65,12 @@ struct ChatStageHeader: View {
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            trailing()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .frame(height: ChatChromeMetrics.headerHeight)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { clampMode() }
         .onChange(of: enabledModes) { _, _ in clampMode() }

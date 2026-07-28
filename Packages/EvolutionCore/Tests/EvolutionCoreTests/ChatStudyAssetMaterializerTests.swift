@@ -34,6 +34,54 @@ final class ChatStudyAssetMaterializerTests: XCTestCase {
         XCTAssertFalse(version.sourceSpans.isEmpty)
     }
 
+    func testVerbatimListMarkdownKeepsExactNewlinesAndMarkers() throws {
+        let content = """
+        # 三、每天的标准流程
+
+        建议把每日训练控制在90—120分钟。
+
+        ## 版本一：普通题目
+
+        - 5分钟：审题和列框架
+        - 30—40分钟：限时作答
+        - 15分钟：自评和AI评分
+        - 20分钟：定向修改
+        - 10分钟：脱稿复现
+        - 5分钟：记录唯一规则
+
+        ## 版本二：大作文
+
+        - 10分钟：审题立意和搭框架
+        - 50—60分钟：限时写作
+        """
+        let task = makeTask(assistantContent: content)
+        let assistant = try XCTUnwrap(task.inputMessages.first { $0.role == .assistant })
+        let candidate = ChatConversationProposalAsset(
+            id: "asset-list-1",
+            segmentId: "segment-1",
+            title: "每天标准流程",
+            kind: .methodStrategy,
+            subtype: "训练流程",
+            uses: [.practice, .review],
+            preservation: .verbatim,
+            draftText: nil,
+            sourceBlockIDs: assistant.sourceBlocks.map(\.id),
+            sourceSpans: [],
+            replacesAssetID: nil,
+            origin: .skill
+        )
+
+        let version = try ChatStudyAssetMaterializer().materialize(
+            candidate,
+            task: task,
+            createdAt: "2026-07-28T00:00:00Z"
+        )
+
+        XCTAssertEqual(version.textSnapshot, content)
+        XCTAssertTrue(version.textSnapshot.contains("- 5分钟：审题和列框架\n- 30—40分钟：限时作答"))
+        XCTAssertFalse(version.textSnapshot.contains("列框架30—40分钟"))
+    }
+
     func testRejectsVerbatimWithDraftText() {
         let task = makeTask(assistantContent: "正文\n")
         let assistant = task.inputMessages.first { $0.role == .assistant }!

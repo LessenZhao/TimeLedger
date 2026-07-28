@@ -33,18 +33,34 @@ private enum KindUseFilter: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-struct ChatConversationLedgerView: View {
+struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: View>: View {
     @ObservedObject var store: ChatConversationHubStore
     @Binding var stageMode: ChatStageMode
+    @ViewBuilder var leftHeaderPrefix: () -> LeftHeaderPrefix
+    @ViewBuilder var rightHeaderTrailing: () -> RightHeaderTrailing
 
     @State private var mode: LedgerProjectionMode = .conversation
     @State private var conversationFilter: ConversationAssetFilter = .all
     @State private var kindUseFilter: KindUseFilter = .all
     @State private var selectedAssetID: String?
+    @State private var focusedSegmentID: String?
+    @State private var expandedGroupIDs: Set<String> = []
     @State private var versionAssetID: String?
     @State private var editText = ""
     @State private var editBaseline = ""
     @State private var saveError: String?
+
+    init(
+        store: ChatConversationHubStore,
+        stageMode: Binding<ChatStageMode>,
+        @ViewBuilder leftHeaderPrefix: @escaping () -> LeftHeaderPrefix = { EmptyView() },
+        @ViewBuilder rightHeaderTrailing: @escaping () -> RightHeaderTrailing = { EmptyView() }
+    ) {
+        self.store = store
+        self._stageMode = stageMode
+        self.leftHeaderPrefix = leftHeaderPrefix
+        self.rightHeaderTrailing = rightHeaderTrailing
+    }
 
     var body: some View {
         Group {
@@ -64,21 +80,30 @@ struct ChatConversationLedgerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             ensureValidSelection()
+            expandAncestorsOfSelection(defaultExpandFirst: true)
             syncEditBuffer()
         }
         .onChange(of: mode) { _, _ in
             ensureValidSelection()
+            expandAncestorsOfSelection(defaultExpandFirst: true)
         }
         .onChange(of: conversationFilter) { _, _ in
             ensureValidSelection()
+            expandAncestorsOfSelection(defaultExpandFirst: false)
         }
         .onChange(of: kindUseFilter) { _, _ in
             ensureValidSelection()
+            expandAncestorsOfSelection(defaultExpandFirst: false)
         }
         .onChange(of: store.ledgerDocument.assets.map(\.id)) { _, _ in
             ensureValidSelection()
+            expandAncestorsOfSelection(defaultExpandFirst: false)
         }
-        .onChange(of: selectedAssetID) { _, _ in
+        .onChange(of: selectedAssetID) { _, newID in
+            if let newID {
+                focusedSegmentID = store.asset(id: newID)?.segmentId
+            }
+            expandAncestorsOfSelection(defaultExpandFirst: false)
             syncEditBuffer()
             saveError = nil
             if stageMode == .source || stageMode == .excerpt {
@@ -106,20 +131,23 @@ struct ChatConversationLedgerView: View {
 
     private var catalogPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("材料目录")
-                    .font(.headline)
-
+            HStack(spacing: 8) {
+                leftHeaderPrefix()
                 Picker("投影", selection: $mode) {
                     ForEach(LedgerProjectionMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
-
+                .labelsHidden()
+                .frame(maxWidth: 220)
+                .controlSize(.small)
                 filterControl
+                Spacer(minLength: 4)
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .frame(height: ChatChromeMetrics.headerHeight)
+            .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
 
@@ -132,7 +160,7 @@ struct ChatConversationLedgerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         switch mode {
                         case .conversation:
                             conversationCatalog
@@ -142,8 +170,10 @@ struct ChatConversationLedgerView: View {
                             kindCatalog
                         }
                     }
-                    .padding(12)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
                 }
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -159,6 +189,9 @@ struct ChatConversationLedgerView: View {
                 }
             }
             .pickerStyle(.menu)
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: 100)
         case .kind:
             Picker("用途", selection: $kindUseFilter) {
                 ForEach(KindUseFilter.allCases) { filter in
@@ -166,6 +199,9 @@ struct ChatConversationLedgerView: View {
                 }
             }
             .pickerStyle(.menu)
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: 100)
         case .topic:
             EmptyView()
         }
@@ -179,27 +215,45 @@ struct ChatConversationLedgerView: View {
                     mode: $stageMode,
                     title: asset.title,
                     subtitle: stageSubtitle(for: asset)
-                )
+                ) {
+                    if stageMode == .source || stageMode == .excerpt {
+                        SourceCatalogToggle()
+                    }
+                    rightHeaderTrailing()
+                }
                 Divider()
                 stageBody(asset)
             }
         } else {
-            ContentUnavailableView(
-                "选择一份材料",
-                systemImage: "doc.richtext",
-                description: Text("从左侧目录点选资产后，在这里阅读完整正文。")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
+            VStack(spacing: 0) {
+                HStack {
+                    Text("选择左侧材料")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    rightHeaderTrailing()
+                }
+                .padding(.horizontal, 12)
+                .frame(height: ChatChromeMetrics.headerHeight)
+                .background(Color(nsColor: .windowBackgroundColor))
+                Divider()
+                ContentUnavailableView(
+                    "选择一份材料",
+                    systemImage: "doc.richtext",
+                    description: Text("从左侧目录点选资产后，在这里阅读完整正文。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
+            }
         }
     }
 
-    private func stageSubtitle(for asset: ChatStudyAsset) -> String {
+    private func stageSubtitle(for asset: ChatStudyAsset) -> String? {
         switch stageMode {
-        case .read: return "正式库 · 阅读"
-        case .edit: return "正式库 · Markdown 源码编辑（保存=新版本）"
-        case .source: return "正式库 · 原文大阅读"
-        case .excerpt: return "正式库 · 选中摘录入库"
+        case .read: return nil
+        case .edit: return "保存=新版本"
+        case .source: return "原文对照"
+        case .excerpt: return "选中摘录"
         }
     }
 
@@ -239,33 +293,57 @@ struct ChatConversationLedgerView: View {
         ForEach(store.formalConversationProjections, id: \.id) { projection in
             let assets = filteredAssets(projection.assets)
             if !assets.isEmpty {
-                catalogSection(
-                    title: projection.title,
-                    subtitle: "\(projection.segments.count) 片段 · \(assets.count) 资产"
-                ) {
-                    ForEach(projection.segments, id: \.id) { segment in
-                        let segmentAssets = assets.filter { $0.segmentID == segment.id }
-                        if !segmentAssets.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(segment.title)
-                                        .font(.subheadline.weight(.semibold))
-                                    if !segment.summary.isEmpty {
-                                        Text(segment.summary)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                }
-                                .padding(.horizontal, 4)
+                let groupID = "conversation:\(projection.id)"
+                let isExpanded = expandedGroupIDs.contains(groupID)
+                let segments = orderedSegments(projection.segments, assets: assets)
+                VStack(alignment: .leading, spacing: 0) {
+                    CatalogTreeGroupHeader(
+                        title: projection.title,
+                        subtitle: "\(segments.count) 片段 · \(assets.count) 资产",
+                        isExpanded: isExpanded,
+                        icon: "bubble.left.and.bubble.right.fill",
+                        onToggle: { toggleGroup(groupID, exclusive: true) }
+                    )
 
-                                ForEach(segmentAssets) { ref in
-                                    catalogAssetButton(ref)
+                    if isExpanded {
+                        CatalogTreeBranch {
+                            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                                let segmentAssets = assets.filter { $0.segmentID == segment.id }
+                                if !segmentAssets.isEmpty {
+                                    let isFocused = focusedSegmentID == segment.id
+                                    CatalogTreeSegmentRow(
+                                        index: index + 1,
+                                        title: segment.title,
+                                        meta: "\(segmentAssets.count) 资产",
+                                        isFocused: isFocused,
+                                        isExpanded: isFocused,
+                                        action: {
+                                            focusedSegmentID = segment.id
+                                            if let first = segmentAssets.first {
+                                                selectedAssetID = first.assetID
+                                            }
+                                        }
+                                    )
+                                    // L3 only under the active segment — keeps the TOC readable.
+                                    if isFocused {
+                                        ForEach(segmentAssets) { ref in
+                                            catalogAssetButton(ref, indent: 36)
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                )
             }
         }
     }
@@ -274,14 +352,66 @@ struct ChatConversationLedgerView: View {
     private var topicCatalog: some View {
         ForEach(store.topicProjections, id: \.id) { projection in
             if !projection.assets.isEmpty {
-                catalogSection(
-                    title: projection.topic.name,
-                    subtitle: "\(projection.assets.count) 资产"
-                ) {
-                    ForEach(projection.assets) { ref in
-                        catalogAssetButton(ref)
+                let groupID = "topic:\(projection.id)"
+                let isExpanded = expandedGroupIDs.contains(groupID)
+                let segments = orderedSegments(projection.segments, assets: projection.assets)
+                VStack(alignment: .leading, spacing: 0) {
+                    CatalogTreeGroupHeader(
+                        title: projection.topic.name,
+                        subtitle: "\(projection.assets.count) 资产",
+                        isExpanded: isExpanded,
+                        icon: "tag.fill",
+                        onToggle: { toggleGroup(groupID, exclusive: true) }
+                    )
+                    if isExpanded {
+                        CatalogTreeBranch {
+                            if segments.isEmpty {
+                                ForEach(projection.assets) { ref in
+                                    catalogAssetButton(ref, indent: 22)
+                                }
+                            } else {
+                                ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                                    let segmentAssets = projection.assets.filter { $0.segmentID == segment.id }
+                                    if !segmentAssets.isEmpty {
+                                        let isFocused = focusedSegmentID == segment.id
+                                        CatalogTreeSegmentRow(
+                                            index: index + 1,
+                                            title: segment.title,
+                                            meta: "\(segmentAssets.count) 资产",
+                                            isFocused: isFocused,
+                                            isExpanded: isFocused,
+                                            action: {
+                                                focusedSegmentID = segment.id
+                                                if let first = segmentAssets.first {
+                                                    selectedAssetID = first.assetID
+                                                }
+                                            }
+                                        )
+                                        if isFocused {
+                                            ForEach(segmentAssets) { ref in
+                                                catalogAssetButton(ref, indent: 36)
+                                            }
+                                        }
+                                    }
+                                }
+                                let known = Set(segments.map(\.id))
+                                let orphans = projection.assets.filter { !known.contains($0.segmentID) }
+                                ForEach(orphans) { ref in
+                                    catalogAssetButton(ref, indent: 22)
+                                }
+                            }
+                        }
                     }
                 }
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                )
             }
         }
     }
@@ -291,50 +421,140 @@ struct ChatConversationLedgerView: View {
         ForEach(store.kindProjections, id: \.id) { projection in
             let assets = projection.assets.filter(matchesKindUseFilter)
             if !assets.isEmpty {
-                catalogSection(
-                    title: ChatStudyAssetKindLabel.title(for: projection.kind),
-                    subtitle: "\(assets.count) 资产"
-                ) {
-                    ForEach(assets) { ref in
-                        catalogAssetButton(ref)
+                let groupID = "kind:\(projection.id)"
+                let isExpanded = expandedGroupIDs.contains(groupID)
+                VStack(alignment: .leading, spacing: 0) {
+                    CatalogTreeGroupHeader(
+                        title: ChatStudyAssetKindLabel.title(for: projection.kind),
+                        subtitle: "\(assets.count) 资产",
+                        isExpanded: isExpanded,
+                        icon: "square.grid.2x2.fill",
+                        onToggle: { toggleGroup(groupID, exclusive: false) }
+                    )
+                    if isExpanded {
+                        CatalogTreeBranch {
+                            ForEach(assets) { ref in
+                                catalogAssetButton(ref, indent: 22)
+                            }
+                        }
                     }
                 }
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                )
             }
         }
     }
 
-    private func catalogSection<Content: View>(
-        title: String,
-        subtitle: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.bold))
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private func catalogAssetButton(_ ref: ChatStudyAssetRef, indent: CGFloat = 28) -> some View {
+        CatalogTreeAssetRow(
+            title: ref.title,
+            kind: ref.kind,
+            uses: ref.uses,
+            isHighlighted: ref.isHighlighted,
+            isSelected: selectedAssetID == ref.assetID,
+            indent: indent,
+            action: {
+                selectedAssetID = ref.assetID
+                focusedSegmentID = ref.segmentID
             }
-            .padding(.horizontal, 4)
-            content()
-        }
+        )
     }
 
-    private func catalogAssetButton(_ ref: ChatStudyAssetRef) -> some View {
-        Button {
-            selectedAssetID = ref.assetID
-        } label: {
-            ChatStudyAssetCatalogRow(
-                title: ref.title,
-                kind: ref.kind,
-                subtype: ref.subtype,
-                uses: ref.uses,
-                isHighlighted: ref.isHighlighted,
-                isSelected: selectedAssetID == ref.assetID
-            )
+    private func toggleGroup(_ id: String, exclusive: Bool) {
+        if expandedGroupIDs.contains(id) {
+            expandedGroupIDs.remove(id)
+            return
         }
-        .buttonStyle(.plain)
+        if exclusive {
+            // Accordion: only one L1 group open in conversation/topic modes.
+            let prefix: String
+            if id.hasPrefix("conversation:") {
+                prefix = "conversation:"
+            } else if id.hasPrefix("topic:") {
+                prefix = "topic:"
+            } else {
+                prefix = ""
+            }
+            if !prefix.isEmpty {
+                expandedGroupIDs = expandedGroupIDs.filter { !$0.hasPrefix(prefix) }
+            }
+        }
+        expandedGroupIDs.insert(id)
+    }
+
+    private func orderedSegments(
+        _ segments: [ChatConversationSegment],
+        assets: [ChatStudyAssetRef]
+    ) -> [ChatConversationSegment] {
+        let assetSegmentIDs = Set(assets.map(\.segmentID))
+        return segments.filter { assetSegmentIDs.contains($0.id) }
+    }
+
+    private func visibleSegmentCount(
+        _ segments: [ChatConversationSegment],
+        assets: [ChatStudyAssetRef]
+    ) -> Int {
+        orderedSegments(segments, assets: assets).count
+    }
+
+    private func expandAncestorsOfSelection(defaultExpandFirst: Bool) {
+        switch mode {
+        case .conversation:
+            let projections = store.formalConversationProjections.filter {
+                !filteredAssets($0.assets).isEmpty
+            }
+            let target: String?
+            if let selectedAssetID,
+               let match = projections.first(where: {
+                   filteredAssets($0.assets).contains(where: { $0.assetID == selectedAssetID })
+               }) {
+                target = "conversation:\(match.id)"
+            } else if defaultExpandFirst, let first = projections.first {
+                target = "conversation:\(first.id)"
+            } else {
+                target = expandedGroupIDs.first(where: { $0.hasPrefix("conversation:") })
+            }
+            // Accordion: keep only the active conversation open.
+            var next = expandedGroupIDs.filter { !$0.hasPrefix("conversation:") }
+            if let target { next.insert(target) }
+            expandedGroupIDs = next
+
+        case .topic:
+            let projections = store.topicProjections.filter { !$0.assets.isEmpty }
+            let target: String?
+            if let selectedAssetID,
+               let match = projections.first(where: { $0.assets.contains(where: { $0.assetID == selectedAssetID }) }) {
+                target = "topic:\(match.id)"
+            } else if defaultExpandFirst, let first = projections.first {
+                target = "topic:\(first.id)"
+            } else {
+                target = expandedGroupIDs.first(where: { $0.hasPrefix("topic:") })
+            }
+            var next = expandedGroupIDs.filter { !$0.hasPrefix("topic:") }
+            if let target { next.insert(target) }
+            expandedGroupIDs = next
+
+        case .kind:
+            var next = expandedGroupIDs
+            let projections = store.kindProjections.compactMap { projection -> ChatConversationKindProjection? in
+                let assets = projection.assets.filter(matchesKindUseFilter)
+                return assets.isEmpty ? nil : ChatConversationKindProjection(kind: projection.kind, assets: assets)
+            }
+            if let selectedAssetID,
+               let match = projections.first(where: { $0.assets.contains(where: { $0.assetID == selectedAssetID }) }) {
+                next.insert("kind:\(match.id)")
+            } else if defaultExpandFirst, let first = projections.first {
+                next.insert("kind:\(first.id)")
+            }
+            expandedGroupIDs = next
+        }
     }
 
     @ViewBuilder
@@ -371,10 +591,10 @@ struct ChatConversationLedgerView: View {
 
     private func formalEditor(_ asset: ChatStudyAsset) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Text("Markdown 源码")
-                    .font(.headline)
-                Text("保存将调用 appendUserEditedVersion，旧版本保留")
+                    .font(.subheadline.weight(.semibold))
+                Text("旧版本保留")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -382,16 +602,18 @@ struct ChatConversationLedgerView: View {
                     syncEditBuffer()
                     saveError = nil
                 }
+                .controlSize(.small)
                 .disabled(editText == editBaseline)
                 Button("保存为新版本") {
                     saveEditedVersion(assetID: asset.id)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || editText == editBaseline)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
 
             if let saveError {
                 Text(saveError)
@@ -419,7 +641,8 @@ struct ChatConversationLedgerView: View {
                 purpose: .evidence,
                 destination: context.destination,
                 allowsExcerpt: true,
-                excerptMode: excerptMode
+                excerptMode: excerptMode,
+                showsToolbar: false
             )
         } else {
             ContentUnavailableView(
@@ -470,9 +693,13 @@ struct ChatConversationLedgerView: View {
     private func ensureValidSelection() {
         let ids = visibleCatalogAssetIDs
         if let selectedAssetID, ids.contains(selectedAssetID) {
+            if focusedSegmentID == nil {
+                focusedSegmentID = store.asset(id: selectedAssetID)?.segmentId
+            }
             return
         }
         selectedAssetID = ids.first
+        focusedSegmentID = ids.first.flatMap { store.asset(id: $0)?.segmentId }
         syncEditBuffer()
     }
 

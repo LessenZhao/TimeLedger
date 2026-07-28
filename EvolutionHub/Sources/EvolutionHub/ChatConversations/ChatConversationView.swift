@@ -4,7 +4,7 @@ import EvolutionHubCore
 import SwiftUI
 
 /// Workspace order is product priority: 会话 → 待确认 → 正式库.
-private enum ChatWorkspaceTab: String, CaseIterable, Identifiable {
+enum ChatWorkspaceTab: String, CaseIterable, Identifiable {
     case sessions = "会话"
     case review = "待确认"
     case library = "正式库"
@@ -12,12 +12,10 @@ private enum ChatWorkspaceTab: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-/// Explicit hand-off surface for ChatGPT prep materials.
+/// Chat prep surface.
 ///
-/// - 会话: left = imported history; center = read source
-/// - 待确认: candidate review stage
-/// - 正式库: material catalog + read/edit/source/excerpt
-/// Imported conversation list appears only in 会话, not as a permanent far-left column.
+/// Shell contract: module chrome lives in the app's single top bar (right of the sidebar seam).
+/// Content columns no longer host a second global header row for 会话.
 struct ChatConversationView: View {
     @EnvironmentObject private var store: ChatConversationHubStore
     @EnvironmentObject private var hubStore: HubStore
@@ -30,10 +28,6 @@ struct ChatConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            controls
-            Divider()
-            workspaceHeader
-            Divider()
             Group {
                 switch workspaceTab {
                 case .sessions:
@@ -41,20 +35,30 @@ struct ChatConversationView: View {
                 case .review:
                     ChatConversationReviewView(
                         store: store,
-                        stageMode: $stageMode
+                        stageMode: $stageMode,
+                        leftHeaderPrefix: { EmptyView() }
                     )
                 case .library:
                     ChatConversationLedgerView(
                         store: store,
-                        stageMode: $stageMode
+                        stageMode: $stageMode,
+                        leftHeaderPrefix: { EmptyView() },
+                        rightHeaderTrailing: { EmptyView() }
                     )
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            commandPanel
+
+            if showsCommandPanel {
+                Divider()
+                commandPanel
+            }
         }
-        .navigationTitle("湖南省直遴选备考库")
+        .background(
+            HubChromeInstaller(dependency: chromeDependency) {
+                moduleChrome
+            }
+        )
         .onAppear {
             synchronizeDateRange()
             store.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
@@ -89,38 +93,143 @@ struct ChatConversationView: View {
         }
     }
 
-    private var workspaceHeader: some View {
-        HStack(spacing: 12) {
-            Picker("工作区", selection: $workspaceTab) {
-                ForEach(ChatWorkspaceTab.allCases) { tab in
-                    if tab == .review, !store.candidates.isEmpty {
-                        Text("\(tab.rawValue) \(store.candidates.count)").tag(tab)
-                    } else {
-                        Text(tab.rawValue).tag(tab)
+    // MARK: - Shell module chrome (single top-bar row)
+
+    private var chromeDependency: String {
+        let focusedTitle: String = {
+            guard let focusedConversationID,
+                  let conversation = store.conversation(id: focusedConversationID) else {
+                return ""
+            }
+            return conversation.title
+        }()
+        let segmentFlag: String = {
+            guard let focusedConversationID else { return "0" }
+            return store.preferredFormalSegmentID(forConversationID: focusedConversationID) == nil ? "0" : "1"
+        }()
+        return [
+            workspaceTab.rawValue,
+            stageMode.rawValue,
+            focusedConversationID ?? "",
+            focusedTitle,
+            segmentFlag,
+            String(store.visibleConversations.count),
+            String(store.showsOnlyStarredConversations),
+            String(usesDateRange),
+            String(store.selectedConversationIDs.count),
+            String(store.candidates.count),
+            store.statusFilter.map(\.rawValue).sorted().joined(separator: ","),
+            rangeStart.timeIntervalSince1970.description,
+            rangeEnd.timeIntervalSince1970.description
+        ].joined(separator: "|")
+    }
+
+    @ViewBuilder
+    private var moduleChrome: some View {
+        HStack(spacing: 8) {
+            workspaceTabs
+
+            switch workspaceTab {
+            case .sessions:
+                sessionFilterAccessory
+                Spacer(minLength: 4)
+                Toggle(isOn: $store.showsOnlyStarredConversations) {
+                    Image(systemName: store.showsOnlyStarredConversations ? "star.fill" : "star")
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help(store.showsOnlyStarredConversations ? "显示全部会话" : "仅显示星标会话")
+                Text("\(store.visibleConversations.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                shellSeparator
+
+                sessionStageChrome
+            case .review:
+                Text(store.candidates.isEmpty ? "暂无候选" : "候选 \(store.candidates.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                globalActions
+            case .library:
+                Spacer(minLength: 8)
+                globalActions
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private var shellSeparator: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private var sessionStageChrome: some View {
+        if let focusedConversationID,
+           let conversation = store.conversation(id: focusedConversationID) {
+            let references = store.messageReferences(forConversationID: focusedConversationID)
+            let segmentID = store.preferredFormalSegmentID(forConversationID: focusedConversationID)
+            let summary = store.sourceSummary(for: references)
+            let enabled: Set<ChatStageMode> = segmentID == nil ? [.source] : [.source, .excerpt]
+
+            if enabled.count > 1 {
+                Picker("模式", selection: modeBinding(enabled: enabled)) {
+                    ForEach(ChatStageMode.displayOrder.filter { enabled.contains($0) }) { item in
+                        Text(item.rawValue).tag(item)
                     }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: CGFloat(max(120, enabled.count * 56)))
+                .controlSize(.small)
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 360)
 
-            Group {
-                switch workspaceTab {
-                case .sessions:
-                    Text("点选导入会话阅读原文；勾选后可生成处理任务。")
-                case .review:
-                    Text("核对候选后确认写入；不会自动应用。")
-                case .library:
-                    Text("正式材料：左栏目录，中栏阅读/编辑/原文/摘录。")
-                }
+            Text(conversation.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            if segmentID == nil {
+                Text("只读")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+
+            Text("\(summary.messageCount) 消息 · \(summary.turnCount) 轮")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .monospacedDigit()
+            SourceCatalogToggle()
+            globalActions
+        } else {
+            Text("选择左侧会话")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            globalActions
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
+
+    private func modeBinding(enabled: Set<ChatStageMode>) -> Binding<ChatStageMode> {
+        let fallback = ChatStageMode.displayOrder.first(where: { enabled.contains($0) }) ?? .source
+        return Binding(
+            get: { enabled.contains(stageMode) ? stageMode : fallback },
+            set: { newValue in
+                stageMode = enabled.contains(newValue) ? newValue : fallback
+            }
+        )
+    }
+
+    // MARK: - Sessions content (no column header row)
 
     private var sessionsWorkspace: some View {
         HSplitView {
@@ -130,19 +239,20 @@ struct ChatConversationView: View {
                 onOpenConversation: { id in
                     focusedConversationID = id
                     stageMode = .source
-                }
+                },
+                showsHeader: false
             )
             .frame(minWidth: 280, idealWidth: 340, maxWidth: 460)
 
-            sessionStage
+            sessionStageBody
                 .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     @ViewBuilder
-    private var sessionStage: some View {
+    private var sessionStageBody: some View {
         if let focusedConversationID,
-           let conversation = store.conversation(id: focusedConversationID) {
+           let _ = store.conversation(id: focusedConversationID) {
             let references = store.messageReferences(forConversationID: focusedConversationID)
             let segmentID = store.preferredFormalSegmentID(forConversationID: focusedConversationID)
             let destination: ChatConversationSourceDestination = {
@@ -152,66 +262,56 @@ struct ChatConversationView: View {
                 return .readOnly
             }()
 
-            VStack(spacing: 0) {
-                ChatStageHeader(
-                    mode: $stageMode,
-                    title: conversation.title,
-                    subtitle: segmentID == nil
-                        ? "只读预览 · 确认进库并产生片段后可摘录"
-                        : "可摘录到正式库",
-                    enabledModes: segmentID == nil ? [.source] : [.source, .excerpt]
-                )
-                Divider()
-                ChatConversationSourceStage(
-                    store: store,
-                    references: references,
-                    purpose: .coverage,
-                    destination: destination,
-                    allowsExcerpt: segmentID != nil
-                )
-            }
+            ChatConversationSourceStage(
+                store: store,
+                references: references,
+                purpose: .coverage,
+                destination: destination,
+                allowsExcerpt: segmentID != nil,
+                excerptMode: stageMode == .excerpt,
+                showsToolbar: false
+            )
         } else {
             ContentUnavailableView(
                 "选择导入会话",
                 systemImage: "bubble.left.and.bubble.right",
-                description: Text("左侧是导入的历史会话。点一项即可阅读全文；勾选多项后可生成处理任务。")
+                description: Text("左侧点选阅读全文；勾选后可生成处理任务。")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
 
-    private var controls: some View {
-        HStack(spacing: 12) {
-            Toggle("按日期", isOn: $usesDateRange)
-                .toggleStyle(.checkbox)
-                .onChange(of: usesDateRange) { _, _ in synchronizeDateRange() }
+    // MARK: - Shared chrome pieces
 
-            if usesDateRange {
-                DatePicker("从", selection: $rangeStart, displayedComponents: .date)
-                    .labelsHidden()
-                    .onChange(of: rangeStart) { _, _ in synchronizeDateRange() }
-                Text("至")
-                    .foregroundStyle(.secondary)
-                DatePicker("到", selection: $rangeEnd, displayedComponents: .date)
-                    .labelsHidden()
-                    .onChange(of: rangeEnd) { _, _ in synchronizeDateRange() }
-            }
-
-            Menu("处理状态") {
-                ForEach(chatConversationStatuses, id: \.self) { status in
-                    Toggle(status.title, isOn: statusBinding(status))
+    private var workspaceTabs: some View {
+        Picker("工作区", selection: $workspaceTab) {
+            ForEach(ChatWorkspaceTab.allCases) { tab in
+                if tab == .review, !store.candidates.isEmpty {
+                    Text("\(tab.rawValue) \(store.candidates.count)").tag(tab)
+                } else {
+                    Text(tab.rawValue).tag(tab)
                 }
             }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 240)
+        .controlSize(.small)
+        .help(workspaceHelp)
+    }
 
-            Spacer()
+    @ViewBuilder
+    private var globalActions: some View {
+        Button {
+            store.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
+        } label: {
+            Label("刷新", systemImage: "arrow.clockwise")
+        }
+        .controlSize(.small)
+        .help("刷新 ChatGPT 归档")
 
-            Button {
-                store.refresh(archiveRootPath: hubStore.settings.chatgptArchiveRoot)
-            } label: {
-                Label("刷新归档", systemImage: "arrow.clockwise")
-            }
-
+        if workspaceTab == .sessions {
             Button("生成处理任务") {
                 do {
                     _ = try store.generateTask()
@@ -219,10 +319,61 @@ struct ChatConversationView: View {
                     // Store keeps the actionable error for the visible status area.
                 }
             }
+            .controlSize(.small)
             .disabled(store.selectedConversationIDs.isEmpty)
+            .help("勾选左侧会话后生成处理任务")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var sessionFilterAccessory: some View {
+        Toggle("日期", isOn: $usesDateRange)
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            .onChange(of: usesDateRange) { _, _ in synchronizeDateRange() }
+
+        if usesDateRange {
+            DatePicker("从", selection: $rangeStart, displayedComponents: .date)
+                .labelsHidden()
+                .controlSize(.mini)
+                .frame(width: 96)
+                .onChange(of: rangeStart) { _, _ in synchronizeDateRange() }
+            Text("–")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            DatePicker("到", selection: $rangeEnd, displayedComponents: .date)
+                .labelsHidden()
+                .controlSize(.mini)
+                .frame(width: 96)
+                .onChange(of: rangeEnd) { _, _ in synchronizeDateRange() }
+        }
+
+        Menu {
+            ForEach(chatConversationStatuses, id: \.self) { status in
+                Toggle(status.title, isOn: statusBinding(status))
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .controlSize(.small)
+        .help("按处理状态筛选")
+        .frame(width: 24)
+    }
+
+    private var workspaceHelp: String {
+        switch workspaceTab {
+        case .sessions:
+            return "点选导入会话阅读原文；勾选后可生成处理任务。"
+        case .review:
+            return "核对候选后确认写入；不会自动应用。"
+        case .library:
+            return "正式材料：左栏目录，中栏阅读/编辑/原文/摘录。"
+        }
+    }
+
+    private var showsCommandPanel: Bool {
+        store.lastError != nil || store.hasPendingCandidates || store.lastGeneratedCommand != nil
     }
 
     private var commandPanel: some View {
@@ -257,13 +408,10 @@ struct ChatConversationView: View {
                 Text("Skill 只会生成候选结果；不会自动写入正式账本。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
-                Text("工作区顺序：会话 → 待确认 → 正式库。导入会话只在「会话」里出现；勾选后生成任务，点标题阅读原文。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -293,6 +441,10 @@ struct ChatConversationView: View {
         ) ?? rangeEnd
         store.dateRange = ChatConversationDateRange(start: rangeStart, end: end)
     }
+}
+
+enum ChatChromeMetrics {
+    static let headerHeight: CGFloat = 34
 }
 
 private let chatConversationStatuses: [ChatConversationProcessingStatus] = [
