@@ -1,3 +1,4 @@
+import AppKit
 import EvolutionCore
 import EvolutionHubCore
 import SwiftUI
@@ -106,7 +107,7 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
             expandAncestorsOfSelection(defaultExpandFirst: false)
             syncEditBuffer()
             saveError = nil
-            if stageMode == .source || stageMode == .excerpt {
+            if stageMode == .source {
                 // keep source-oriented modes
             } else if stageMode == .edit {
                 // keep editing
@@ -114,6 +115,9 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
                 stageMode = .read
             }
         }
+
+        .onAppear { consumePendingNotesFocus() }
+        .onChange(of: store.pendingNotesFocusAssetID) { _, _ in consumePendingNotesFocus() }
         .onChange(of: stageMode) { _, newMode in
             if newMode == .edit {
                 syncEditBuffer()
@@ -216,7 +220,7 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
                     title: asset.title,
                     subtitle: stageSubtitle(for: asset)
                 ) {
-                    if stageMode == .source || stageMode == .excerpt {
+                    if stageMode == .source {
                         SourceCatalogToggle()
                     }
                     rightHeaderTrailing()
@@ -253,7 +257,6 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
         case .read: return nil
         case .edit: return "保存=新版本"
         case .source: return "原文对照"
-        case .excerpt: return "选中摘录"
         }
     }
 
@@ -264,8 +267,8 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
             formalReader(asset, showSourceButton: false)
         case .edit:
             formalEditor(asset)
-        case .source, .excerpt:
-            formalSourceStage(asset, excerptMode: stageMode == .excerpt)
+        case .source:
+            formalSourceStage(asset)
         }
     }
 
@@ -557,10 +560,22 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
         }
     }
 
+
+    private func consumePendingNotesFocus() {
+        guard let assetID = store.pendingNotesFocusAssetID else { return }
+        selectedAssetID = assetID
+        if let asset = store.asset(id: assetID) {
+            focusedSegmentID = asset.segmentId
+        }
+        stageMode = .read
+        store.pendingNotesFocusAssetID = nil
+    }
+
     @ViewBuilder
     private func formalReader(_ asset: ChatStudyAsset, showSourceButton: Bool) -> some View {
         let version = asset.currentVersion
         let sourceContext = store.formalSourceContext(for: asset)
+        let body = version?.textSnapshot ?? ""
         ChatStudyAssetReaderPane(
             title: asset.title,
             kind: asset.kind,
@@ -568,7 +583,7 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
             uses: asset.uses,
             preservation: version?.preservation ?? .distilled,
             origin: version?.origin ?? .skill,
-            bodyText: version?.textSnapshot ?? "",
+            bodyText: body,
             isHighlighted: asset.isHighlighted,
             note: asset.note,
             sourceStatus: store.sourceStatus(for: asset),
@@ -585,8 +600,56 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
             onEditVersion: {
                 stageMode = .edit
                 syncEditBuffer()
+            },
+            readingNotes: store.notes(forAssetID: asset.id),
+            allowsReadingNotes: true,
+            formalAssetID: asset.id,
+            formalVersionID: version?.id,
+            onReadingHighlight: { range, quote in
+                saveFormalNote(asset: asset, range: range, quote: quote, body: nil, highlight: true)
+            },
+            onReadingSaveNote: { range, quote, body in
+                saveFormalNote(asset: asset, range: range, quote: quote, body: body, highlight: false)
+            },
+            onReadingUpdateNote: { note, body in
+                try? store.updateReadingNote(id: note.id, body: body)
+            },
+            onReadingDeleteNote: { note in
+                store.deleteReadingNote(id: note.id)
             }
         )
+    }
+
+    private func saveFormalNote(
+        asset: ChatStudyAsset,
+        range: NSRange,
+        quote: String,
+        body: String?,
+        highlight: Bool
+    ) {
+        guard let version = asset.currentVersion else { return }
+        do {
+            let anchor = try ReadingNote.formalAnchor(
+                assetId: asset.id,
+                versionId: version.id,
+                textHash: version.textHash,
+                locationUTF16: range.location,
+                lengthUTF16: range.length,
+                quoteHash: ContentHasher.hash(quote)
+            )
+            if highlight && (body == nil || body?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
+                _ = try store.addHighlight(quoteSnapshot: quote, anchor: anchor)
+            } else {
+                _ = try store.addNote(
+                    body: body,
+                    quoteSnapshot: quote,
+                    anchor: anchor,
+                    isHighlight: highlight
+                )
+            }
+        } catch {
+            // Invalid selection stays local.
+        }
     }
 
     private func formalEditor(_ asset: ChatStudyAsset) -> some View {
@@ -633,15 +696,14 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
     }
 
     @ViewBuilder
-    private func formalSourceStage(_ asset: ChatStudyAsset, excerptMode: Bool) -> some View {
+    private func formalSourceStage(_ asset: ChatStudyAsset) -> some View {
         if let context = store.formalSourceContext(for: asset) {
             ChatConversationSourceStage(
                 store: store,
                 references: context.references,
                 purpose: .evidence,
                 destination: context.destination,
-                allowsExcerpt: true,
-                excerptMode: excerptMode,
+                allowsNotes: true,
                 showsToolbar: false
             )
         } else {

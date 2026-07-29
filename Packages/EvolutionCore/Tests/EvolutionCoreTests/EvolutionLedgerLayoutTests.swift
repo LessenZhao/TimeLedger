@@ -33,4 +33,25 @@ final class EvolutionLedgerLayoutTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: layout.ledgerFileURL.path))
     }
+
+    func testReadingNotesFileURLIsBesideLedgerAndUserMarks() {
+        let root = URL(fileURLWithPath: "/tmp/personal-evolution-layout-test", isDirectory: true)
+        let layout = EvolutionLedgerLayout(rootURL: root)
+        XCTAssertEqual(
+            layout.chatConversationReadingNotesFileURL.lastPathComponent,
+            "chatgpt-reading-notes.json"
+        )
+        XCTAssertEqual(
+            layout.chatConversationReadingNotesFileURL.deletingLastPathComponent().path,
+            layout.recordsDirectoryURL.path
+        )
+        XCTAssertNotEqual(
+            layout.chatConversationReadingNotesFileURL,
+            layout.chatConversationLedgerFileURL
+        )
+        XCTAssertNotEqual(
+            layout.chatConversationReadingNotesFileURL,
+            layout.chatConversationUserMarksFileURL
+        )
+    }
 }

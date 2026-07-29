@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; connect-src 'none';">
+  <link rel="stylesheet" href="reader.css">
+</head>
+<body>
+  <main id="reader-document" aria-live="polite"></main>
+  <div id="selection-toolbar" class="selection-toolbar" hidden>
+    <button type="button" data-action="note">写笔记</button>
+    <button type="button" data-action="highlight">划线</button>
+    <button type="button" data-action="copy">复制</button>
+  </div>
+  <script src="markdown-it-14.1.0.min.js"></script>
+  <script src="markdown-it-footnote-4.0.0.min.js"></script>
+  <script src="reader.js"></script>
+</body>
+</html>

@@ -26,6 +26,7 @@ public enum ChatConversationHubStoreError: Error, Sendable, Equatable {
     case emptyCandidateTopicName
     case migrationRequired
     case migrationNotNeeded
+    case readingNoteNotFound(String)
 }
 
 extension ChatConversationHubStoreError: LocalizedError {
@@ -49,6 +50,8 @@ extension ChatConversationHubStoreError: LocalizedError {
             return "正式账本仍是 schema v1，请先备份并升级备考库。"
         case .migrationNotNeeded:
             return "当前账本无需迁移。"
+        case .readingNoteNotFound:
+            return "找不到对应的阅读笔记。"
         }
     }
 }
@@ -89,6 +92,10 @@ public final class ChatConversationHubStore: ObservableObject {
     @Published public private(set) var lastMigrationBackupURL: URL?
     @Published public private(set) var starredConversationIDs: Set<String> = []
     @Published public private(set) var starredTurnIDs: Set<String> = []
+    @Published public private(set) var readingNotes: [ReadingNote] = []
+    /// One-shot focus requested by 笔记库 jump-back.
+    @Published public var pendingNotesFocusAssetID: String?
+    @Published public var pendingNotesFocusConversationID: String?
     @Published public var showsOnlyStarredConversations = false
 
     private let ledger: ChatConversationLedger
@@ -115,6 +122,9 @@ public final class ChatConversationHubStore: ObservableObject {
         let marks = Self.loadUserMarks(layout: layout)
         self.starredConversationIDs = Set(marks.starredConversationIDs)
         self.starredTurnIDs = Set(marks.starredTurnIDs)
+        self.readingNotes = ReadingNotesFileStore.load(
+            from: layout.chatConversationReadingNotesFileURL
+        ).notes
     }
 
     public var visibleConversations: [ChatConversationArchiveSummary] {
@@ -659,6 +669,108 @@ public final class ChatConversationHubStore: ObservableObject {
         ledgerDocument.assets.first(where: { $0.id == id })
     }
 
+
+    // MARK: - Reading notes (parallel to formal ledger)
+
+    public var allNotes: [ReadingNote] {
+        readingNotes.sorted { lhs, rhs in
+            if lhs.updatedAt == rhs.updatedAt { return lhs.id > rhs.id }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+    }
+
+    public func notes(forConversationID conversationID: String) -> [ReadingNote] {
+        allNotes.filter { note in
+            if case .sourceMessageSpan(let span) = note.anchor {
+                return span.conversationId == conversationID
+            }
+            return false
+        }
+    }
+
+    public func notes(forAssetID assetID: String) -> [ReadingNote] {
+        allNotes.filter { note in
+            if case .formalAssetSpan(let span) = note.anchor {
+                return span.assetId == assetID
+            }
+            return false
+        }
+    }
+
+    public func notes(forMessageID messageID: String) -> [ReadingNote] {
+        allNotes.filter { note in
+            if case .sourceMessageSpan(let span) = note.anchor {
+                return span.messageId == messageID
+            }
+            return false
+        }
+    }
+
+    @discardableResult
+    public func addHighlight(
+        quoteSnapshot: String,
+        anchor: ReadingNoteAnchor,
+        id: String = UUID().uuidString.lowercased()
+    ) throws -> ReadingNote {
+        let note = try ReadingNote.make(
+            id: id,
+            body: nil,
+            isHighlight: true,
+            quoteSnapshot: quoteSnapshot,
+            anchor: anchor
+        )
+        readingNotes.append(note)
+        persistReadingNotes()
+        return note
+    }
+
+    @discardableResult
+    public func addNote(
+        body: String?,
+        quoteSnapshot: String,
+        anchor: ReadingNoteAnchor,
+        isHighlight: Bool = false,
+        id: String = UUID().uuidString.lowercased()
+    ) throws -> ReadingNote {
+        let note = try ReadingNote.make(
+            id: id,
+            body: body,
+            isHighlight: isHighlight,
+            quoteSnapshot: quoteSnapshot,
+            anchor: anchor
+        )
+        readingNotes.append(note)
+        persistReadingNotes()
+        return note
+    }
+
+    public func updateReadingNote(id: String, body: String?, isHighlight: Bool? = nil) throws {
+        guard let index = readingNotes.firstIndex(where: { $0.id == id }) else {
+            throw ChatConversationHubStoreError.readingNoteNotFound(id)
+        }
+        var note = readingNotes[index]
+        if let body {
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            note.body = trimmed.isEmpty ? nil : trimmed
+        } else {
+            note.body = nil
+        }
+        if let isHighlight {
+            note.isHighlight = isHighlight
+        }
+        note.updatedAt = ISO8601Codec.string(from: Date())
+        readingNotes[index] = note
+        persistReadingNotes()
+    }
+
+    public func deleteReadingNote(id: String) {
+        let before = readingNotes.count
+        readingNotes.removeAll { $0.id == id }
+        if readingNotes.count != before {
+            persistReadingNotes()
+        }
+    }
+
     private func updateSelectedCandidate(
         _ update: (inout ChatConversationProposal) throws -> Void
     ) throws {
@@ -742,6 +854,19 @@ public final class ChatConversationHubStore: ObservableObject {
             return try JSONDecoder().decode(ChatConversationUserMarksDocument.self, from: data)
         } catch {
             return .empty
+        }
+    }
+
+    private func persistReadingNotes() {
+        do {
+            try layout.ensureDirectories()
+            let document = ReadingNotesDocument(
+                schemaVersion: ReadingNotesDocument.currentSchemaVersion,
+                notes: readingNotes
+            )
+            try ReadingNotesFileStore.save(document, to: layout.chatConversationReadingNotesFileURL)
+        } catch {
+            lastError = "保存阅读笔记失败：\(error.localizedDescription)"
         }
     }
 

@@ -251,9 +251,9 @@ struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
                 mode: $stageMode,
                 title: detailTitle(candidate),
                 subtitle: nil,
-                enabledModes: [.read, .source, .excerpt]
+                enabledModes: [.read, .source]
             ) {
-                if stageMode == .source || stageMode == .excerpt {
+                if stageMode == .source {
                     SourceCatalogToggle()
                 }
                 rightHeaderActions(candidate)
@@ -263,14 +263,13 @@ struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
                 switch selection {
                 case .segment(let id):
                     if let segment = candidate.segments.first(where: { $0.id == id }) {
-                        if stageMode == .source || stageMode == .excerpt {
+                        if stageMode == .source {
                             ChatConversationSourceStage(
                                 store: store,
                                 references: segment.sourceMessages,
                                 purpose: .coverage,
                                 destination: .candidate(jobID: candidate.jobId, segmentID: segment.id),
-                                allowsExcerpt: true,
-                                excerptMode: stageMode == .excerpt,
+                                allowsNotes: false,
                                 showsToolbar: false
                             )
                         } else {
@@ -281,15 +280,14 @@ struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
                     }
                 case .asset(let id):
                     if let asset = candidate.assets.first(where: { $0.id == id }) {
-                        if stageMode == .source || stageMode == .excerpt {
+                        if stageMode == .source {
                             if let context = store.candidateSourceContext(for: asset, in: candidate) {
                                 ChatConversationSourceStage(
                                     store: store,
                                     references: context.references,
                                     purpose: .evidence,
                                     destination: context.destination,
-                                    allowsExcerpt: true,
-                                    excerptMode: stageMode == .excerpt,
+                                    allowsNotes: false,
                                     showsToolbar: false
                                 )
                             } else {
@@ -370,7 +368,8 @@ struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
                 ChatConversationSourceView(
                     store: store,
                     references: segment.sourceMessages,
-                    purpose: .coverage
+                    purpose: .coverage,
+                    allowsNotes: false
                 )
 
                 let assets = candidate.assets.filter { $0.segmentId == segment.id }
@@ -440,7 +439,8 @@ struct ChatConversationReviewView<LeftHeaderPrefix: View>: View {
                     store: store,
                     references: $0.references,
                     purpose: .evidence,
-                    destination: $0.destination
+                    destination: $0.destination,
+                    allowsNotes: false
                 )
             },
             onEditCandidate: {

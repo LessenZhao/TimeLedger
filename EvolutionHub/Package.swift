@@ -25,6 +25,9 @@ let package = Package(
             dependencies: [
                 "EvolutionHubCore",
                 .product(name: "EvolutionCore", package: "EvolutionCore")
+            ],
+            resources: [
+                .process("Resources")
             ]
         ),
         .testTarget(

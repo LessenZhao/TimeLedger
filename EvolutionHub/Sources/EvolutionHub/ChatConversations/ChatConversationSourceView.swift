@@ -28,20 +28,20 @@ enum ChatConversationSourcePurpose {
         case .coverage:
             return "这些消息已被本次处理覆盖；它们不一定都直接证明同一条资产。"
         case .evidence:
-            return "这些消息是该资产引用的对话材料；可选择连续文本加入备考库。"
+            return "这些消息是该资产引用的对话材料。"
         case .session:
-            return "完整会话原文（归档只读）。左侧目录定位，右侧 Markdown 全文阅读与摘录。"
+            return "完整会话原文（归档只读）。左侧目录定位，右侧阅读并可划线/写笔记。"
         }
     }
 }
 
 /// Secondary entry only: a compact button that opens the source stage in a sheet.
-/// Primary reading path is `ChatConversationSourceStage` embedded in the center stage.
 struct ChatConversationSourceView: View {
     @ObservedObject var store: ChatConversationHubStore
     let references: [ChatConversationMessageReference]
     let purpose: ChatConversationSourcePurpose
     var destination: ChatConversationSourceDestination = .readOnly
+    var allowsNotes: Bool = true
     @State private var isInspectorPresented = false
 
     var body: some View {
@@ -59,7 +59,7 @@ struct ChatConversationSourceView: View {
                     references: references,
                     purpose: purpose,
                     destination: destination,
-                    allowsExcerpt: true
+                    allowsNotes: allowsNotes
                 )
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -72,26 +72,22 @@ struct ChatConversationSourceView: View {
     }
 }
 
-/// Single reading model: left turn catalog (hideable) + right continuous Markdown transcript.
-/// Excerpt uses a multi-selection bag; each bag item maps to one source span.
+/// Left turn catalog + right continuous transcript. Selection notes are parallel to formal assets.
 struct ChatConversationSourceStage: View {
     @ObservedObject var store: ChatConversationHubStore
     let references: [ChatConversationMessageReference]
     var purpose: ChatConversationSourcePurpose = .evidence
     var destination: ChatConversationSourceDestination = .readOnly
-    var allowsExcerpt: Bool = true
-    var excerptMode: Bool = false
+    /// When false (待确认), selection notes are neither created nor shown.
+    var allowsNotes: Bool = true
     /// When false, parent owns the one-row chrome (mode/title/stats/catalog).
     var showsToolbar: Bool = true
 
     @AppStorage("chat.source.showsTurnCatalog") private var showsCatalog = true
     @State private var selectedTurnID: String?
     @State private var scrollTargetTurnID: String?
-    @State private var selectingMessageID: String?
-    @State private var selectedRange = NSRange(location: 0, length: 0)
-    @State private var excerptBag: [ChatConversationTextSelection] = []
-    @State private var editorSelection: ChatConversationTextSelection?
-    @State private var batchEditorToken: BatchEditorToken?
+    @State private var composer: NoteComposerState?
+    @State private var activeNote: ReadingNote?
 
     private var summary: ChatConversationSourceSummary {
         store.sourceSummary(for: references)
@@ -105,14 +101,39 @@ struct ChatConversationSourceStage: View {
         Array(turns.enumerated()).map { ($0.offset + 1, $0.element) }
     }
 
-    private var canAddToLibrary: Bool {
-        guard allowsExcerpt else { return false }
-        if case .readOnly = destination { return false }
-        return true
+    private var readerSections: [ObsidianReaderSection] {
+        turns.flatMap { turn in
+            turn.messages.map { message in
+                ObsidianReaderSection(
+                    id: message.reference.messageId,
+                    markdown: transcriptMarkdown(for: message),
+                    label: "\(roleLabel(message.role)) · \(message.createdAt)",
+                    metadata: .init(
+                        conversationId: message.reference.conversationId,
+                        messageId: message.reference.messageId
+                    )
+                )
+            }
+        }
     }
 
-    private var showExcerptChrome: Bool {
-        allowsExcerpt
+    private var readerNotes: [ObsidianReaderNote] {
+        turns.flatMap { turn in
+            turn.messages.flatMap { message in
+                store.notes(forMessageID: message.reference.messageId).compactMap { note in
+                    switch note.anchor {
+                    case .sourceMessageSpan(let span):
+                        return ObsidianReaderNote(
+                            id: note.id,
+                            sectionID: message.reference.messageId,
+                            sourceRange: NSRange(location: span.locationUTF16, length: span.lengthUTF16)
+                        )
+                    case .formalAssetSpan:
+                        return nil
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -129,10 +150,6 @@ struct ChatConversationSourceStage: View {
                 transcriptPane
                     .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
-            if showExcerptChrome, !excerptBag.isEmpty || excerptMode {
-                Divider()
-                excerptBagBar
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor))
@@ -144,23 +161,6 @@ struct ChatConversationSourceStage: View {
         .onChange(of: references.map(\.messageId).joined(separator: "|")) { _, _ in
             selectedTurnID = turns.first?.id
             scrollTargetTurnID = nil
-            selectingMessageID = nil
-            selectedRange = NSRange(location: 0, length: 0)
-            excerptBag = []
-        }
-        .sheet(item: Binding(
-            get: { editorSelection.map { SelectableEditorItem(selection: $0) } },
-            set: { editorSelection = $0?.selection }
-        )) { item in
-            ChatStudyAssetEditorSheet(previewText: item.selection.textSnapshot) { title, kind, subtype, uses in
-                saveSelection(item.selection, title: title, kind: kind, subtype: subtype, uses: uses)
-            }
-        }
-        .sheet(item: $batchEditorToken) { token in
-            ChatStudyAssetEditorSheet(previewText: token.previewText) { title, kind, subtype, uses in
-                saveBag(token.selections, title: title, kind: kind, subtype: subtype, uses: uses)
-                batchEditorToken = nil
-            }
         }
     }
 
@@ -232,7 +232,7 @@ struct ChatConversationSourceStage: View {
 
             Button {
                 selectedTurnID = turn.id
-                scrollTargetTurnID = turn.id
+                scrollTargetTurnID = turn.messages.first?.reference.messageId
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("第 \(index) 轮 · \(turn.catalogTitle)")
@@ -274,208 +274,81 @@ struct ChatConversationSourceStage: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(indexedTurns, id: \.turn.id) { item in
-                                turnSection(index: item.index, turn: item.turn)
-                                    .id(item.turn.id)
-                            }
+                ObsidianMarkdownReader(
+                    sections: readerSections,
+                    notes: allowsNotes ? readerNotes : [],
+                    allowsAnnotations: allowsNotes,
+                    scrollTargetID: scrollTargetTurnID,
+                    onSelectionAction: { messageID, range, quote, action in
+                        guard let message = sourceMessage(messageID) else { return }
+                        switch action {
+                        case .note:
+                            composer = NoteComposerState(range: range, quote: quote, existingNoteID: nil, existingBody: "", sectionID: messageID)
+                        case .highlight:
+                            saveSourceNote(message: message, range: range, quote: quote, body: nil, highlight: true)
+                        case .copy:
+                            break
                         }
-                        .padding(20)
+                    },
+                    onEditNote: { noteID in
+                        activeNote = sourceNote(noteID)
                     }
-                    .onChange(of: scrollTargetTurnID) { _, turnID in
-                        guard let turnID else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            proxy.scrollTo(turnID, anchor: .top)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func turnSection(index: Int, turn: ChatConversationSourceTurn) -> some View {
-        let isStarred = store.isTurnStarred(turn.id)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("第 \(index) 轮")
-                    .font(.title2.weight(.semibold))
-                Button {
-                    store.toggleTurnStar(turnID: turn.id)
-                } label: {
-                    Image(systemName: isStarred ? "star.fill" : "star")
-                        .foregroundStyle(isStarred ? Color.orange : Color.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(isStarred ? "取消轮次星标" : "标记为重点轮次")
-                Spacer(minLength: 0)
-                if selectedTurnID == turn.id {
-                    Text("当前")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                }
-            }
-
-            Text(turn.catalogTitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            ForEach(turn.messages) { message in
-                messageBlock(message)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.35))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(
-                    selectedTurnID == turn.id ? Color.accentColor.opacity(0.28) : Color.clear,
-                    lineWidth: 1
                 )
-        )
-        .onTapGesture {
-            selectedTurnID = turn.id
-        }
-    }
-
-    private func messageBlock(_ message: ChatConversationSourceMessage) -> some View {
-        let messageKey = message.reference.messageId
-        let isSelecting = selectingMessageID == messageKey
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(roleLabel(message.role))
-                    .font(.headline)
-                Text(message.createdAt)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                if showExcerptChrome {
-                    if isSelecting {
-                        Button("取消选择") {
-                            selectingMessageID = nil
-                            selectedRange = NSRange(location: 0, length: 0)
-                        }
-                        .font(.caption)
-                        Button("加入摘录袋") {
-                            addCurrentSelectionToBag(from: message)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .font(.caption)
-                        .disabled(selectedRange.length == 0 || !canAddToLibrary)
-                        .help(canAddToLibrary
-                              ? "将当前选区加入摘录袋（可继续选其他段落）"
-                              : excerptDisabledHelp)
-                    } else {
-                        Button("摘录此段") {
-                            selectingMessageID = messageKey
-                            selectedRange = NSRange(location: 0, length: 0)
-                            selectedTurnID = turns.first(where: {
-                                $0.messages.contains(where: { $0.id == message.id })
-                            })?.id
-                        }
-                        .font(.caption)
-                        .disabled(!canAddToLibrary)
-                        .help(canAddToLibrary
-                              ? "在本段原文中拖选文本，再加入摘录袋"
-                              : excerptDisabledHelp)
+                .sheet(item: $composer) { state in
+                    NoteComposerSheet(quote: state.quote, initialBody: state.existingBody) { body in
+                        guard let messageID = state.sectionID, let message = sourceMessage(messageID) else { return }
+                        saveSourceNote(message: message, range: state.range, quote: state.quote, body: body, highlight: false)
+                        composer = nil
+                    } onCancel: {
+                        composer = nil
+                    }
+                }
+                .sheet(item: $activeNote) { note in
+                    NoteComposerSheet(quote: note.quoteSnapshot, initialBody: note.body ?? "") { body in
+                        try? store.updateReadingNote(id: note.id, body: body)
+                        activeNote = nil
+                    } onCancel: {
+                        activeNote = nil
+                    } onDelete: {
+                        store.deleteReadingNote(id: note.id)
+                        activeNote = nil
                     }
                 }
             }
+        }
+    }
 
-            if isSelecting {
-                SelectableSourceTextView(text: message.content, selectedRange: $selectedRange)
-                    .frame(minHeight: 160, maxHeight: 320)
-                Text(selectedRange.length > 0
-                     ? "已选 \(selectedRange.length) 个 UTF-16 单位"
-                     : "拖选连续文本后点「加入摘录袋」；可继续摘录其他段落")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private func saveSourceNote(
+        message: ChatConversationSourceMessage,
+        range: NSRange,
+        quote: String,
+        body: String?,
+        highlight: Bool
+    ) {
+        do {
+            let contentHash = ContentHasher.hash(message.content)
+            let textHash = ContentHasher.hash(quote)
+            let anchor = try ReadingNote.sourceAnchor(
+                conversationId: message.reference.conversationId,
+                messageId: message.reference.messageId,
+                contentHash: contentHash,
+                locationUTF16: range.location,
+                lengthUTF16: range.length,
+                textHash: textHash
+            )
+            if highlight && (body == nil || body?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
+                _ = try store.addHighlight(quoteSnapshot: quote, anchor: anchor)
             } else {
-                let markdown = transcriptMarkdown(for: message)
-                MarkdownBodyView(text: markdown, bodyFontSize: 15)
+                _ = try store.addNote(
+                    body: body,
+                    quoteSnapshot: quote,
+                    anchor: anchor,
+                    isHighlight: highlight
+                )
             }
+        } catch {
+            // Invalid selection stays local.
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(nsColor: .textBackgroundColor))
-        )
-    }
-
-    private var excerptBagBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("摘录袋 \(excerptBag.count)")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                if !excerptBag.isEmpty {
-                    Button("清空") { excerptBag = [] }
-                        .font(.caption)
-                    Button("逐条写入正式库") {
-                        if excerptBag.count == 1, let only = excerptBag.first {
-                            editorSelection = only
-                        } else {
-                            batchEditorToken = BatchEditorToken(selections: excerptBag)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canAddToLibrary)
-                    .help(canAddToLibrary
-                          ? "袋中每段各写入一条正式资产"
-                          : excerptDisabledHelp)
-                }
-            }
-
-            if excerptBag.isEmpty {
-                Text(canAddToLibrary
-                     ? "在正文中点「摘录此段」，拖选后加入摘录袋；可跨多轮累积。"
-                     : excerptDisabledHelp)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(excerptBag.enumerated()), id: \.offset) { index, item in
-                            HStack(spacing: 6) {
-                                Text("\(index + 1). \(bagPreview(item))")
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                Button {
-                                    excerptBag.remove(at: index)
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule().fill(Color(nsColor: .controlBackgroundColor))
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var excerptDisabledHelp: String {
-        "当前上下文是只读原文，或缺少可写入的正式片段/候选片段。"
     }
 
     private func roleLabel(_ role: ChatConversationRole) -> String {
@@ -487,96 +360,23 @@ struct ChatConversationSourceStage: View {
         }
     }
 
+    private func sourceMessage(_ messageID: String) -> ChatConversationSourceMessage? {
+        turns.lazy.flatMap(\.messages).first { $0.reference.messageId == messageID }
+    }
+
+    private func sourceNote(_ noteID: String) -> ReadingNote? {
+        turns.lazy.flatMap(\.messages)
+            .flatMap { store.notes(forMessageID: $0.reference.messageId) }
+            .first { $0.id == noteID }
+    }
+
+
     private func transcriptMarkdown(for message: ChatConversationSourceMessage) -> String {
         let body = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if body.isEmpty {
             return "_（空消息）_"
         }
-        // Keep original markdown body; role heading already shown above.
         return body
-    }
-
-    private func bagPreview(_ selection: ChatConversationTextSelection) -> String {
-        ChatConversationTurnPresentation.preview(from: selection.textSnapshot, limit: 28)
-    }
-
-    private func addCurrentSelectionToBag(from message: ChatConversationSourceMessage) {
-        do {
-            let selection = try ChatConversationTextSelection.make(
-                conversationID: message.reference.conversationId,
-                message: ChatConversationMessage(
-                    id: message.reference.messageId,
-                    role: message.role,
-                    createdAt: message.createdAt,
-                    content: message.content
-                ),
-                rangeUTF16: selectedRange
-            )
-            // Avoid exact duplicate spans in the bag.
-            if !excerptBag.contains(where: {
-                $0.span.message == selection.span.message
-                    && $0.span.locationUTF16 == selection.span.locationUTF16
-                    && $0.span.lengthUTF16 == selection.span.lengthUTF16
-            }) {
-                excerptBag.append(selection)
-            }
-            selectingMessageID = nil
-            selectedRange = NSRange(location: 0, length: 0)
-        } catch {
-            // Invalid selection stays local; user can reselect.
-        }
-    }
-
-    private func saveSelection(
-        _ selection: ChatConversationTextSelection,
-        title: String,
-        kind: ChatStudyAssetKind,
-        subtype: String,
-        uses: Set<ChatStudyAssetUse>
-    ) {
-        switch destination {
-        case .candidate(let jobID, let segmentID):
-            try? store.addManualCandidateAsset(
-                jobID: jobID,
-                segmentID: segmentID,
-                selection: selection,
-                title: title,
-                kind: kind,
-                subtype: subtype,
-                uses: uses
-            )
-        case .formal(let segmentID):
-            try? store.addManualFormalAsset(
-                segmentID: segmentID,
-                selection: selection,
-                title: title,
-                kind: kind,
-                subtype: subtype,
-                uses: uses
-            )
-        case .readOnly:
-            break
-        }
-        excerptBag.removeAll {
-            $0.span.message == selection.span.message
-                && $0.span.locationUTF16 == selection.span.locationUTF16
-                && $0.span.lengthUTF16 == selection.span.lengthUTF16
-        }
-        editorSelection = nil
-    }
-
-    private func saveBag(
-        _ selections: [ChatConversationTextSelection],
-        title: String,
-        kind: ChatStudyAssetKind,
-        subtype: String,
-        uses: Set<ChatStudyAssetUse>
-    ) {
-        for (offset, selection) in selections.enumerated() {
-            let itemTitle = selections.count == 1 ? title : "\(title)（\(offset + 1)）"
-            saveSelection(selection, title: itemTitle, kind: kind, subtype: subtype, uses: uses)
-        }
-        excerptBag = []
     }
 }
 
@@ -607,36 +407,5 @@ struct ChatConversationAttachmentNotice: View {
         )
         .font(.caption)
         .foregroundStyle(.orange)
-    }
-}
-
-private struct SelectableEditorItem: Identifiable {
-    var selection: ChatConversationTextSelection
-    var id: String {
-        "\(selection.span.message.messageId)-\(selection.span.locationUTF16)-\(selection.span.lengthUTF16)"
-    }
-}
-
-private struct BatchEditorToken: Identifiable {
-    var selections: [ChatConversationTextSelection]
-    var id: String {
-        selections.map {
-            "\($0.span.message.messageId):\($0.span.locationUTF16):\($0.span.lengthUTF16)"
-        }
-        .joined(separator: "|")
-    }
-
-    var previewText: String {
-        selections.enumerated().map { index, item in
-            "### 摘录 \(index + 1)\n\(item.textSnapshot)"
-        }
-        .joined(separator: "\n\n")
-    }
-}
-
-private extension ChatConversationSourceDestination {
-    var isReadOnly: Bool {
-        if case .readOnly = self { return true }
-        return false
     }
 }

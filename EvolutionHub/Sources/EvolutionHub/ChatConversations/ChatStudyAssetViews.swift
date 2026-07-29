@@ -385,51 +385,61 @@ struct ChatStudyAssetReaderPane: View {
     var onEditVersion: (() -> Void)? = nil
     var draftTextBinding: Binding<String>? = nil
     var emptyBodyPlaceholder: String? = nil
+    /// Parallel reading notes on the current formal body (not asset.note).
+    var readingNotes: [ReadingNote] = []
+    var allowsReadingNotes: Bool = false
+    /// Formal reader identity; candidates intentionally leave this empty.
+    var formalAssetID: String? = nil
+    var formalVersionID: String? = nil
+    var onReadingHighlight: ((NSRange, String) -> Void)? = nil
+    var onReadingSaveNote: ((NSRange, String, String) -> Void)? = nil
+    var onReadingUpdateNote: ((ReadingNote, String) -> Void)? = nil
+    var onReadingDeleteNote: ((ReadingNote) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let draftTextBinding, preservation == .distilled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("候选正文（可编辑）")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            TextEditor(text: draftTextBinding)
-                                .font(.system(size: 15))
-                                .frame(minHeight: 280)
-                        }
-                    } else if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(emptyBodyPlaceholder ?? "暂无正文")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 24)
-                    } else {
-                        MarkdownBodyView(text: bodyText, bodyFontSize: 15)
-                    }
-
-                    if let note, !note.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("备注")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(note)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(nsColor: .controlBackgroundColor))
-                        )
-                    }
+            if draftTextBinding == nil, !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AnnotatableMarkdownReader(
+                    source: bodyText,
+                    notes: allowsReadingNotes ? readingNotes : [],
+                    allowsNotes: allowsReadingNotes,
+                    bodyFontSize: 16,
+                    assetId: formalAssetID,
+                    versionId: formalVersionID,
+                    onHighlight: { range, quote in onReadingHighlight?(range, quote) },
+                    onSaveNote: { range, quote, body in onReadingSaveNote?(range, quote, body) },
+                    onUpdateNote: { note, body in onReadingUpdateNote?(note, body) },
+                    onDeleteNote: { note in onReadingDeleteNote?(note) }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let note, !note.isEmpty {
+                    Divider()
+                    assetNote(note)
                 }
-                .padding(20)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        if let draftTextBinding, preservation == .distilled {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("候选正文（可编辑）")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                TextEditor(text: draftTextBinding)
+                                    .font(.system(size: 15))
+                                    .frame(minHeight: 280)
+                            }
+                        } else {
+                            Text(emptyBodyPlaceholder ?? "暂无正文")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 24)
+                        }
+                    }
+                    .padding(20)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -482,6 +492,22 @@ struct ChatStudyAssetReaderPane: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func assetNote(_ note: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("备注")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(note)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(3)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func sourceStatusLabel(_ status: ChatConversationSourceStatus) -> String {

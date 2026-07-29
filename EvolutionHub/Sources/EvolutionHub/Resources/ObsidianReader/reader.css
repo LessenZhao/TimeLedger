@@ -1,0 +1,65 @@
+:root {
+  color-scheme: light dark;
+  --background-primary: #ffffff;
+  --background-secondary: #f6f6f6;
+  --text-normal: #2e3338;
+  --text-muted: #6b7178;
+  --text-accent: #705dcf;
+  --background-modifier-border: #e0e0e0;
+  --text-highlight-bg: rgba(255, 223, 88, .62);
+  --blockquote-border: #8b78d8;
+  --code-background: #f4f3f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background-primary: #202020;
+    --background-secondary: #292929;
+    --text-normal: #dcddde;
+    --text-muted: #a6a6a6;
+    --text-accent: #b9a8ff;
+    --background-modifier-border: #414141;
+    --text-highlight-bg: rgba(190, 151, 0, .48);
+    --blockquote-border: #a996f5;
+    --code-background: #2b2b2b;
+  }
+}
+
+html, body { margin: 0; min-height: 100%; background: var(--background-primary); }
+body {
+  color: var(--text-normal);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+#reader-document { max-width: 700px; margin: 0 auto; padding: 34px 42px 72px; box-sizing: border-box; }
+.reader-section { scroll-margin-top: 28px; }
+.reader-section + .reader-section { border-top: 1px solid var(--background-modifier-border); margin-top: 34px; padding-top: 30px; }
+.reader-section-label { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
+.markdown-reading-view h1, .markdown-reading-view h2, .markdown-reading-view h3, .markdown-reading-view h4, .markdown-reading-view h5, .markdown-reading-view h6 { color: var(--text-normal); font-weight: 650; line-height: 1.25; letter-spacing: -.018em; }
+.markdown-reading-view h1 { font-size: 1.85em; margin: 1.15em 0 .7em; }
+.markdown-reading-view h2 { font-size: 1.48em; margin: 1.5em 0 .68em; padding-bottom: .22em; border-bottom: 1px solid var(--background-modifier-border); }
+.markdown-reading-view h3 { font-size: 1.24em; margin: 1.35em 0 .55em; }
+.markdown-reading-view h4, .markdown-reading-view h5, .markdown-reading-view h6 { font-size: 1.06em; margin: 1.2em 0 .45em; }
+.markdown-reading-view p { margin: 0 0 1em; }
+.markdown-reading-view ul, .markdown-reading-view ol { margin: .3em 0 1em; padding-left: 1.65em; }
+.markdown-reading-view li { margin: .22em 0; padding-left: .12em; }
+.markdown-reading-view li > p { margin-bottom: .35em; }
+.markdown-reading-view blockquote { color: var(--text-normal); border-left: 3px solid var(--blockquote-border); margin: 1em 0; padding: .05em 0 .05em 1em; }
+.markdown-reading-view blockquote p:last-child { margin-bottom: 0; }
+.markdown-reading-view code { font: .88em/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: var(--code-background); border-radius: 4px; padding: .12em .32em; }
+.markdown-reading-view pre { overflow-x: auto; background: var(--code-background); border-radius: 6px; padding: .85em 1em; margin: 1em 0; }
+.markdown-reading-view pre code { background: transparent; padding: 0; }
+.markdown-reading-view a { color: var(--text-accent); text-decoration: none; }
+.markdown-reading-view a:hover { text-decoration: underline; }
+.markdown-reading-view table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; margin: 1em 0; }
+.markdown-reading-view th, .markdown-reading-view td { border: 1px solid var(--background-modifier-border); padding: .42em .62em; text-align: left; }
+.markdown-reading-view th { background: var(--background-secondary); }
+.markdown-reading-view hr { border: 0; border-top: 1px solid var(--background-modifier-border); margin: 2em 0; }
+.markdown-reading-view .task-list-item { list-style: none; margin-left: -1.25em; }
+.markdown-reading-view input[type="checkbox"] { margin-right: .52em; accent-color: var(--text-accent); }
+.footnotes { font-size: .88em; color: var(--text-muted); border-top: 1px solid var(--background-modifier-border); margin-top: 2em; padding-top: .75em; }
+mark.reader-highlight { background: var(--text-highlight-bg); color: inherit; border-radius: 2px; cursor: pointer; padding: 0; }
+.selection-toolbar { position: fixed; z-index: 1000; display: flex; gap: 4px; padding: 4px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 7px; box-shadow: 0 4px 14px rgba(0,0,0,.16); }
+.selection-toolbar button { appearance: none; border: 0; border-radius: 4px; background: transparent; color: var(--text-normal); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; padding: 5px 8px; cursor: pointer; }
+.selection-toolbar button:hover { background: var(--background-modifier-border); }
+@media (max-width: 640px) { #reader-document { padding: 24px 22px 56px; } }

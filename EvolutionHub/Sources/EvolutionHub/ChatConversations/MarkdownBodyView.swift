@@ -11,7 +11,7 @@ import SwiftUI
 /// which is exactly the flattened layout users rejected.
 struct MarkdownBodyView: View {
     let text: String
-    var bodyFontSize: CGFloat = 15
+    var bodyFontSize: CGFloat = 16
 
     var body: some View {
         let structure = MarkdownStructure.parse(text)

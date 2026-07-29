@@ -8,6 +8,7 @@ enum ChatWorkspaceTab: String, CaseIterable, Identifiable {
     case sessions = "会话"
     case review = "待确认"
     case library = "正式库"
+    case notes = "笔记库"
 
     var id: Self { self }
 }
@@ -45,6 +46,10 @@ struct ChatConversationView: View {
                         leftHeaderPrefix: { EmptyView() },
                         rightHeaderTrailing: { EmptyView() }
                     )
+                case .notes:
+                    ChatReadingNotesLibraryView(store: store) { target in
+                        focusNoteTarget(target)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -86,9 +91,11 @@ struct ChatConversationView: View {
                     stageMode = .read
                 }
             case .library:
-                if stageMode != .source && stageMode != .excerpt {
+                if stageMode != .source {
                     stageMode = .read
                 }
+            case .notes:
+                break
             }
         }
     }
@@ -157,6 +164,13 @@ struct ChatConversationView: View {
             case .library:
                 Spacer(minLength: 8)
                 globalActions
+            case .notes:
+                Text("笔记 \(store.allNotes.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer(minLength: 8)
+                globalActions
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -176,20 +190,6 @@ struct ChatConversationView: View {
             let references = store.messageReferences(forConversationID: focusedConversationID)
             let segmentID = store.preferredFormalSegmentID(forConversationID: focusedConversationID)
             let summary = store.sourceSummary(for: references)
-            let enabled: Set<ChatStageMode> = segmentID == nil ? [.source] : [.source, .excerpt]
-
-            if enabled.count > 1 {
-                Picker("模式", selection: modeBinding(enabled: enabled)) {
-                    ForEach(ChatStageMode.displayOrder.filter { enabled.contains($0) }) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: CGFloat(max(120, enabled.count * 56)))
-                .controlSize(.small)
-            }
-
             Text(conversation.title)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
@@ -267,8 +267,7 @@ struct ChatConversationView: View {
                 references: references,
                 purpose: .coverage,
                 destination: destination,
-                allowsExcerpt: segmentID != nil,
-                excerptMode: stageMode == .excerpt,
+                allowsNotes: true,
                 showsToolbar: false
             )
         } else {
@@ -368,7 +367,24 @@ struct ChatConversationView: View {
         case .review:
             return "核对候选后确认写入；不会自动应用。"
         case .library:
-            return "正式材料：左栏目录，中栏阅读/编辑/原文/摘录。"
+            return "正式材料：左栏目录，中栏阅读/编辑/原文。"
+        case .notes:
+            return "个人阅读笔记库：按原文/正式资产回跳。"
+        }
+    }
+
+
+    private func focusNoteTarget(_ target: ReadingNoteNavigationTarget) {
+        switch target {
+        case .conversation(let conversationID):
+            store.pendingNotesFocusConversationID = conversationID
+            workspaceTab = .sessions
+            focusedConversationID = conversationID
+            stageMode = .source
+        case .formalAsset(let assetID):
+            store.pendingNotesFocusAssetID = assetID
+            workspaceTab = .library
+            stageMode = .read
         }
     }
 

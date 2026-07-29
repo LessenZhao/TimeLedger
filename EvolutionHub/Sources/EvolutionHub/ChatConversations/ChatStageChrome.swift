@@ -5,11 +5,10 @@ enum ChatStageMode: String, CaseIterable, Identifiable {
     case read = "阅读"
     case edit = "编辑"
     case source = "原文"
-    case excerpt = "摘录"
 
     var id: Self { self }
 
-    static let displayOrder: [ChatStageMode] = [.read, .edit, .source, .excerpt]
+    static let displayOrder: [ChatStageMode] = [.read, .edit, .source]
 }
 
 /// One-row stage column header. No meta labels like「主操作」.

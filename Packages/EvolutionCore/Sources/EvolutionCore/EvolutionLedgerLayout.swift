@@ -24,6 +24,11 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
         recordsDirectoryURL.appendingPathComponent("chatgpt-user-marks.json", isDirectory: false)
     }
 
+    /// Personal reading notes / highlights. Parallel to ledger assets; never written into chatgpt-ledger.json.
+    public var chatConversationReadingNotesFileURL: URL {
+        recordsDirectoryURL.appendingPathComponent("chatgpt-reading-notes.json", isDirectory: false)
+    }
+
     public var chatConversationExchangeDirectoryURL: URL {
         rootURL.appendingPathComponent("exchange/chatgpt", isDirectory: true)
     }
