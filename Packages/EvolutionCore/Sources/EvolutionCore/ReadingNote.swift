@@ -47,6 +47,16 @@ public struct SourceMessageSpanAnchor: Codable, Sendable, Hashable {
     public var locationUTF16: Int
     public var lengthUTF16: Int
     public var textHash: String
+    public var sourceHash: String
+    public var visibleTextHash: String
+    public var rendererVersion: String
+    public var selectorVersion: String
+    public var offsetUnit: String
+    public var positionStart: Int
+    public var positionEnd: Int
+    public var exact: String
+    public var prefix: String
+    public var suffix: String
 
     public init(
         conversationId: String,
@@ -54,7 +64,15 @@ public struct SourceMessageSpanAnchor: Codable, Sendable, Hashable {
         contentHash: String,
         locationUTF16: Int,
         lengthUTF16: Int,
-        textHash: String
+        textHash: String,
+        sourceHash: String? = nil,
+        visibleTextHash: String? = nil,
+        rendererVersion: String = "markdown-it-14.1.0+recogito-4.2.5",
+        selectorVersion: String = "text-position-quote-v1",
+        offsetUnit: String = "utf16",
+        exact: String = "",
+        prefix: String = "",
+        suffix: String = ""
     ) {
         self.conversationId = conversationId
         self.messageId = messageId
@@ -62,6 +80,16 @@ public struct SourceMessageSpanAnchor: Codable, Sendable, Hashable {
         self.locationUTF16 = locationUTF16
         self.lengthUTF16 = lengthUTF16
         self.textHash = textHash
+        self.sourceHash = sourceHash ?? contentHash
+        self.visibleTextHash = visibleTextHash ?? textHash
+        self.rendererVersion = rendererVersion
+        self.selectorVersion = selectorVersion
+        self.offsetUnit = offsetUnit
+        self.positionStart = locationUTF16
+        self.positionEnd = locationUTF16 + lengthUTF16
+        self.exact = exact
+        self.prefix = prefix
+        self.suffix = suffix
     }
 }
 
@@ -72,6 +100,16 @@ public struct FormalAssetSpanAnchor: Codable, Sendable, Hashable {
     public var locationUTF16: Int
     public var lengthUTF16: Int
     public var quoteHash: String
+    public var sourceHash: String
+    public var visibleTextHash: String
+    public var rendererVersion: String
+    public var selectorVersion: String
+    public var offsetUnit: String
+    public var positionStart: Int
+    public var positionEnd: Int
+    public var exact: String
+    public var prefix: String
+    public var suffix: String
 
     public init(
         assetId: String,
@@ -79,7 +117,15 @@ public struct FormalAssetSpanAnchor: Codable, Sendable, Hashable {
         textHash: String,
         locationUTF16: Int,
         lengthUTF16: Int,
-        quoteHash: String
+        quoteHash: String,
+        sourceHash: String? = nil,
+        visibleTextHash: String? = nil,
+        rendererVersion: String = "markdown-it-14.1.0+recogito-4.2.5",
+        selectorVersion: String = "text-position-quote-v1",
+        offsetUnit: String = "utf16",
+        exact: String = "",
+        prefix: String = "",
+        suffix: String = ""
     ) {
         self.assetId = assetId
         self.versionId = versionId
@@ -87,6 +133,16 @@ public struct FormalAssetSpanAnchor: Codable, Sendable, Hashable {
         self.locationUTF16 = locationUTF16
         self.lengthUTF16 = lengthUTF16
         self.quoteHash = quoteHash
+        self.sourceHash = sourceHash ?? textHash
+        self.visibleTextHash = visibleTextHash ?? textHash
+        self.rendererVersion = rendererVersion
+        self.selectorVersion = selectorVersion
+        self.offsetUnit = offsetUnit
+        self.positionStart = locationUTF16
+        self.positionEnd = locationUTF16 + lengthUTF16
+        self.exact = exact
+        self.prefix = prefix
+        self.suffix = suffix
     }
 }
 
@@ -161,7 +217,12 @@ public struct ReadingNote: Codable, Sendable, Hashable, Identifiable {
         contentHash: String,
         locationUTF16: Int,
         lengthUTF16: Int,
-        textHash: String
+        textHash: String,
+        sourceHash: String? = nil,
+        visibleTextHash: String? = nil,
+        exact: String = "",
+        prefix: String = "",
+        suffix: String = ""
     ) throws -> ReadingNoteAnchor {
         guard lengthUTF16 > 0 else { throw ReadingNoteError.emptyRange }
         return .sourceMessageSpan(
@@ -171,7 +232,12 @@ public struct ReadingNote: Codable, Sendable, Hashable, Identifiable {
                 contentHash: contentHash,
                 locationUTF16: locationUTF16,
                 lengthUTF16: lengthUTF16,
-                textHash: textHash
+                textHash: textHash,
+                sourceHash: sourceHash,
+                visibleTextHash: visibleTextHash,
+                exact: exact,
+                prefix: prefix,
+                suffix: suffix
             )
         )
     }
@@ -182,7 +248,12 @@ public struct ReadingNote: Codable, Sendable, Hashable, Identifiable {
         textHash: String,
         locationUTF16: Int,
         lengthUTF16: Int,
-        quoteHash: String
+        quoteHash: String,
+        sourceHash: String? = nil,
+        visibleTextHash: String? = nil,
+        exact: String = "",
+        prefix: String = "",
+        suffix: String = ""
     ) throws -> ReadingNoteAnchor {
         guard lengthUTF16 > 0 else { throw ReadingNoteError.emptyRange }
         return .formalAssetSpan(
@@ -192,7 +263,12 @@ public struct ReadingNote: Codable, Sendable, Hashable, Identifiable {
                 textHash: textHash,
                 locationUTF16: locationUTF16,
                 lengthUTF16: lengthUTF16,
-                quoteHash: quoteHash
+                quoteHash: quoteHash,
+                sourceHash: sourceHash,
+                visibleTextHash: visibleTextHash,
+                exact: exact,
+                prefix: prefix,
+                suffix: suffix
             )
         )
     }
@@ -204,7 +280,7 @@ public struct ReadingNotesDocument: Codable, Sendable, Hashable {
     public var schemaVersion: Int
     public var notes: [ReadingNote]
 
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public static var empty: ReadingNotesDocument {
         ReadingNotesDocument(schemaVersion: currentSchemaVersion, notes: [])
@@ -216,18 +292,18 @@ public struct ReadingNotesDocument: Codable, Sendable, Hashable {
     }
 }
 
-/// Atomic load/save for `records/chatgpt-reading-notes.json`. Bad/missing file → empty.
+/// Atomic load/save for `records/chatgpt-reading-notes-v2.json`.
 public enum ReadingNotesFileStore {
-    public static func load(from url: URL, fileManager: FileManager = .default) -> ReadingNotesDocument {
+    public static func load(from url: URL, fileManager: FileManager = .default) throws -> ReadingNotesDocument {
         guard fileManager.fileExists(atPath: url.path) else {
             return .empty
         }
-        do {
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(ReadingNotesDocument.self, from: data)
-        } catch {
-            return .empty
+        let data = try Data(contentsOf: url)
+        let document = try JSONDecoder().decode(ReadingNotesDocument.self, from: data)
+        guard document.schemaVersion == ReadingNotesDocument.currentSchemaVersion else {
+            throw ReadingNotesFileStoreError.unsupportedSchema(document.schemaVersion)
         }
+        return document
     }
 
     public static func save(
@@ -240,4 +316,8 @@ public enum ReadingNotesFileStore {
         let data = try JSONEncoder().encode(document)
         try data.write(to: url, options: .atomic)
     }
+}
+
+public enum ReadingNotesFileStoreError: Error, Sendable, Equatable {
+    case unsupportedSchema(Int)
 }

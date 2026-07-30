@@ -60,6 +60,7 @@ body {
 .footnotes { font-size: .88em; color: var(--text-muted); border-top: 1px solid var(--background-modifier-border); margin-top: 2em; padding-top: .75em; }
 mark.reader-highlight { background: var(--text-highlight-bg); color: inherit; border-radius: 2px; cursor: pointer; padding: 0; }
 .selection-toolbar { position: fixed; z-index: 1000; display: flex; gap: 4px; padding: 4px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 7px; box-shadow: 0 4px 14px rgba(0,0,0,.16); }
+.selection-toolbar[hidden] { display: none; }
 .selection-toolbar button { appearance: none; border: 0; border-radius: 4px; background: transparent; color: var(--text-normal); font: 13px -apple-system, BlinkMacSystemFont, sans-serif; padding: 5px 8px; cursor: pointer; }
 .selection-toolbar button:hover { background: var(--background-modifier-border); }
 @media (max-width: 640px) { #reader-document { padding: 24px 22px 56px; } }

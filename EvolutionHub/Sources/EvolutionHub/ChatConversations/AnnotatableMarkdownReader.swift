@@ -12,8 +12,8 @@ struct AnnotatableMarkdownReader: View {
     var bodyFontSize: CGFloat = 16
     var assetId: String? = nil
     var versionId: String? = nil
-    var onHighlight: ((NSRange, String) -> Void)?
-    var onSaveNote: ((NSRange, String, String) -> Void)?
+    var onHighlight: ((ObsidianReaderSelection) -> Void)?
+    var onSaveNote: ((ObsidianReaderSelection, String) -> Void)?
     var onUpdateNote: ((ReadingNote, String) -> Void)?
     var onDeleteNote: ((ReadingNote) -> Void)?
 
@@ -30,22 +30,51 @@ struct AnnotatableMarkdownReader: View {
                 )
             ],
             notes: notes.map { note in
-                let range: NSRange
                 switch note.anchor {
                 case .sourceMessageSpan(let span):
-                    range = NSRange(location: span.locationUTF16, length: span.lengthUTF16)
+                    return .init(
+                        id: note.id,
+                        sectionID: "document",
+                        sourceRange: NSRange(location: span.locationUTF16, length: span.lengthUTF16),
+                        quote: note.quoteSnapshot,
+                        sourceHash: span.sourceHash,
+                        visibleTextHash: span.visibleTextHash,
+                        rendererVersion: span.rendererVersion,
+                        selectorVersion: span.selectorVersion,
+                        offsetUnit: span.offsetUnit,
+                        positionStart: span.positionStart,
+                        positionEnd: span.positionEnd,
+                        exact: span.exact,
+                        prefix: span.prefix,
+                        suffix: span.suffix
+                    )
                 case .formalAssetSpan(let span):
-                    range = NSRange(location: span.locationUTF16, length: span.lengthUTF16)
+                    return .init(
+                        id: note.id,
+                        sectionID: "document",
+                        sourceRange: NSRange(location: span.locationUTF16, length: span.lengthUTF16),
+                        quote: note.quoteSnapshot,
+                        sourceHash: span.sourceHash,
+                        visibleTextHash: span.visibleTextHash,
+                        rendererVersion: span.rendererVersion,
+                        selectorVersion: span.selectorVersion,
+                        offsetUnit: span.offsetUnit,
+                        positionStart: span.positionStart,
+                        positionEnd: span.positionEnd,
+                        exact: span.exact,
+                        prefix: span.prefix,
+                        suffix: span.suffix
+                    )
                 }
-                return .init(id: note.id, sectionID: "document", sourceRange: range)
             },
             allowsAnnotations: allowsNotes,
-            onSelectionAction: { _, range, quote, action in
+            bodyFontSize: bodyFontSize,
+            onSelectionAction: { _, selection, action in
                 switch action {
                 case .note:
-                    composer = NoteComposerState(range: range, quote: quote, existingNoteID: nil, existingBody: "")
+                    composer = NoteComposerState(range: selection.range, quote: selection.quote, existingNoteID: nil, existingBody: "", selection: selection)
                 case .highlight:
-                    onHighlight?(range, quote)
+                    onHighlight?(selection)
                 case .copy:
                     break
                 }
@@ -59,7 +88,16 @@ struct AnnotatableMarkdownReader: View {
                 if let id = state.existingNoteID, let note = notes.first(where: { $0.id == id }) {
                     onUpdateNote?(note, body)
                 } else {
-                    onSaveNote?(state.range, state.quote, body)
+                    onSaveNote?(
+                        state.selection ?? .init(
+                            range: state.range,
+                            quote: state.quote,
+                            visibleText: state.quote,
+                            prefix: "",
+                            suffix: ""
+                        ),
+                        body
+                    )
                 }
                 composer = nil
             } onCancel: {
@@ -89,6 +127,7 @@ struct NoteComposerState: Identifiable {
     var existingNoteID: String?
     var existingBody: String
     var sectionID: String? = nil
+    var selection: ObsidianReaderSelection? = nil
 }
 
 struct NoteComposerSheet: View {

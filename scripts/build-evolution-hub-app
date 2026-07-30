@@ -1,29 +1,76 @@
 #!/usr/bin/env bash
-# Build Evolution Hub as a double-clickable macOS .app and install/update /Applications.
-# Re-run after code changes to refresh the same app path (overwrite install).
+# Build an isolated TimeLedger development .app. It never overwrites or removes
+# another app; installation requires an empty, explicitly selected directory.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HUB="${ROOT}/EvolutionHub"
-DIST="${ROOT}/dist"
-APP_NAME="TimeLedger.app"
-APP_PATH="${DIST}/${APP_NAME}"
+APP_NAME="TimeLedger Dev.app"
 BIN_NAME="EvolutionHub"
-# System Applications (overwrite on every successful build = local auto-update)
-INSTALL_DIR="${EVOLUTION_HUB_INSTALL_DIR:-/Applications}"
-INSTALLED_APP="${INSTALL_DIR}/${APP_NAME}"
+
+verify_app_resources() {
+  local app_path="$1"
+  local resources="${app_path}/Contents/Resources"
+  local bundle="${resources}/EvolutionHub_EvolutionHub.bundle"
+  local resource
+  local required=(
+    "index.html"
+    "reader.css"
+    "reader.js"
+    "markdown-it-14.1.0.min.js"
+    "markdown-it-14.1.0-LICENSE"
+    "markdown-it-footnote-4.0.0.min.js"
+    "markdown-it-footnote-4.0.0-LICENSE"
+    "recogito-text-annotator-4.2.5.umd.js"
+    "recogito-text-annotator-4.2.5.css"
+    "recogito-text-annotator-4.2.5-LICENSE"
+    "recogito-env.js"
+    "THIRD_PARTY.md"
+  )
+
+  if [[ ! -d "${bundle}" ]]; then
+    echo "Missing resource bundle: ${bundle}" >&2
+    return 1
+  fi
+  for resource in "${required[@]}"; do
+    if [[ ! -f "${bundle}/${resource}" ]]; then
+      echo "Missing reader resource: ${bundle}/${resource}" >&2
+      return 1
+    fi
+  done
+}
+
+if [[ "${1:-}" == "--verify-app" ]]; then
+  if [[ -z "${2:-}" || "${3:-}" != "" ]]; then
+    echo "Usage: $0 --verify-app /absolute/path/to/TimeLedger Dev.app" >&2
+    exit 64
+  fi
+  verify_app_resources "$2"
+  echo "Verified reader resources: $2"
+  exit 0
+fi
+
+BUILD_ROOT="${EVOLUTION_HUB_BUILD_ROOT:-/private/tmp}"
+mkdir -p "${BUILD_ROOT}"
+BUILD_DIR="$(mktemp -d "${BUILD_ROOT%/}/timeledger-dev-build.XXXXXX")"
+APP_PATH="${BUILD_DIR}/${APP_NAME}"
 
 echo "==> Building Release..."
 swift build -c release --package-path "${HUB}"
 
-BIN="$(swift build -c release --package-path "${HUB}" --show-bin-path)/${BIN_NAME}"
+BIN_DIR="$(swift build -c release --package-path "${HUB}" --show-bin-path)"
+BIN="${BIN_DIR}/${BIN_NAME}"
+RESOURCE_BUNDLE="${BIN_DIR}/EvolutionHub_EvolutionHub.bundle"
 if [[ ! -x "${BIN}" ]]; then
   echo "Executable not found: ${BIN}" >&2
   exit 1
 fi
+if [[ ! -d "${RESOURCE_BUNDLE}" ]]; then
+  echo "SwiftPM resource bundle not found: ${RESOURCE_BUNDLE}" >&2
+  exit 1
+fi
 
 echo "==> Assembling app bundle..."
-rm -rf "${APP_PATH}"
 mkdir -p "${APP_PATH}/Contents/MacOS"
 mkdir -p "${APP_PATH}/Contents/Resources"
 
@@ -35,66 +82,39 @@ if command -v plutil >/dev/null 2>&1; then
 fi
 cp "${BIN}" "${APP_PATH}/Contents/MacOS/${BIN_NAME}"
 chmod +x "${APP_PATH}/Contents/MacOS/${BIN_NAME}"
+cp -R "${RESOURCE_BUNDLE}" "${APP_PATH}/Contents/Resources/"
+
+# Verify every vendored reader resource survived both SwiftPM processing and
+# app assembly. The app-level check below also protects the shipped artifact.
+while IFS= read -r -d '' resource; do
+  name="$(basename "${resource}")"
+  if [[ ! -f "${RESOURCE_BUNDLE}/${name}" ]]; then
+    echo "SwiftPM omitted reader resource: ${name}" >&2
+    exit 1
+  fi
+done < <(find "${HUB}/Sources/EvolutionHub/Resources/ObsidianReader" -type f -print0)
+verify_app_resources "${APP_PATH}"
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "${APP_PATH}" 2>/dev/null || true
 fi
 
-install_app() {
-  local dest="$1"
-  mkdir -p "$(dirname "${dest}")"
-  # Atomic-ish update: stage then replace, so a half-written app is less likely
-  local staging
-  staging="$(mktemp -d)/${APP_NAME}"
-  cp -R "${APP_PATH}" "${staging}"
-  rm -rf "${dest}"
-  mv "${staging}" "${dest}"
-  rm -rf "$(dirname "${staging}")" 2>/dev/null || true
-}
-
-echo "==> Installing/updating: ${INSTALLED_APP}"
-if [[ -w "${INSTALL_DIR}" ]] || [[ ! -e "${INSTALL_DIR}" && -w "$(dirname "${INSTALL_DIR}")" ]]; then
-  install_app "${INSTALLED_APP}"
-elif command -v sudo >/dev/null 2>&1; then
-  echo "    (需要管理员权限写入 ${INSTALL_DIR})"
-  STAGE_PARENT="$(mktemp -d)"
-  STAGE_APP="${STAGE_PARENT}/${APP_NAME}"
-  cp -R "${APP_PATH}" "${STAGE_APP}"
-  sudo rm -rf "${INSTALLED_APP}"
-  sudo mv "${STAGE_APP}" "${INSTALLED_APP}"
-  sudo chmod -R a+rX "${INSTALLED_APP}"
-  rm -rf "${STAGE_PARENT}"
-else
-  echo "无法写入 ${INSTALL_DIR}，且没有 sudo。" >&2
-  echo "构建产物仍在: ${APP_PATH}" >&2
-  exit 1
-fi
-
-# Remove old names / personal copies to avoid two apps
-for old in \
-  "${HOME}/Applications/Evolution Hub.app" \
-  "${HOME}/Applications/TimeLedger.app" \
-  "/Applications/Evolution Hub.app"
-do
-  if [[ -d "${old}" && "${old}" != "${INSTALLED_APP}" ]]; then
-    echo "==> Removing old app: ${old}"
-    if [[ -w "$(dirname "${old}")" ]]; then
-      rm -rf "${old}"
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo rm -rf "${old}" || true
-    fi
+if [[ -n "${EVOLUTION_HUB_INSTALL_DIR:-}" ]]; then
+  INSTALLED_APP="${EVOLUTION_HUB_INSTALL_DIR}/${APP_NAME}"
+  if [[ -e "${INSTALLED_APP}" ]]; then
+    echo "Refusing to overwrite existing development app: ${INSTALLED_APP}" >&2
+    exit 1
   fi
-done
-
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-if [[ -x "${LSREGISTER}" ]]; then
-  "${LSREGISTER}" -f "${INSTALLED_APP}" 2>/dev/null || true
+  mkdir -p "${EVOLUTION_HUB_INSTALL_DIR}"
+  cp -R "${APP_PATH}" "${INSTALLED_APP}"
+  verify_app_resources "${INSTALLED_APP}"
+  echo "Installed:  ${INSTALLED_APP}"
 fi
 
 echo ""
 echo "Done."
 echo "  Built:     ${APP_PATH}"
-echo "  Installed: ${INSTALLED_APP}"
 echo ""
-echo "Open:  open \"${INSTALLED_APP}\""
-echo "Update after code changes:  scripts/build-evolution-hub-app"
+echo "Temporary install acceptance:"
+echo "  EVOLUTION_HUB_INSTALL_DIR=/private/tmp/timeledger-dev-install scripts/build-evolution-hub-app"
+echo "Open the reported TimeLedger Dev.app only after choosing an install directory."

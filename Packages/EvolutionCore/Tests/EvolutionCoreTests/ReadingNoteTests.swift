@@ -56,7 +56,12 @@ final class ReadingNoteTests: XCTestCase {
             contentHash: ContentHasher.hash("hello world"),
             locationUTF16: 0,
             lengthUTF16: 5,
-            textHash: ContentHasher.hash("hello")
+            textHash: ContentHasher.hash("hello"),
+            sourceHash: ContentHasher.hash("# hello world"),
+            visibleTextHash: ContentHasher.hash("hello world"),
+            exact: "hello",
+            prefix: "",
+            suffix: " world"
         )
         let formalAnchor = try ReadingNote.formalAnchor(
             assetId: "asset-1",
@@ -64,7 +69,12 @@ final class ReadingNoteTests: XCTestCase {
             textHash: ContentHasher.hash("body text"),
             locationUTF16: 2,
             lengthUTF16: 4,
-            quoteHash: ContentHasher.hash("dy t")
+            quoteHash: ContentHasher.hash("dy t"),
+            sourceHash: ContentHasher.hash("## body text"),
+            visibleTextHash: ContentHasher.hash("body text"),
+            exact: "dy t",
+            prefix: "bo",
+            suffix: "ext"
         )
         let sourceNote = try ReadingNote.make(
             id: "note-source",
@@ -95,6 +105,11 @@ final class ReadingNoteTests: XCTestCase {
             XCTAssertEqual(span.messageId, "msg-1")
             XCTAssertEqual(span.locationUTF16, 0)
             XCTAssertEqual(span.lengthUTF16, 5)
+            XCTAssertEqual(span.offsetUnit, "utf16")
+            XCTAssertEqual(span.positionStart, 0)
+            XCTAssertEqual(span.positionEnd, 5)
+            XCTAssertEqual(span.exact, "hello")
+            XCTAssertEqual(span.suffix, " world")
         } else {
             XCTFail("expected source anchor")
         }
@@ -105,22 +120,24 @@ final class ReadingNoteTests: XCTestCase {
             XCTAssertEqual(span.locationUTF16, 2)
             XCTAssertEqual(span.lengthUTF16, 4)
             XCTAssertEqual(span.quoteHash, ContentHasher.hash("dy t"))
+            XCTAssertEqual(span.exact, "dy t")
+            XCTAssertEqual(span.prefix, "bo")
         } else {
             XCTFail("expected formal anchor")
         }
     }
 
-    func testFileStoreAtomicRoundTripAndCorruptFileYieldsEmpty() throws {
+    func testFileStoreAtomicRoundTripAndCorruptFileThrows() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("reading-notes-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
         let layout = EvolutionLedgerLayout(rootURL: root)
         let url = layout.chatConversationReadingNotesFileURL
-        XCTAssertEqual(url.lastPathComponent, "chatgpt-reading-notes.json")
-        XCTAssertTrue(url.path.hasSuffix("records/chatgpt-reading-notes.json"))
+        XCTAssertEqual(url.lastPathComponent, "chatgpt-reading-notes-v2.json")
+        XCTAssertTrue(url.path.hasSuffix("records/chatgpt-reading-notes-v2.json"))
 
-        XCTAssertEqual(ReadingNotesFileStore.load(from: url).notes, [])
+        XCTAssertEqual(try ReadingNotesFileStore.load(from: url).notes, [])
 
         let note = try ReadingNote.make(
             id: "persist-1",
@@ -139,20 +156,18 @@ final class ReadingNoteTests: XCTestCase {
         try ReadingNotesFileStore.save(ReadingNotesDocument(notes: [note]), to: url)
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
 
-        let loaded = ReadingNotesFileStore.load(from: url)
+        let loaded = try ReadingNotesFileStore.load(from: url)
         XCTAssertEqual(loaded.notes, [note])
 
         try Data("not-json".utf8).write(to: url, options: .atomic)
-        let recovered = ReadingNotesFileStore.load(from: url)
-        XCTAssertEqual(recovered.notes, [])
-        XCTAssertEqual(recovered.schemaVersion, ReadingNotesDocument.currentSchemaVersion)
+        XCTAssertThrowsError(try ReadingNotesFileStore.load(from: url))
     }
 
     func testReadingNotesPathDoesNotCollideWithLedgerOrUserMarks() {
         let layout = EvolutionLedgerLayout(rootURL: URL(fileURLWithPath: "/tmp/pe", isDirectory: true))
         XCTAssertEqual(
             layout.chatConversationReadingNotesFileURL.path,
-            "/tmp/pe/records/chatgpt-reading-notes.json"
+            "/tmp/pe/records/chatgpt-reading-notes-v2.json"
         )
         XCTAssertNotEqual(
             layout.chatConversationReadingNotesFileURL,
@@ -161,6 +176,10 @@ final class ReadingNoteTests: XCTestCase {
         XCTAssertNotEqual(
             layout.chatConversationReadingNotesFileURL,
             layout.chatConversationUserMarksFileURL
+        )
+        XCTAssertEqual(
+            layout.legacyChatConversationReadingNotesFileURL.path,
+            "/tmp/pe/records/chatgpt-reading-notes.json"
         )
     }
 }

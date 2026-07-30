@@ -85,7 +85,7 @@ struct ChatReadingNotesLibraryView: View {
                     .buttonStyle(.plain)
                     .contextMenu {
                         Button("删除笔记", role: .destructive) {
-                            store.deleteReadingNote(id: note.id)
+                            try? store.deleteReadingNote(id: note.id)
                         }
                     }
                 }

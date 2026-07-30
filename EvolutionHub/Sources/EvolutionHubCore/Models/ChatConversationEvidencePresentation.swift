@@ -53,6 +53,14 @@ public struct ChatConversationSourceMessage: Identifiable, Sendable, Hashable {
         self.createdAt = message.createdAt
         self.content = message.content
     }
+
+    /// The one Markdown value used for source-reader rendering and reading-note
+    /// anchors. Keeping its normalization here prevents display and persistence
+    /// from hashing different forms of the same archived message.
+    public var canonicalMarkdown: String {
+        let normalized = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "_（空消息）_" : normalized
+    }
 }
 
 public struct ChatConversationSourceTurn: Identifiable, Sendable, Hashable {

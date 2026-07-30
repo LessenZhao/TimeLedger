@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>TimeLedger</string>
+	<string>TimeLedger Dev</string>
 	<key>CFBundleExecutable</key>
 	<string>EvolutionHub</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.lessen.EvolutionHub</string>
+	<string>com.lessen.TimeLedger.dev</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>TimeLedger</string>
+	<string>TimeLedger Dev</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

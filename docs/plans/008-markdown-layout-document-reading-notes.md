@@ -1,11 +1,13 @@
 # 008 · Layout Document 中枢：Obsidian 级阅读 + 正常选区笔记
 
-> **状态：** UI 路线已更新；ReadingNote 平行域仍保留。  
+> **状态：** UI 路线已更新；ReadingNote 平行域仍保留。2026-07-29 的 Recogito 4.2.5 固定离线 Spike 通过字体/宽度改变后的标注恢复，作为唯一生产标注内核；版本、SHA256 和许可证见 `Resources/ObsidianReader/THIRD_PARTY.md`。
 > **日期：** 2026-07-28  
 > **分支：** `codex/chatgpt-conversation-ledger`  
 > **关系：** 继承 [007-reading-notes-parallel.md](./007-reading-notes-parallel.md) 的**笔记域与 Tab 产品边界**；**作废 007 中「整页 NSTextView / MarkdownAttributedRenderer 当主阅读器」的 UI 路径**。正式生产链仍以 [005](./005-chatgpt-conversation-ledger.md) / [006](./006-hunan-selection-prep-assets.md) 为准。
 
 > **2026-07-28 UI 真源：** 历史会话使用一个 `WKWebView`，消息作为带 `messageId` 的 section；正式资产使用同一 Reader 的单 section 形式。`markdown-it` 离线 HTML/CSS 负责阅读与系统选区，SwiftUI 只保留外壳和笔记 sheet。本文中 TextKit、分片 L1/L2 及其 `Layout Document` 主 UI 路线均为历史记录，不得重新接回主路径。
+
+> **执行约束（2026-07-29）：** 当前 WKWebView 路线是唯一可执行路线；本文的 Layout Document、L1/L2/L3 与 2b 是历史决策记录，不得据此重新开启并行实现。
 
 ---
 

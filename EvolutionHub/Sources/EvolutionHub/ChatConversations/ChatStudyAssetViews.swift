@@ -391,8 +391,8 @@ struct ChatStudyAssetReaderPane: View {
     /// Formal reader identity; candidates intentionally leave this empty.
     var formalAssetID: String? = nil
     var formalVersionID: String? = nil
-    var onReadingHighlight: ((NSRange, String) -> Void)? = nil
-    var onReadingSaveNote: ((NSRange, String, String) -> Void)? = nil
+    var onReadingHighlight: ((ObsidianReaderSelection) -> Void)? = nil
+    var onReadingSaveNote: ((ObsidianReaderSelection, String) -> Void)? = nil
     var onReadingUpdateNote: ((ReadingNote, String) -> Void)? = nil
     var onReadingDeleteNote: ((ReadingNote) -> Void)? = nil
 
@@ -408,8 +408,8 @@ struct ChatStudyAssetReaderPane: View {
                     bodyFontSize: 16,
                     assetId: formalAssetID,
                     versionId: formalVersionID,
-                    onHighlight: { range, quote in onReadingHighlight?(range, quote) },
-                    onSaveNote: { range, quote, body in onReadingSaveNote?(range, quote, body) },
+                    onHighlight: { selection in onReadingHighlight?(selection) },
+                    onSaveNote: { selection, body in onReadingSaveNote?(selection, body) },
                     onUpdateNote: { note, body in onReadingUpdateNote?(note, body) },
                     onDeleteNote: { note in onReadingDeleteNote?(note) }
                 )

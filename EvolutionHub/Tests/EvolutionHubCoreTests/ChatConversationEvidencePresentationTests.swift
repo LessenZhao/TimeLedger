@@ -3,6 +3,29 @@ import EvolutionCore
 import XCTest
 
 final class ChatConversationEvidencePresentationTests: XCTestCase {
+    func testSourceMessageCanonicalMarkdownRemovesOuterWhitespaceBeforeHashing() {
+        let message = ChatConversationMessage(
+            id: "assistant-1",
+            role: .assistant,
+            createdAt: "2026-07-02T00:00:00Z",
+            content: "\n\n  **重点内容**  \n"
+        )
+        let sourceMessage = ChatConversationSourceMessage(
+            reference: .init(conversationId: "conversation-1", messageId: "assistant-1"),
+            message: message
+        )
+
+        XCTAssertEqual(sourceMessage.canonicalMarkdown, "**重点内容**")
+        XCTAssertEqual(
+            ContentHasher.hash(sourceMessage.canonicalMarkdown),
+            ContentHasher.hash("**重点内容**")
+        )
+        XCTAssertNotEqual(
+            ContentHasher.hash(sourceMessage.canonicalMarkdown),
+            ContentHasher.hash(message.content)
+        )
+    }
+
     func testSummarizesRawMessagesAndGroupsThemIntoReadableTurns() {
         let conversation = summary(
             id: "conversation-1",

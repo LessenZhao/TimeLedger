@@ -1,0 +1,100 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="package/dist/text-annotator.css">
+<style>
+  :root { --size: 16px; --width: 720px; --leading: 1.55; }
+  body.changed { --size: 23px; --width: 390px; --leading: 2.05; }
+  #fixture { max-width: var(--width); font-size: var(--size); line-height: var(--leading); }
+  table { border-collapse: collapse; } td, th { border: 1px solid #999; padding: 3px; }
+</style>
+<main id="fixture">
+  <p>中文与 Emoji 😀 的原文；English link <a href="https://example.com">linked text</a>。</p>
+  <p>重复文字在第一处，重复文字在第二处。</p>
+  <p>跨段开始。</p>
+  <p>跨段结束。</p>
+  <table><tbody><tr><td>表格甲</td><td>表格乙</td></tr></tbody></table>
+  <pre><code>let emoji = "😀"</code></pre>
+</main>
+<script>window.process = { env: { NODE_ENV: 'production' } };</script>
+<script src="package/dist/text-annotator.umd.js"></script>
+<script>
+  function assertion(condition, message) { if (!condition) throw new Error(message); }
+  function rangeFor(root, start, end) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node, offset = 0, startNode, startOffset, endNode, endOffset;
+    while ((node = walker.nextNode())) {
+      const next = offset + node.data.length;
+      if (!startNode && start >= offset && start <= next) { startNode = node; startOffset = start - offset; }
+      if (end >= offset && end <= next) { endNode = node; endOffset = end - offset; break; }
+      offset = next;
+    }
+    assertion(startNode && endNode, 'range bounds not found');
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    return range;
+  }
+  function select(root, quote, occurrence) {
+    let cursor = -1;
+    for (let i = 0; i <= occurrence; i++) cursor = root.textContent.indexOf(quote, cursor + 1);
+    assertion(cursor >= 0, 'quote not found: ' + quote);
+    return { quote, start: cursor, end: cursor + quote.length, range: rangeFor(root, cursor, cursor + quote.length) };
+  }
+  function serializable(annotation) {
+    return { id: annotation.id, bodies: [], target: { selector: annotation.target.selector.map(({ quote, start, end }) => ({ quote, start, end })) } };
+  }
+  function waitForLayout() {
+    return new Promise(resolve => setTimeout(resolve, 300));
+  }
+  window.runRecogitoSpike = async () => {
+    const root = document.getElementById('fixture');
+    const create = () => RecogitoJS.createTextAnnotator(root, { renderer: 'SPANS', selectionMode: 'all' });
+    const native = create();
+    const nativeSelection = select(root, '中文与 Emoji 😀 的原文', 0);
+    const browserSelection = window.getSelection();
+    browserSelection.removeAllRanges();
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+    root.dispatchEvent(new Event('selectstart', { bubbles: true }));
+    browserSelection.addRange(nativeSelection.range);
+    document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
+    root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: 80, clientY: 10 }));
+    await waitForLayout();
+    assertion(native.getAnnotations().length === 1, 'native drag did not create an annotation');
+    native.destroy();
+    const annotator = create();
+    const selections = [
+      select(root, '中文与 Emoji 😀 的原文', 0),
+      select(root, 'linked text', 0),
+      select(root, '重复文字', 1),
+      select(root, '跨段开始。\n  跨段结束。', 0),
+      select(root, '表格甲', 0),
+      select(root, 'let emoji = "😀"', 0)
+    ];
+    selections.forEach((selector, index) => annotator.addAnnotation({ id: 'note-' + index, bodies: [], target: { selector: [selector] } }));
+    const overlap = select(root, 'Emoji 😀 的原文；English', 0);
+    annotator.addAnnotation({ id: 'note-overlap', bodies: [], target: { selector: [overlap] } });
+    const saved = annotator.getAnnotations().map(serializable);
+    assertion(saved.length === 7, 'annotations were not created');
+    const emoji = saved[0].target.selector[0];
+    assertion(emoji.end - emoji.start === '中文与 Emoji 😀 的原文'.length, 'offset is not JavaScript UTF-16 length');
+    assertion(saved.find(a => a.id === 'note-2').target.selector[0].start > root.textContent.indexOf('重复文字'), 'second duplicate was not selected');
+    await waitForLayout();
+    const initialHighlightCount = document.querySelectorAll('.r6o-annotation').length;
+    annotator.destroy();
+    document.body.classList.add('changed');
+    const restored = create();
+    restored.setAnnotations(saved);
+    await waitForLayout();
+    const orphaned = saved.filter(annotation => !restored.getAnnotationById(annotation.id));
+    const restoredQuotes = restored.getAnnotations().map(a => a.target.selector.map(s => s.range.toString()).join('')).sort();
+    assertion(orphaned.length === 0, 'annotations orphaned after typography change');
+    assertion(restoredQuotes.includes('重复文字'), 'second duplicate did not restore');
+    assertion(restoredQuotes.includes('跨段开始。\n  跨段结束。'), 'cross-paragraph selection did not restore');
+    const restoredHighlightCount = document.querySelectorAll('.r6o-annotation').length;
+    assertion(restoredHighlightCount >= 7, `highlights were not rendered (initial=${initialHighlightCount}, restored=${restoredHighlightCount})`);
+    return JSON.stringify({
+      version: '4.2.5', offsetUnit: 'JavaScript UTF-16 code units', annotations: saved.length,
+      orphaned: orphaned.length, restoredQuotes, initialHighlightCount, renderedHighlights: restoredHighlightCount
+    });
+  };
+</script>

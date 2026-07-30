@@ -26,6 +26,11 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
 
     /// Personal reading notes / highlights. Parallel to ledger assets; never written into chatgpt-ledger.json.
     public var chatConversationReadingNotesFileURL: URL {
+        recordsDirectoryURL.appendingPathComponent("chatgpt-reading-notes-v2.json", isDirectory: false)
+    }
+
+    /// Read-only v1 location. It is intentionally never migrated into v2.
+    public var legacyChatConversationReadingNotesFileURL: URL {
         recordsDirectoryURL.appendingPathComponent("chatgpt-reading-notes.json", isDirectory: false)
     }
 

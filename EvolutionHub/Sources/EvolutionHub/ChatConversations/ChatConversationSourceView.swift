@@ -126,7 +126,18 @@ struct ChatConversationSourceStage: View {
                         return ObsidianReaderNote(
                             id: note.id,
                             sectionID: message.reference.messageId,
-                            sourceRange: NSRange(location: span.locationUTF16, length: span.lengthUTF16)
+                            sourceRange: NSRange(location: span.locationUTF16, length: span.lengthUTF16),
+                            quote: note.quoteSnapshot,
+                            sourceHash: span.sourceHash,
+                            visibleTextHash: span.visibleTextHash,
+                            rendererVersion: span.rendererVersion,
+                            selectorVersion: span.selectorVersion,
+                            offsetUnit: span.offsetUnit,
+                            positionStart: span.positionStart,
+                            positionEnd: span.positionEnd,
+                            exact: span.exact,
+                            prefix: span.prefix,
+                            suffix: span.suffix
                         )
                     case .formalAssetSpan:
                         return nil
@@ -279,13 +290,20 @@ struct ChatConversationSourceStage: View {
                     notes: allowsNotes ? readerNotes : [],
                     allowsAnnotations: allowsNotes,
                     scrollTargetID: scrollTargetTurnID,
-                    onSelectionAction: { messageID, range, quote, action in
+                    onSelectionAction: { messageID, selection, action in
                         guard let message = sourceMessage(messageID) else { return }
                         switch action {
                         case .note:
-                            composer = NoteComposerState(range: range, quote: quote, existingNoteID: nil, existingBody: "", sectionID: messageID)
+                            composer = NoteComposerState(
+                                range: selection.range,
+                                quote: selection.quote,
+                                existingNoteID: nil,
+                                existingBody: "",
+                                sectionID: messageID,
+                                selection: selection
+                            )
                         case .highlight:
-                            saveSourceNote(message: message, range: range, quote: quote, body: nil, highlight: true)
+                            saveSourceNote(message: message, selection: selection, body: nil, highlight: true)
                         case .copy:
                             break
                         }
@@ -297,7 +315,18 @@ struct ChatConversationSourceStage: View {
                 .sheet(item: $composer) { state in
                     NoteComposerSheet(quote: state.quote, initialBody: state.existingBody) { body in
                         guard let messageID = state.sectionID, let message = sourceMessage(messageID) else { return }
-                        saveSourceNote(message: message, range: state.range, quote: state.quote, body: body, highlight: false)
+                        saveSourceNote(
+                            message: message,
+                            selection: state.selection ?? .init(
+                                range: state.range,
+                                quote: state.quote,
+                                visibleText: state.quote,
+                                prefix: "",
+                                suffix: ""
+                            ),
+                            body: body,
+                            highlight: false
+                        )
                         composer = nil
                     } onCancel: {
                         composer = nil
@@ -310,7 +339,7 @@ struct ChatConversationSourceStage: View {
                     } onCancel: {
                         activeNote = nil
                     } onDelete: {
-                        store.deleteReadingNote(id: note.id)
+                        try? store.deleteReadingNote(id: note.id)
                         activeNote = nil
                     }
                 }
@@ -320,28 +349,33 @@ struct ChatConversationSourceStage: View {
 
     private func saveSourceNote(
         message: ChatConversationSourceMessage,
-        range: NSRange,
-        quote: String,
+        selection: ObsidianReaderSelection,
         body: String?,
         highlight: Bool
     ) {
         do {
-            let contentHash = ContentHasher.hash(message.content)
-            let textHash = ContentHasher.hash(quote)
+            let canonicalMarkdown = message.canonicalMarkdown
+            let contentHash = ContentHasher.hash(canonicalMarkdown)
+            let textHash = ContentHasher.hash(selection.quote)
             let anchor = try ReadingNote.sourceAnchor(
                 conversationId: message.reference.conversationId,
                 messageId: message.reference.messageId,
                 contentHash: contentHash,
-                locationUTF16: range.location,
-                lengthUTF16: range.length,
-                textHash: textHash
+                locationUTF16: selection.range.location,
+                lengthUTF16: selection.range.length,
+                textHash: textHash,
+                sourceHash: contentHash,
+                visibleTextHash: ContentHasher.hash(selection.visibleText),
+                exact: selection.quote,
+                prefix: selection.prefix,
+                suffix: selection.suffix
             )
             if highlight && (body == nil || body?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
-                _ = try store.addHighlight(quoteSnapshot: quote, anchor: anchor)
+                _ = try store.addHighlight(quoteSnapshot: selection.quote, anchor: anchor)
             } else {
                 _ = try store.addNote(
                     body: body,
-                    quoteSnapshot: quote,
+                    quoteSnapshot: selection.quote,
                     anchor: anchor,
                     isHighlight: highlight
                 )
@@ -372,11 +406,7 @@ struct ChatConversationSourceStage: View {
 
 
     private func transcriptMarkdown(for message: ChatConversationSourceMessage) -> String {
-        let body = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if body.isEmpty {
-            return "_（空消息）_"
-        }
-        return body
+        message.canonicalMarkdown
     }
 }
 

@@ -601,48 +601,53 @@ struct ChatConversationLedgerView<LeftHeaderPrefix: View, RightHeaderTrailing: V
                 stageMode = .edit
                 syncEditBuffer()
             },
-            readingNotes: store.notes(forAssetID: asset.id),
+            readingNotes: version.map { store.notes(forAssetID: asset.id, versionID: $0.id) } ?? [],
             allowsReadingNotes: true,
             formalAssetID: asset.id,
             formalVersionID: version?.id,
-            onReadingHighlight: { range, quote in
-                saveFormalNote(asset: asset, range: range, quote: quote, body: nil, highlight: true)
+            onReadingHighlight: { selection in
+                saveFormalNote(asset: asset, selection: selection, body: nil, highlight: true)
             },
-            onReadingSaveNote: { range, quote, body in
-                saveFormalNote(asset: asset, range: range, quote: quote, body: body, highlight: false)
+            onReadingSaveNote: { selection, body in
+                saveFormalNote(asset: asset, selection: selection, body: body, highlight: false)
             },
             onReadingUpdateNote: { note, body in
                 try? store.updateReadingNote(id: note.id, body: body)
             },
             onReadingDeleteNote: { note in
-                store.deleteReadingNote(id: note.id)
+                try? store.deleteReadingNote(id: note.id)
             }
         )
     }
 
     private func saveFormalNote(
         asset: ChatStudyAsset,
-        range: NSRange,
-        quote: String,
+        selection: ObsidianReaderSelection,
         body: String?,
         highlight: Bool
     ) {
         guard let version = asset.currentVersion else { return }
         do {
+            let contentHash = ContentHasher.hash(version.textSnapshot)
             let anchor = try ReadingNote.formalAnchor(
                 assetId: asset.id,
                 versionId: version.id,
                 textHash: version.textHash,
-                locationUTF16: range.location,
-                lengthUTF16: range.length,
-                quoteHash: ContentHasher.hash(quote)
+                locationUTF16: selection.range.location,
+                lengthUTF16: selection.range.length,
+                quoteHash: ContentHasher.hash(selection.quote),
+                sourceHash: contentHash,
+                visibleTextHash: ContentHasher.hash(selection.visibleText),
+                exact: selection.quote,
+                prefix: selection.prefix,
+                suffix: selection.suffix
             )
             if highlight && (body == nil || body?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
-                _ = try store.addHighlight(quoteSnapshot: quote, anchor: anchor)
+                _ = try store.addHighlight(quoteSnapshot: selection.quote, anchor: anchor)
             } else {
                 _ = try store.addNote(
                     body: body,
-                    quoteSnapshot: quote,
+                    quoteSnapshot: selection.quote,
                     anchor: anchor,
                     isHighlight: highlight
                 )

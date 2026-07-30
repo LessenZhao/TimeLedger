@@ -39,7 +39,7 @@ final class EvolutionLedgerLayoutTests: XCTestCase {
         let layout = EvolutionLedgerLayout(rootURL: root)
         XCTAssertEqual(
             layout.chatConversationReadingNotesFileURL.lastPathComponent,
-            "chatgpt-reading-notes.json"
+            "chatgpt-reading-notes-v2.json"
         )
         XCTAssertEqual(
             layout.chatConversationReadingNotesFileURL.deletingLastPathComponent().path,
@@ -52,6 +52,10 @@ final class EvolutionLedgerLayoutTests: XCTestCase {
         XCTAssertNotEqual(
             layout.chatConversationReadingNotesFileURL,
             layout.chatConversationUserMarksFileURL
+        )
+        XCTAssertEqual(
+            layout.legacyChatConversationReadingNotesFileURL.lastPathComponent,
+            "chatgpt-reading-notes.json"
         )
     }
 }

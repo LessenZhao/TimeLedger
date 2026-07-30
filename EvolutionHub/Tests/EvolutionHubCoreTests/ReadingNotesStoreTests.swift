@@ -45,6 +45,35 @@ final class ReadingNotesStoreTests: XCTestCase {
         XCTAssertEqual(store.notes(forMessageID: "msg-1").map(\.id), ["n-source-a"])
     }
 
+    func testFormalNotesAreScopedToTheVersionThatCreatedThem() throws {
+        let fixture = try ChatConversationHubFixture()
+        let store = ChatConversationHubStore(layout: fixture.layout)
+        let v1 = try ReadingNote.formalAnchor(
+            assetId: "asset-1",
+            versionId: "ver-1",
+            textHash: "same-text",
+            locationUTF16: 0,
+            lengthUTF16: 4,
+            quoteHash: "quote-v1"
+        )
+        let v2 = try ReadingNote.formalAnchor(
+            assetId: "asset-1",
+            versionId: "ver-2",
+            textHash: "same-text",
+            locationUTF16: 0,
+            lengthUTF16: 4,
+            quoteHash: "quote-v2"
+        )
+
+        _ = try store.addHighlight(quoteSnapshot: "same", anchor: v1, id: "note-v1")
+        _ = try store.addHighlight(quoteSnapshot: "same", anchor: v2, id: "note-v2")
+
+        XCTAssertEqual(
+            store.notes(forAssetID: "asset-1", versionID: "ver-2").map(\.id),
+            ["note-v2"]
+        )
+    }
+
     func testPersistAcrossStoreRestartAndNotWrittenIntoLedger() throws {
         let fixture = try ChatConversationHubFixture()
         let store = ChatConversationHubStore(layout: fixture.layout)
@@ -61,7 +90,7 @@ final class ReadingNotesStoreTests: XCTestCase {
 
         let notesURL = fixture.layout.chatConversationReadingNotesFileURL
         XCTAssertTrue(FileManager.default.fileExists(atPath: notesURL.path))
-        XCTAssertEqual(notesURL.lastPathComponent, "chatgpt-reading-notes.json")
+        XCTAssertEqual(notesURL.lastPathComponent, "chatgpt-reading-notes-v2.json")
 
         // Ledger file may be missing or empty; must not contain reading note body.
         if FileManager.default.fileExists(atPath: fixture.layout.chatConversationLedgerFileURL.path) {
@@ -77,7 +106,7 @@ final class ReadingNotesStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.allNotes[0].body, "updated body")
         XCTAssertTrue(reloaded.allNotes[0].isHighlight)
 
-        reloaded.deleteReadingNote(id: "persist-note")
+        try reloaded.deleteReadingNote(id: "persist-note")
         let afterDelete = ChatConversationHubStore(layout: fixture.layout)
         XCTAssertTrue(afterDelete.allNotes.isEmpty)
     }
@@ -102,5 +131,27 @@ final class ReadingNotesStoreTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? ReadingNoteError, .emptyRange)
         }
+    }
+
+    func testWriteFailureDoesNotMutateInMemoryNotes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("reading-note-write-failure-\(UUID().uuidString)", isDirectory: true)
+        let blockedRoot = root.appendingPathComponent("blocked-root", isDirectory: false)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("not a directory".utf8).write(to: blockedRoot)
+        let layout = EvolutionLedgerLayout(rootURL: blockedRoot)
+        let store = ChatConversationHubStore(layout: layout)
+        let anchor = try ReadingNote.sourceAnchor(
+            conversationId: "c",
+            messageId: "m",
+            contentHash: "source",
+            locationUTF16: 0,
+            lengthUTF16: 1,
+            textHash: "quote"
+        )
+
+        XCTAssertThrowsError(try store.addHighlight(quoteSnapshot: "q", anchor: anchor))
+        XCTAssertTrue(store.allNotes.isEmpty)
+        XCTAssertNotNil(store.lastError)
     }
 }

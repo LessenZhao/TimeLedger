@@ -122,9 +122,14 @@ public final class ChatConversationHubStore: ObservableObject {
         let marks = Self.loadUserMarks(layout: layout)
         self.starredConversationIDs = Set(marks.starredConversationIDs)
         self.starredTurnIDs = Set(marks.starredTurnIDs)
-        self.readingNotes = ReadingNotesFileStore.load(
-            from: layout.chatConversationReadingNotesFileURL
-        ).notes
+        do {
+            self.readingNotes = try ReadingNotesFileStore.load(
+                from: layout.chatConversationReadingNotesFileURL
+            ).notes
+        } catch {
+            self.readingNotes = []
+            self.lastError = "读取阅读笔记失败：\(error.localizedDescription)"
+        }
     }
 
     public var visibleConversations: [ChatConversationArchiveSummary] {
@@ -697,6 +702,17 @@ public final class ChatConversationHubStore: ObservableObject {
         }
     }
 
+    /// Reading notes are immutable in scope: a note created for one formal
+    /// version must never automatically appear on another version of the asset.
+    public func notes(forAssetID assetID: String, versionID: String) -> [ReadingNote] {
+        allNotes.filter { note in
+            if case .formalAssetSpan(let span) = note.anchor {
+                return span.assetId == assetID && span.versionId == versionID
+            }
+            return false
+        }
+    }
+
     public func notes(forMessageID messageID: String) -> [ReadingNote] {
         allNotes.filter { note in
             if case .sourceMessageSpan(let span) = note.anchor {
@@ -719,8 +735,10 @@ public final class ChatConversationHubStore: ObservableObject {
             quoteSnapshot: quoteSnapshot,
             anchor: anchor
         )
-        readingNotes.append(note)
-        persistReadingNotes()
+        var proposed = readingNotes
+        proposed.append(note)
+        try persistReadingNotes(proposed)
+        readingNotes = proposed
         return note
     }
 
@@ -739,8 +757,10 @@ public final class ChatConversationHubStore: ObservableObject {
             quoteSnapshot: quoteSnapshot,
             anchor: anchor
         )
-        readingNotes.append(note)
-        persistReadingNotes()
+        var proposed = readingNotes
+        proposed.append(note)
+        try persistReadingNotes(proposed)
+        readingNotes = proposed
         return note
     }
 
@@ -759,15 +779,18 @@ public final class ChatConversationHubStore: ObservableObject {
             note.isHighlight = isHighlight
         }
         note.updatedAt = ISO8601Codec.string(from: Date())
-        readingNotes[index] = note
-        persistReadingNotes()
+        var proposed = readingNotes
+        proposed[index] = note
+        try persistReadingNotes(proposed)
+        readingNotes = proposed
     }
 
-    public func deleteReadingNote(id: String) {
+    public func deleteReadingNote(id: String) throws {
         let before = readingNotes.count
-        readingNotes.removeAll { $0.id == id }
-        if readingNotes.count != before {
-            persistReadingNotes()
+        let proposed = readingNotes.filter { $0.id != id }
+        if proposed.count != before {
+            try persistReadingNotes(proposed)
+            readingNotes = proposed
         }
     }
 
@@ -857,16 +880,17 @@ public final class ChatConversationHubStore: ObservableObject {
         }
     }
 
-    private func persistReadingNotes() {
+    private func persistReadingNotes(_ notes: [ReadingNote]) throws {
         do {
             try layout.ensureDirectories()
             let document = ReadingNotesDocument(
                 schemaVersion: ReadingNotesDocument.currentSchemaVersion,
-                notes: readingNotes
+                notes: notes
             )
             try ReadingNotesFileStore.save(document, to: layout.chatConversationReadingNotesFileURL)
         } catch {
             lastError = "保存阅读笔记失败：\(error.localizedDescription)"
+            throw error
         }
     }
 
