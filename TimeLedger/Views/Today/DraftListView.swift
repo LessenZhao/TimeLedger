@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct DraftListView: View {
     @Environment(\.modelContext) private var modelContext
@@ -213,28 +214,23 @@ private struct DraftSwipeRow<Content: View>: View {
                 .offset(x: offset)
         }
         .clipShape(RoundedRectangle(cornerRadius: TLTheme.cardRadius))
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 10)
-                .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else {
-                        return
-                    }
+        .gesture(
+            HorizontalPanGesture(
+                onChanged: { translation in
                     offset = min(
                         0,
-                        max(-actionWidth, settledOffset + value.translation.width)
+                        max(-actionWidth, settledOffset + translation)
                     )
-                }
-                .onEnded { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else {
-                        return
-                    }
-                    let projectedOffset = settledOffset + value.predictedEndTranslation.width
+                },
+                onEnded: { translation, velocity in
+                    let projectedOffset = settledOffset + translation + velocity * 0.2
                     let target = projectedOffset < -actionWidth / 2 ? -actionWidth : 0
                     withAnimation(.easeOut(duration: 0.18)) {
                         offset = target
                         settledOffset = target
                     }
                 }
+            )
         )
     }
 
@@ -242,6 +238,63 @@ private struct DraftSwipeRow<Content: View>: View {
         withAnimation(.easeOut(duration: 0.18)) {
             offset = 0
             settledOffset = 0
+        }
+    }
+}
+
+private struct HorizontalPanGesture: UIGestureRecognizerRepresentable {
+    var onChanged: (CGFloat) -> Void
+    var onEnded: (CGFloat, CGFloat) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
+        Coordinator(onChanged: onChanged, onEnded: onEnded)
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let recognizer = UIPanGestureRecognizer()
+        recognizer.delegate = context.coordinator
+        recognizer.cancelsTouchesInView = false
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        context.coordinator.onChanged = onChanged
+        context.coordinator.onEnded = onEnded
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: UIPanGestureRecognizer, context: Context) {
+        let translation = recognizer.translation(in: recognizer.view).x
+        switch recognizer.state {
+        case .changed:
+            context.coordinator.onChanged(translation)
+        case .ended:
+            let velocity = recognizer.velocity(in: recognizer.view).x
+            context.coordinator.onEnded(translation, velocity)
+        case .cancelled, .failed:
+            context.coordinator.onEnded(translation, 0)
+        default:
+            break
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onChanged: (CGFloat) -> Void
+        var onEnded: (CGFloat, CGFloat) -> Void
+
+        init(
+            onChanged: @escaping (CGFloat) -> Void,
+            onEnded: @escaping (CGFloat, CGFloat) -> Void
+        ) {
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let recognizer = gestureRecognizer as? UIPanGestureRecognizer else {
+                return false
+            }
+            let velocity = recognizer.velocity(in: recognizer.view)
+            return abs(velocity.x) > abs(velocity.y)
         }
     }
 }

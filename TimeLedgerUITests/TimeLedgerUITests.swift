@@ -145,6 +145,25 @@ final class TimeLedgerUITests: XCTestCase {
     }
 
     @MainActor
+    func testDraftListScrollsVerticallyAcrossManyRows() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-draft-scroll-fixture"]
+        app.launch()
+
+        app.segmentedControls.buttons["草稿"].tap()
+        let scrollView = app.scrollViews["draft.scroll"]
+        XCTAssertTrue(scrollView.waitForExistence(timeout: 3))
+        let firstDraft = app.staticTexts["Fixture 滚动 00"]
+        XCTAssertTrue(firstDraft.isHittable)
+        let firstDraftTop = firstDraft.frame.minY
+
+        scrollView.swipeUp()
+
+        XCTAssertLessThan(firstDraft.frame.minY, firstDraftTop - 50)
+        XCTAssertTrue(app.staticTexts["Fixture 滚动 10"].isHittable)
+    }
+
+    @MainActor
     func testTimelineFourFiltersShowCorrectKinds() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-media-fixture"]

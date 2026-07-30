@@ -6,6 +6,10 @@ struct UITestFixtureService {
 
     func seedIfRequested(now: Date = Date()) throws {
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-draft-scroll-fixture") {
+            try seedDraftScrollFixture(now: now)
+            return
+        }
         guard arguments.contains("-ui-media-fixture") else { return }
         guard try modelContext.fetch(FetchDescriptor<MediaMoment>()).isEmpty else { return }
 
@@ -72,6 +76,27 @@ struct UITestFixtureService {
         modelContext.insert(confirmedThought)
         modelContext.insert(photo)
         modelContext.insert(video)
+        try modelContext.save()
+    }
+
+    private func seedDraftScrollFixture(now: Date) throws {
+        let project = Project(name: "Fixture 滚动项目", categoryName: "测试")
+        modelContext.insert(project)
+
+        for index in 0..<18 {
+            let startAt = now.addingTimeInterval(TimeInterval(-18 + index) * 1_800)
+            modelContext.insert(
+                TimeEntry(
+                    projectId: project.id,
+                    projectNameSnapshot: String(format: "Fixture 滚动 %02d", index),
+                    categoryNameSnapshot: project.categoryName,
+                    startAt: startAt,
+                    endAt: startAt.addingTimeInterval(1_500),
+                    status: .draft
+                )
+            )
+        }
+
         try modelContext.save()
     }
 }
