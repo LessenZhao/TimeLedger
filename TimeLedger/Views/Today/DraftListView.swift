@@ -10,6 +10,7 @@ struct DraftListView: View {
         sort: \TimeEntry.startAt
     ) private var drafts: [TimeEntry]
     @Query private var allThoughts: [ThoughtNote]
+    @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var errorMessage: String?
     @State private var deleteTarget: TimeEntry?
@@ -32,7 +33,11 @@ struct DraftListView: View {
                                     TimeEntryEditView(entry: entry)
                                         .toolbar(.visible, for: .navigationBar)
                                 } label: {
-                                    draftRow(entry, thoughtCount: thoughtCount(for: entry))
+                                    draftRow(
+                                        entry,
+                                        thoughtCount: thoughtCount(for: entry),
+                                        actionCount: actionCount(for: entry)
+                                    )
                                 }
                                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                                 .listRowSeparator(.hidden)
@@ -122,7 +127,7 @@ struct DraftListView: View {
         return formatter.string(from: date)
     }
 
-    private func draftRow(_ entry: TimeEntry, thoughtCount: Int) -> some View {
+    private func draftRow(_ entry: TimeEntry, thoughtCount: Int, actionCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 Text(entry.projectNameSnapshot)
@@ -140,7 +145,7 @@ struct DraftListView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if SystemProject.isUnknownEntry(entry) || thoughtCount > 0 {
+            if SystemProject.isUnknownEntry(entry) || thoughtCount > 0 || actionCount > 0 {
                 HStack(spacing: 6) {
                     if SystemProject.isUnknownEntry(entry) {
                         Text("待选项目")
@@ -154,6 +159,11 @@ struct DraftListView: View {
                         Text("思考 \(thoughtCount)")
                             .font(TLTheme.metaFont)
                             .foregroundStyle(.orange)
+                    }
+                    if actionCount > 0 {
+                        Text("事项 \(actionCount)")
+                            .font(TLTheme.metaFont)
+                            .foregroundStyle(.blue)
                     }
                 }
             }
@@ -180,6 +190,10 @@ struct DraftListView: View {
 
     private func thoughtCount(for entry: TimeEntry) -> Int {
         allThoughts.filter { $0.linkedEntryId == entry.id }.count
+    }
+
+    private func actionCount(for entry: TimeEntry) -> Int {
+        allActionCompletions.filter { $0.linkedEntryId == entry.id }.count
     }
 
     private func deleteDraft(_ entry: TimeEntry) {

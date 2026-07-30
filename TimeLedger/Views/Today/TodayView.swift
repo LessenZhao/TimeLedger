@@ -6,6 +6,8 @@ import UIKit
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
+    @Query(sort: \ActionItem.sortOrder) private var actionItems: [ActionItem]
+    @Query private var actionCompletions: [ActionCompletion]
 
     @State private var now = Date()
     @State private var errorMessage: String?
@@ -164,6 +166,9 @@ struct TodayView: View {
 
             ScrollView {
                 LazyVStack(spacing: TLTheme.listSpacing) {
+                    if !activeActionItems.isEmpty {
+                        todayActions
+                    }
                     if activeProjects.isEmpty {
                         emptyProjects
                     } else {
@@ -180,6 +185,80 @@ struct TodayView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             }
+        }
+    }
+
+    private var activeActionItems: [ActionItem] {
+        actionItems.filter { !$0.isArchived }
+    }
+
+    private var todayActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("今日事项")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 116), spacing: 8)],
+                spacing: 8
+            ) {
+                ForEach(activeActionItems) { item in
+                    actionButton(item)
+                }
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    private func actionButton(_ item: ActionItem) -> some View {
+        let completed = isCompletedToday(item)
+
+        return Button {
+            completeAction(item)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: completed ? "checkmark.circle.fill" : "circle")
+                Text(item.title)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(completed ? Color.white : Color.primary)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: TLTheme.cardRadius)
+                    .fill(completed ? Color.accentColor : TLTheme.cardBackground)
+            )
+            .overlay {
+                if !completed {
+                    RoundedRectangle(cornerRadius: TLTheme.cardRadius)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(completed)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(completed ? "已完成" : "未完成")
+        .accessibilityIdentifier("today.action.\(item.id.uuidString)")
+    }
+
+    private func isCompletedToday(_ item: ActionItem) -> Bool {
+        let today = Calendar.current.startOfDay(for: now)
+        return actionCompletions.contains {
+            $0.actionItemId == item.id && $0.dayStart == today
+        }
+    }
+
+    private func completeAction(_ item: ActionItem) {
+        do {
+            let completedAt = Date()
+            _ = try ActionCompletionService(modelContext: modelContext).complete(item, now: completedAt)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            now = completedAt
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -210,6 +289,7 @@ struct TodayView: View {
         do {
             _ = try TimeCursorService(modelContext: modelContext).getOrCreateCursor(now: now)
             _ = try getOrCreateSettings()
+            _ = try ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
             refreshUndoState()
         } catch {
             errorMessage = error.localizedDescription
@@ -218,15 +298,18 @@ struct TodayView: View {
 
     private func quickRecord(_ project: Project) {
         do {
+            let actionNow = Date()
+            now = actionNow
             let settings = try getOrCreateSettings()
-            let currentDuration = try TimeCursorService(modelContext: modelContext).currentUnclassifiedDuration(now: now)
+            let currentDuration = try TimeCursorService(modelContext: modelContext)
+                .currentUnclassifiedDuration(now: actionNow)
 
             guard currentDuration <= TimeInterval(settings.longUnclassifiedThresholdMinutes * 60) else {
                 openAdjustment(for: project)
                 return
             }
 
-            _ = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: now)
+            _ = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: actionNow)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             now = Date()
             refreshUndoState()

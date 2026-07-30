@@ -34,6 +34,49 @@ final class TimeLedgerUITests: XCTestCase {
     }
 
     @MainActor
+    func testDailyActionCompletesAndAppearsOnDraft() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing"]
+        app.launch()
+
+        app.tabBars.buttons["事项"].tap()
+        app.buttons["action.add"].tap()
+        let titleField = app.textFields["action.title"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 3))
+        titleField.tap()
+        titleField.typeText("吃药")
+        app.buttons["action.save"].tap()
+
+        app.tabBars.buttons["今天"].tap()
+        let actionButton = app.buttons["吃药"]
+        XCTAssertTrue(actionButton.waitForExistence(timeout: 3))
+        XCTAssertEqual(actionButton.value as? String, "未完成")
+        actionButton.tap()
+        XCTAssertEqual(actionButton.value as? String, "已完成")
+        XCTAssertFalse(actionButton.isEnabled)
+
+        let addProject = app.buttons["添加项目"]
+        XCTAssertTrue(addProject.waitForExistence(timeout: 3))
+        addProject.tap()
+        let projectName = app.textFields["项目名称"]
+        XCTAssertTrue(projectName.waitForExistence(timeout: 3))
+        projectName.tap()
+        projectName.typeText("UI测试项目")
+        app.buttons["保存"].tap()
+
+        let quickRecord = app.buttons["快速记录 UI测试项目"]
+        XCTAssertTrue(quickRecord.waitForExistence(timeout: 3))
+        quickRecord.tap()
+
+        app.segmentedControls.buttons["草稿"].tap()
+        let draftProject = app.staticTexts["UI测试项目"]
+        XCTAssertTrue(draftProject.waitForExistence(timeout: 3))
+        draftProject.tap()
+        XCTAssertTrue(app.staticTexts["完成事项"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["吃药"].exists)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

@@ -80,6 +80,7 @@ struct TimeCursorService {
         cursor.updatedAt = now
         try modelContext.save()
         _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
+        _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
 
@@ -121,6 +122,7 @@ struct TimeCursorService {
         cursor.updatedAt = now
         try modelContext.save()
         _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
+        _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
 
@@ -156,6 +158,7 @@ struct TimeCursorService {
         cursor.updatedAt = Date()
         modelContext.delete(last)
         try modelContext.save()
+        reconcileActionLinks()
     }
 
     func updateEntry(
@@ -237,6 +240,7 @@ struct TimeCursorService {
         }
 
         try modelContext.save()
+        reconcileActionLinks()
     }
 
     func cancelConfirmation(_ entry: TimeEntry) throws {
@@ -259,6 +263,7 @@ struct TimeCursorService {
             cursor.updatedAt = Date()
             modelContext.delete(entry)
             try modelContext.save()
+            reconcileActionLinks()
             return
         }
 
@@ -270,6 +275,7 @@ struct TimeCursorService {
 
         modelContext.delete(entry)
         try modelContext.save()
+        reconcileActionLinks()
     }
 
     func nextEntry(after entry: TimeEntry) throws -> TimeEntry? {
@@ -287,5 +293,9 @@ struct TimeCursorService {
         var descriptor = FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         descriptor.fetchLimit = 1
         return try modelContext.fetch(descriptor).first
+    }
+
+    private func reconcileActionLinks() {
+        _ = try? ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
     }
 }

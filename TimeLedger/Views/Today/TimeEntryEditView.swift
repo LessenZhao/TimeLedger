@@ -7,6 +7,7 @@ struct TimeEntryEditView: View {
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
     @Query private var allThoughts: [ThoughtNote]
     @Query private var allEntries: [TimeEntry]
+    @Query private var allActionCompletions: [ActionCompletion]
 
     let entry: TimeEntry
 
@@ -151,6 +152,26 @@ struct TimeEntryEditView: View {
                 Text("思考")
             }
 
+            Section("完成事项") {
+                if linkedActionCompletions.isEmpty {
+                    Text("暂无关联事项")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(linkedActionCompletions) { completion in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(completion.actionTitleSnapshot)
+                                .foregroundStyle(.primary)
+                            Text(DateFormatterFactory.timeOnly.string(from: completion.completedAt))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .accessibilityIdentifier("entry.actions")
+
             if isDraft {
                 Section {
                     Button("删除草稿", role: .destructive) {
@@ -278,6 +299,12 @@ struct TimeEntryEditView: View {
         allThoughts
             .filter { $0.linkedEntryId == entry.id }
             .sorted { $0.capturedAt < $1.capturedAt }
+    }
+
+    private var linkedActionCompletions: [ActionCompletion] {
+        allActionCompletions
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.completedAt < $1.completedAt }
     }
 
     private func thoughtRow(_ thought: ThoughtNote) -> some View {

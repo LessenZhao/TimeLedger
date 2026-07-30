@@ -12,7 +12,8 @@ import SwiftData
 struct TimeLedgerApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema(TimeLedgerModels.all)
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
@@ -36,5 +37,7 @@ enum TimeLedgerModels {
         TimeEntry.self,
         AppSettings.self,
         ThoughtNote.self,
+        ActionItem.self,
+        ActionCompletion.self,
     ]
 }

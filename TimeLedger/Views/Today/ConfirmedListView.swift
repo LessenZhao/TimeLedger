@@ -5,6 +5,7 @@ struct ConfirmedListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allEntries: [TimeEntry]
     @Query private var allThoughts: [ThoughtNote]
+    @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var selectedDate = Date()
 
@@ -69,7 +70,11 @@ struct ConfirmedListView: View {
                                 TimeEntryEditView(entry: entry)
                                     .toolbar(.visible, for: .navigationBar)
                             } label: {
-                                confirmedRow(entry, thoughtCount: thoughtCount(for: entry))
+                                confirmedRow(
+                                    entry,
+                                    thoughtCount: thoughtCount(for: entry),
+                                    actionCount: actionCount(for: entry)
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -108,7 +113,7 @@ struct ConfirmedListView: View {
         }
     }
 
-    private func confirmedRow(_ entry: TimeEntry, thoughtCount: Int) -> some View {
+    private func confirmedRow(_ entry: TimeEntry, thoughtCount: Int, actionCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 Text(entry.projectNameSnapshot)
@@ -125,10 +130,19 @@ struct ConfirmedListView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if thoughtCount > 0 {
-                Text("思考 \(thoughtCount)")
-                    .font(TLTheme.metaFont)
-                    .foregroundStyle(.orange)
+            if thoughtCount > 0 || actionCount > 0 {
+                HStack(spacing: 6) {
+                    if thoughtCount > 0 {
+                        Text("思考 \(thoughtCount)")
+                            .font(TLTheme.metaFont)
+                            .foregroundStyle(.orange)
+                    }
+                    if actionCount > 0 {
+                        Text("事项 \(actionCount)")
+                            .font(TLTheme.metaFont)
+                            .foregroundStyle(.blue)
+                    }
+                }
             }
         }
         .padding(.horizontal, 10)
@@ -153,6 +167,10 @@ struct ConfirmedListView: View {
 
     private func thoughtCount(for entry: TimeEntry) -> Int {
         allThoughts.filter { $0.linkedEntryId == entry.id }.count
+    }
+
+    private func actionCount(for entry: TimeEntry) -> Int {
+        allActionCompletions.filter { $0.linkedEntryId == entry.id }.count
     }
 
     private func shiftDay(_ value: Int) {

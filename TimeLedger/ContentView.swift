@@ -19,23 +19,29 @@ struct ContentView: View {
                 }
                 .tag(0)
 
+            ActionListView()
+                .tabItem {
+                    Label("事项", systemImage: "checklist")
+                }
+                .tag(1)
+
             ThoughtStreamView()
                 .tabItem {
                     Label("思考", systemImage: "lightbulb")
                 }
-                .tag(1)
+                .tag(2)
 
             ReviewView()
                 .tabItem {
                     Label("复盘", systemImage: "chart.bar.xaxis")
                 }
-                .tag(2)
+                .tag(3)
 
             SettingsView()
                 .tabItem {
                     Label("设置", systemImage: "gearshape")
                 }
-                .tag(3)
+                .tag(4)
         }
     }
 }
