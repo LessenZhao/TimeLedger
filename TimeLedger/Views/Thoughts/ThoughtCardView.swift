@@ -11,6 +11,7 @@ struct ThoughtCardView: View {
     @State private var showingManualLink = false
     @State private var showingDeleteAlert = false
     @State private var errorMessage: String?
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -24,7 +25,14 @@ struct ThoughtCardView: View {
 
             Text(thought.body)
                 .font(.body)
-                .lineLimit(nil)
+                .lineLimit(isExpanded ? nil : 3)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isExpanded.toggle()
+                    }
+                }
+                .accessibilityHint(isExpanded ? "轻点收起" : "轻点展开全文")
 
             if let linkedEntry {
                 linkedEntryInfo(linkedEntry)

@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedTab = 0
 
     var body: some View {
@@ -27,7 +28,7 @@ struct ContentView: View {
 
             ThoughtStreamView()
                 .tabItem {
-                    Label("思考", systemImage: "lightbulb")
+                    Label("时间线", systemImage: "clock.arrow.circlepath")
                 }
                 .tag(2)
 
@@ -42,6 +43,9 @@ struct ContentView: View {
                     Label("设置", systemImage: "gearshape")
                 }
                 .tag(4)
+        }
+        .task {
+            try? UITestFixtureService(modelContext: modelContext).seedIfRequested()
         }
     }
 }

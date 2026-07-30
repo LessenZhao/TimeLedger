@@ -4,30 +4,40 @@ import SwiftUI
 struct ThoughtStreamView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ThoughtNote.capturedAt, order: .reverse) private var thoughts: [ThoughtNote]
+    @Query(sort: \MediaMoment.capturedAt, order: .reverse) private var mediaMoments: [MediaMoment]
     @Query private var entries: [TimeEntry]
 
     @State private var showingThoughtCapture = false
+    @State private var filter = TimelineFilter.all
 
     var body: some View {
         NavigationStack {
-            Group {
-                if thoughts.isEmpty {
+            VStack(spacing: 0) {
+                Picker("筛选", selection: $filter) {
+                    ForEach(TimelineFilter.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .accessibilityIdentifier("timeline.filter")
+
+                if filteredItems.isEmpty {
                     ContentUnavailableView(
-                        "还没有思考",
-                        systemImage: "lightbulb",
-                        description: Text("点右上角灯泡记下想法，会以卡片形式留在这里。")
+                        filter.emptyTitle,
+                        systemImage: filter.emptyIcon,
+                        description: Text(filter.emptyDescription)
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
                             ForEach(daySections) { section in
                                 Section {
                                     LazyVStack(spacing: 10) {
-                                        ForEach(section.thoughts) { thought in
-                                            ThoughtCardView(
-                                                thought: thought,
-                                                linkedEntry: linkedEntry(for: thought)
-                                            )
+                                        ForEach(section.items) { item in
+                                            timelineCard(item)
                                         }
                                     }
                                     .padding(.horizontal, 16)
@@ -41,7 +51,7 @@ struct ThoughtStreamView: View {
                 }
             }
             .background(TLTheme.pageBackground.ignoresSafeArea())
-            .navigationTitle("思考")
+            .navigationTitle("时间线")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -68,26 +78,58 @@ struct ThoughtStreamView: View {
         return entryById[id]
     }
 
-    private var daySections: [ThoughtDaySection] {
+    private func linkedEntry(for moment: MediaMoment) -> TimeEntry? {
+        guard let id = moment.linkedEntryId else { return nil }
+        return entryById[id]
+    }
+
+    @ViewBuilder
+    private func timelineCard(_ item: TimelineItem) -> some View {
+        switch item {
+        case .thought(let thought):
+            ThoughtCardView(
+                thought: thought,
+                linkedEntry: linkedEntry(for: thought)
+            )
+        case .media(let moment):
+            MediaMomentCard(
+                moment: moment,
+                linkedEntry: linkedEntry(for: moment)
+            )
+        }
+    }
+
+    private var filteredItems: [TimelineItem] {
+        let thoughtItems = thoughts.map(TimelineItem.thought)
+        let mediaItems = mediaMoments
+            .filter { filter.includes($0.kind) }
+            .map(TimelineItem.media)
+        let items = filter == .thoughts ? thoughtItems
+            : filter == .photos || filter == .videos ? mediaItems
+            : thoughtItems + mediaItems
+        return items.sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    private var daySections: [TimelineDaySection] {
         let calendar = Calendar.current
-        var buckets: [(dayStart: Date, thoughts: [ThoughtNote])] = []
+        var buckets: [(dayStart: Date, items: [TimelineItem])] = []
         var indexByDayStart: [Date: Int] = [:]
 
-        for thought in thoughts {
-            let dayStart = calendar.startOfDay(for: thought.capturedAt)
+        for item in filteredItems {
+            let dayStart = calendar.startOfDay(for: item.capturedAt)
             if let index = indexByDayStart[dayStart] {
-                buckets[index].thoughts.append(thought)
+                buckets[index].items.append(item)
             } else {
                 indexByDayStart[dayStart] = buckets.count
-                buckets.append((dayStart, [thought]))
+                buckets.append((dayStart, [item]))
             }
         }
 
         return buckets.map { bucket in
-            ThoughtDaySection(
+            TimelineDaySection(
                 id: bucket.dayStart,
                 title: dayTitle(for: bucket.dayStart, calendar: calendar),
-                thoughts: bucket.thoughts
+                items: bucket.items
             )
         }
     }
@@ -113,10 +155,95 @@ struct ThoughtStreamView: View {
     }
 }
 
-private struct ThoughtDaySection: Identifiable {
+private enum TimelineFilter: String, CaseIterable, Identifiable {
+    case all
+    case thoughts
+    case photos
+    case videos
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "全部"
+        case .thoughts: "思考"
+        case .photos: "照片"
+        case .videos: "视频"
+        }
+    }
+
+    var emptyTitle: String {
+        switch self {
+        case .all: "还没有时间点"
+        case .thoughts: "还没有思考"
+        case .photos: "还没有照片"
+        case .videos: "还没有视频"
+        }
+    }
+
+    var emptyIcon: String {
+        switch self {
+        case .all: "clock"
+        case .thoughts: "lightbulb"
+        case .photos: "photo"
+        case .videos: "video"
+        }
+    }
+
+    var emptyDescription: String {
+        switch self {
+        case .all:
+            "快速想法和拍摄媒体会按时间混排在这里。"
+        case .thoughts:
+            "点右上角灯泡记下想法。"
+        case .photos:
+            "在今天页按住灯泡 0.2 秒进入系统相机拍照。"
+        case .videos:
+            "在今天页按住灯泡 0.2 秒进入系统相机录像。"
+        }
+    }
+
+    func includes(_ kind: MediaKind) -> Bool {
+        switch self {
+        case .all:
+            true
+        case .thoughts:
+            false
+        case .photos:
+            kind == .photo
+        case .videos:
+            kind == .video
+        }
+    }
+}
+
+private enum TimelineItem: Identifiable {
+    case thought(ThoughtNote)
+    case media(MediaMoment)
+
+    var id: String {
+        switch self {
+        case .thought(let thought):
+            "thought-\(thought.id.uuidString)"
+        case .media(let moment):
+            "media-\(moment.id.uuidString)"
+        }
+    }
+
+    var capturedAt: Date {
+        switch self {
+        case .thought(let thought):
+            thought.capturedAt
+        case .media(let moment):
+            moment.capturedAt
+        }
+    }
+}
+
+private struct TimelineDaySection: Identifiable {
     let id: Date
     let title: String
-    let thoughts: [ThoughtNote]
+    let items: [TimelineItem]
 }
 
 #Preview {

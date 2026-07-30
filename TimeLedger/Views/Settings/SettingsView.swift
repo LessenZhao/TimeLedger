@@ -36,6 +36,30 @@ struct SettingsView: View {
                     Text("超过阈值再打标时，会弹出调整时间。")
                 }
 
+                Section {
+                    Picker("媒体原件存放位置", selection: Binding(
+                        get: {
+                            MediaStoragePreference(
+                                rawValue: settings?.mediaStoragePreference
+                                    ?? MediaStoragePreference.photosLibrary.rawValue
+                            ) ?? .photosLibrary
+                        },
+                        set: { newValue in
+                            settings?.mediaStoragePreference = newValue.rawValue
+                            saveSettings()
+                        }
+                    )) {
+                        ForEach(MediaStoragePreference.allCases) { preference in
+                            Text(preference.title).tag(preference)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.mediaStorage")
+                } header: {
+                    Text("媒体")
+                } footer: {
+                    Text("修改后从下一次拍摄生效。TimeLedger 始终保存时间点和小缩略图。")
+                }
+
                 Section("Mac 镜像") {
                     NavigationLink {
                         MirrorConnectView()

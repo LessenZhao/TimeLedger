@@ -1,10 +1,10 @@
-# Action Checklist 执行进度
-
-- 目标：把每日瞬时事项保存为独立完成事实，并按完成时刻关联 TimeEntry。
-- 顺序：模型与服务 → TimeCursor 接缝 → 事项 Tab / Today / 时间项目展示 → 红绿与完整验收。
-- 基线：`codex/ios/action-checklist`，HEAD `ae74d70`，66 个 `@Test`、3 个 UI test 方法。
-- 2026-07-30：完整 iPhone 17 测试为 `TEST SUCCEEDED`。
-- 2026-07-30：数据/迁移定向测试通过；真实 UI 闭环通过，且修复快速记录使用旧时钟导致的边界未关联。
-- 2026-07-30：最终 xcresult 82 个测试、失败 0、跳过 0；通用 iOS 构建通过，反向验证完成红→绿。
-- 最大风险：SwiftData 添加模型后的旧 store 兼容，以及 TimeEntry 改删后的链接重算。
-- 范围：仅 iPhone；不改 Hub、EvolutionCore、SyncEnvelope、导出与复盘。
+# 相机时间点执行进度
+- 目标：让灯泡 0.2 秒直达系统相机，照片/视频可靠保存并关联当时项目。
+- 顺序：媒体模型/保存事务 → 关联接缝 → 相机入口 → 双层项目卡/统一时间线 → 红绿验收。
+- 基线：`codex/ios/action-checklist`，HEAD `939a7ab`，78 个 `@Test`、4 个 UI test 方法。
+- 2026-07-30：任务 0 通过；78/78 单测失败 0、跳过 0，generic iOS build 成功。
+- 2026-07-30：任务 1–3 已实现；媒体定向 14/14、关键 UI 3/3 通过，源码增量构建成功。
+- 2026-07-30：任务 4 自动验收完成；92/92、失败 0、跳过 0，UI 全套通过，build 成功，两组红→绿成立。
+- 最大风险：SwiftData 增量模型兼容、双存 partial 仍保住临时原件、0.2 秒手势互斥。
+- 范围：仅 iPhone 白名单；不改 EvolutionCore、Hub、Mirror/SyncEnvelope、现有导出。
+- 真机：NOT RUN；三种存放各拍一次（含照片/视频）仍须在真实 iPhone 完成。

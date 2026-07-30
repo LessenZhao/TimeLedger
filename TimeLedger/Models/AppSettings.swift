@@ -7,16 +7,19 @@ final class AppSettings {
     var longUnclassifiedThresholdMinutes: Int
     var exportOnlyConfirmed: Bool
     var includeDraftInTodaySummary: Bool
+    var mediaStoragePreference: String = MediaStoragePreference.photosLibrary.rawValue
 
     init(
         id: UUID = UUID(),
         longUnclassifiedThresholdMinutes: Int = 90,
         exportOnlyConfirmed: Bool = true,
-        includeDraftInTodaySummary: Bool = true
+        includeDraftInTodaySummary: Bool = true,
+        mediaStoragePreference: MediaStoragePreference = .photosLibrary
     ) {
         self.id = id
         self.longUnclassifiedThresholdMinutes = longUnclassifiedThresholdMinutes
         self.exportOnlyConfirmed = exportOnlyConfirmed
         self.includeDraftInTodaySummary = includeDraftInTodaySummary
+        self.mediaStoragePreference = mediaStoragePreference.rawValue
     }
 }

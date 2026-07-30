@@ -80,6 +80,7 @@ struct TimeCursorService {
         cursor.updatedAt = now
         try modelContext.save()
         _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
+        _ = try? MediaLinkingService(modelContext: modelContext).linkMediaForEntry(entry)
         _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
@@ -122,6 +123,7 @@ struct TimeCursorService {
         cursor.updatedAt = now
         try modelContext.save()
         _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
+        _ = try? MediaLinkingService(modelContext: modelContext).linkMediaForEntry(entry)
         _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
@@ -158,6 +160,7 @@ struct TimeCursorService {
         cursor.updatedAt = Date()
         modelContext.delete(last)
         try modelContext.save()
+        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 
@@ -240,6 +243,7 @@ struct TimeCursorService {
         }
 
         try modelContext.save()
+        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 
@@ -263,6 +267,7 @@ struct TimeCursorService {
             cursor.updatedAt = Date()
             modelContext.delete(entry)
             try modelContext.save()
+            _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
             reconcileActionLinks()
             return
         }
@@ -275,6 +280,7 @@ struct TimeCursorService {
 
         modelContext.delete(entry)
         try modelContext.save()
+        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 

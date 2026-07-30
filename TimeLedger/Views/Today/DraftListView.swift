@@ -10,10 +10,13 @@ struct DraftListView: View {
         sort: \TimeEntry.startAt
     ) private var drafts: [TimeEntry]
     @Query private var allThoughts: [ThoughtNote]
+    @Query private var allMediaMoments: [MediaMoment]
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var errorMessage: String?
     @State private var deleteTarget: TimeEntry?
+    @State private var editingEntry: TimeEntry?
+    @State private var showingEditor = false
 
     var body: some View {
         Group {
@@ -25,42 +28,62 @@ struct DraftListView: View {
                 )
                 .padding(.top, 40)
             } else {
-                List {
-                    ForEach(daySections, id: \.dayStart) { section in
-                        Section {
-                            ForEach(section.entries) { entry in
-                                NavigationLink {
-                                    TimeEntryEditView(entry: entry)
-                                        .toolbar(.visible, for: .navigationBar)
-                                } label: {
-                                    draftRow(
-                                        entry,
-                                        thoughtCount: thoughtCount(for: entry),
-                                        actionCount: actionCount(for: entry)
-                                    )
-                                }
-                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        deleteTarget = entry
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        ForEach(daySections, id: \.dayStart) { section in
+                            Section {
+                                LazyVStack(spacing: TLTheme.listSpacing) {
+                                    ForEach(section.entries) { entry in
+                                        DraftSwipeRow {
+                                            TimeEntryExpandableCard(
+                                                entry: entry,
+                                                thoughts: thoughts(for: entry),
+                                                mediaMoments: mediaMoments(for: entry),
+                                                actionCount: actionCount(for: entry),
+                                                onEdit: {
+                                                    editingEntry = entry
+                                                    showingEditor = true
+                                                }
+                                            )
+                                        } onDelete: {
+                                            deleteTarget = entry
+                                        }
+                                        .contextMenu {
+                                            Button(role: .destructive) {
+                                                deleteTarget = entry
+                                            } label: {
+                                                Label("删除", systemImage: "trash")
+                                            }
+                                        }
                                     }
                                 }
+                                .padding(.bottom, 8)
+                            } header: {
+                                Text(sectionTitle(for: section.dayStart))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.leading, 44)
+                                    .padding(.vertical, 8)
+                                    .background(TLTheme.pageBackground.opacity(0.95))
                             }
-                        } header: {
-                            Text(sectionTitle(for: section.dayStart))
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .textCase(nil)
                         }
                     }
+                    .padding(.bottom, 16)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .accessibilityIdentifier("draft.scroll")
             }
+        }
+        .background {
+            NavigationLink(isActive: $showingEditor) {
+                if let editingEntry {
+                    TimeEntryEditView(entry: editingEntry)
+                        .toolbar(.visible, for: .navigationBar)
+                }
+            } label: {
+                EmptyView()
+            }
+            .hidden()
         }
         .alert("删除这条草稿？", isPresented: Binding(
             get: { deleteTarget != nil },
@@ -127,69 +150,16 @@ struct DraftListView: View {
         return formatter.string(from: date)
     }
 
-    private func draftRow(_ entry: TimeEntry, thoughtCount: Int, actionCount: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(entry.projectNameSnapshot)
-                    .font(TLTheme.projectNameFont)
-                    .foregroundStyle(SystemProject.isUnknownEntry(entry) ? Color.orange : Color.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(DurationFormatter.compact(entry.durationSeconds))
-                    .font(.system(size: 12, weight: .semibold))
-                    .monospacedDigit()
-            }
-
-            Text(timeAndNote(entry))
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if SystemProject.isUnknownEntry(entry) || thoughtCount > 0 || actionCount > 0 {
-                HStack(spacing: 6) {
-                    if SystemProject.isUnknownEntry(entry) {
-                        Text("待选项目")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.orange.opacity(0.12)))
-                    }
-                    if thoughtCount > 0 {
-                        Text("思考 \(thoughtCount)")
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.orange)
-                    }
-                    if actionCount > 0 {
-                        Text("事项 \(actionCount)")
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.blue)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, TLTheme.rowVerticalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: TLTheme.cardRadius)
-                .fill(TLTheme.cardBackground)
-        )
+    private func thoughts(for entry: TimeEntry) -> [ThoughtNote] {
+        allThoughts
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.capturedAt < $1.capturedAt }
     }
 
-    private func timeAndNote(_ entry: TimeEntry) -> String {
-        let start = DateFormatterFactory.timeOnly.string(from: entry.startAt)
-        let end = DateFormatterFactory.timeOnly.string(from: entry.endAt)
-        let range = "\(start) – \(end)"
-        let trimmed = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return range
-        }
-        return "\(range) · \(trimmed)"
-    }
-
-    private func thoughtCount(for entry: TimeEntry) -> Int {
-        allThoughts.filter { $0.linkedEntryId == entry.id }.count
+    private func mediaMoments(for entry: TimeEntry) -> [MediaMoment] {
+        allMediaMoments
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.capturedAt < $1.capturedAt }
     }
 
     private func actionCount(for entry: TimeEntry) -> Int {
@@ -203,6 +173,75 @@ struct DraftListView: View {
         } catch {
             errorMessage = error.localizedDescription
             deleteTarget = nil
+        }
+    }
+}
+
+private struct DraftSwipeRow<Content: View>: View {
+    private let actionWidth: CGFloat = 76
+    private let content: Content
+    private let onDelete: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var settledOffset: CGFloat = 0
+
+    init(
+        @ViewBuilder content: () -> Content,
+        onDelete: @escaping () -> Void
+    ) {
+        self.content = content()
+        self.onDelete = onDelete
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(role: .destructive) {
+                close()
+                onDelete()
+            } label: {
+                Label("删除", systemImage: "trash")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.white)
+                    .frame(width: actionWidth)
+                    .frame(maxHeight: .infinity)
+            }
+            .buttonStyle(.plain)
+            .background(Color.red)
+            .accessibilityHidden(offset > -1)
+
+            content
+                .offset(x: offset)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: TLTheme.cardRadius))
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        return
+                    }
+                    offset = min(
+                        0,
+                        max(-actionWidth, settledOffset + value.translation.width)
+                    )
+                }
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        return
+                    }
+                    let projectedOffset = settledOffset + value.predictedEndTranslation.width
+                    let target = projectedOffset < -actionWidth / 2 ? -actionWidth : 0
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        offset = target
+                        settledOffset = target
+                    }
+                }
+        )
+    }
+
+    private func close() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            offset = 0
+            settledOffset = 0
         }
     }
 }

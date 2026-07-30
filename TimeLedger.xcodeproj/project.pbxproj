@@ -398,6 +398,10 @@
 				DEVELOPMENT_TEAM = Y5ADUFM52Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "用于从 TimeLedger 快速拍摄照片和视频";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于通过系统相机录制带声音的视频";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于按你的设置把照片和视频保存到系统相册";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "用于回看已保存到系统相册的照片和视频";
 				INFOPLIST_KEY_NSBonjourServices = "_timeledger-mirror._tcp";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "与 Mac 上的 TimeLedger 建立局域网镜像同步";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -432,6 +436,10 @@
 				DEVELOPMENT_TEAM = Y5ADUFM52Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "用于从 TimeLedger 快速拍摄照片和视频";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "用于通过系统相机录制带声音的视频";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "用于按你的设置把照片和视频保存到系统相册";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "用于回看已保存到系统相册的照片和视频";
 				INFOPLIST_KEY_NSBonjourServices = "_timeledger-mirror._tcp";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "与 Mac 上的 TimeLedger 建立局域网镜像同步";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

@@ -5,9 +5,12 @@ struct ConfirmedListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allEntries: [TimeEntry]
     @Query private var allThoughts: [ThoughtNote]
+    @Query private var allMediaMoments: [MediaMoment]
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var selectedDate = Date()
+    @State private var editingEntry: TimeEntry?
+    @State private var showingEditor = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,23 +69,33 @@ struct ConfirmedListView: View {
                 ScrollView {
                     LazyVStack(spacing: TLTheme.listSpacing) {
                         ForEach(dayEntries) { entry in
-                            NavigationLink {
-                                TimeEntryEditView(entry: entry)
-                                    .toolbar(.visible, for: .navigationBar)
-                            } label: {
-                                confirmedRow(
-                                    entry,
-                                    thoughtCount: thoughtCount(for: entry),
-                                    actionCount: actionCount(for: entry)
-                                )
-                            }
-                            .buttonStyle(.plain)
+                            TimeEntryExpandableCard(
+                                entry: entry,
+                                thoughts: thoughts(for: entry),
+                                mediaMoments: mediaMoments(for: entry),
+                                actionCount: actionCount(for: entry),
+                                onEdit: {
+                                    editingEntry = entry
+                                    showingEditor = true
+                                }
+                            )
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 16)
                 }
             }
+        }
+        .background {
+            NavigationLink(isActive: $showingEditor) {
+                if let editingEntry {
+                    TimeEntryEditView(entry: editingEntry)
+                        .toolbar(.visible, for: .navigationBar)
+                }
+            } label: {
+                EmptyView()
+            }
+            .hidden()
         }
     }
 
@@ -113,60 +126,16 @@ struct ConfirmedListView: View {
         }
     }
 
-    private func confirmedRow(_ entry: TimeEntry, thoughtCount: Int, actionCount: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(entry.projectNameSnapshot)
-                    .font(TLTheme.projectNameFont)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(DurationFormatter.compact(entry.durationSeconds))
-                    .font(.system(size: 12, weight: .semibold))
-                    .monospacedDigit()
-            }
-
-            Text(timeAndNote(entry))
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if thoughtCount > 0 || actionCount > 0 {
-                HStack(spacing: 6) {
-                    if thoughtCount > 0 {
-                        Text("思考 \(thoughtCount)")
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.orange)
-                    }
-                    if actionCount > 0 {
-                        Text("事项 \(actionCount)")
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.blue)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, TLTheme.rowVerticalPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: TLTheme.cardRadius)
-                .fill(TLTheme.cardBackground)
-        )
+    private func thoughts(for entry: TimeEntry) -> [ThoughtNote] {
+        allThoughts
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.capturedAt < $1.capturedAt }
     }
 
-    private func timeAndNote(_ entry: TimeEntry) -> String {
-        let start = DateFormatterFactory.timeOnly.string(from: entry.startAt)
-        let end = DateFormatterFactory.timeOnly.string(from: entry.endAt)
-        let range = "\(start) – \(end)"
-        let trimmed = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return range
-        }
-        return "\(range) · \(trimmed)"
-    }
-
-    private func thoughtCount(for entry: TimeEntry) -> Int {
-        allThoughts.filter { $0.linkedEntryId == entry.id }.count
+    private func mediaMoments(for entry: TimeEntry) -> [MediaMoment] {
+        allMediaMoments
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.capturedAt < $1.capturedAt }
     }
 
     private func actionCount(for entry: TimeEntry) -> Int {

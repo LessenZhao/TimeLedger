@@ -71,9 +71,111 @@ final class TimeLedgerUITests: XCTestCase {
         app.segmentedControls.buttons["草稿"].tap()
         let draftProject = app.staticTexts["UI测试项目"]
         XCTAssertTrue(draftProject.waitForExistence(timeout: 3))
-        draftProject.tap()
+        app.buttons["展开 UI测试项目"].tap()
+        let editEntry = app.buttons["编辑 UI测试项目"]
+        XCTAssertTrue(editEntry.waitForExistence(timeout: 3))
+        editEntry.tap()
         XCTAssertTrue(app.staticTexts["完成事项"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["吃药"].exists)
+    }
+
+    @MainActor
+    func testQuickThoughtTapAndCameraLongPressAreMutuallyExclusive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-camera-fixture"]
+        app.launch()
+
+        let control = app.buttons["today.quickThoughtCamera"]
+        XCTAssertTrue(control.waitForExistence(timeout: 3))
+
+        control.tap()
+        XCTAssertTrue(app.navigationBars["快速想法"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["系统相机边界已调用"].exists)
+        app.buttons["取消"].tap()
+
+        XCTAssertTrue(control.waitForExistence(timeout: 3))
+        control.press(forDuration: 0.25)
+        XCTAssertTrue(app.staticTexts["系统相机边界已调用"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.navigationBars["快速想法"].exists)
+        XCTAssertFalse(app.buttons["系统相册"].exists)
+        XCTAssertFalse(app.buttons["两边"].exists)
+    }
+
+    @MainActor
+    func testDraftAndConfirmedCardsUseTwoLevelExpansion() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-media-fixture"]
+        app.launch()
+
+        app.segmentedControls.buttons["草稿"].tap()
+        let draftProject = app.staticTexts["Fixture 草稿项目"]
+        XCTAssertTrue(draftProject.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.scrollViews["draft.scroll"].exists)
+        let draftTopBeforeExpansion = draftProject.frame.minY
+        XCTAssertFalse(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
+        app.buttons["展开 Fixture 草稿项目"].tap()
+        XCTAssertTrue(
+            app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"]
+                .waitForExistence(timeout: 3)
+        )
+        XCTAssertEqual(draftProject.frame.minY, draftTopBeforeExpansion, accuracy: 1)
+        let draftCard = app.otherElements["timeEntry.card.draft"].firstMatch
+        draftCard.swipeLeft()
+        let deleteDraft = app.buttons["删除"]
+        XCTAssertTrue(deleteDraft.waitForExistence(timeout: 3))
+        deleteDraft.tap()
+        XCTAssertTrue(app.alerts["删除这条草稿？"].waitForExistence(timeout: 3))
+        app.alerts["删除这条草稿？"].buttons["取消"].tap()
+
+        let editDraft = app.buttons["编辑 Fixture 草稿项目"]
+        XCTAssertTrue(editDraft.exists)
+        XCTAssertLessThanOrEqual(editDraft.frame.width, 40)
+        XCTAssertLessThanOrEqual(draftCard.frame.maxX - editDraft.frame.maxX, 16)
+        editDraft.tap()
+        XCTAssertTrue(app.navigationBars["编辑草稿"].waitForExistence(timeout: 3))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        app.segmentedControls.buttons["已确认"].tap()
+        let confirmedProject = app.staticTexts["Fixture 已确认项目"]
+        XCTAssertTrue(confirmedProject.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Fixture 已确认思考全文"].exists)
+        app.buttons["展开 Fixture 已确认项目"].tap()
+        XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["编辑 Fixture 已确认项目"].exists)
+    }
+
+    @MainActor
+    func testTimelineFourFiltersShowCorrectKinds() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-media-fixture"]
+        app.launch()
+        app.tabBars.buttons["时间线"].tap()
+
+        let filter = app.segmentedControls["timeline.filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
+        XCTAssertTrue(app.staticTexts["照片"].exists)
+        XCTAssertTrue(app.staticTexts["视频"].exists)
+
+        filter.buttons["思考"].tap()
+        XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)
+        XCTAssertFalse(app.staticTexts["照片"].exists)
+        XCTAssertFalse(app.staticTexts["视频"].exists)
+
+        filter.buttons["照片"].tap()
+        XCTAssertTrue(app.staticTexts["照片"].exists)
+        XCTAssertFalse(app.staticTexts["Fixture 已确认思考全文"].exists)
+        XCTAssertFalse(app.staticTexts["视频"].exists)
+
+        filter.buttons["视频"].tap()
+        XCTAssertTrue(app.staticTexts["视频"].exists)
+        XCTAssertFalse(app.staticTexts["照片"].exists)
+        XCTAssertFalse(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
+
+        filter.buttons["全部"].tap()
+        XCTAssertTrue(app.staticTexts["照片"].exists)
+        XCTAssertTrue(app.staticTexts["视频"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)
     }
 
     @MainActor

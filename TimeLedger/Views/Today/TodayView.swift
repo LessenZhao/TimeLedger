@@ -16,6 +16,10 @@ struct TodayView: View {
     @State private var selectedView = 0
     @State private var showingThoughtCapture = false
     @State private var showingAddProject = false
+    @State private var showingCamera = false
+    @State private var showingCameraFixture = false
+    @State private var cameraAccessResult: CameraAccessResult?
+    @State private var mediaSaveIssue: MediaMoment?
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -69,6 +73,58 @@ struct TodayView: View {
         .sheet(isPresented: $showingAddProject) {
             ProjectEditView(project: nil)
         }
+        .fullScreenCover(isPresented: $showingCamera) {
+            SystemCameraPicker { result in
+                showingCamera = false
+                guard let result else { return }
+                switch result {
+                case .success(let capture):
+                    Task { await saveCapture(capture) }
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
+            }
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $showingCameraFixture) {
+            CameraBoundaryFixtureView()
+        }
+        .alert("无法打开相机", isPresented: Binding(
+            get: { cameraAccessResult != nil },
+            set: { if !$0 { cameraAccessResult = nil } }
+        )) {
+            if cameraAccessResult?.offersSettings == true {
+                Button("去设置") { openSystemSettings() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(cameraAccessResult?.message ?? "")
+        }
+        .alert("媒体未完全保存", isPresented: Binding(
+            get: { mediaSaveIssue != nil },
+            set: { if !$0 { mediaSaveIssue = nil } }
+        )) {
+            Button("重试") {
+                if let mediaSaveIssue {
+                    Task {
+                        await MediaMomentService(modelContext: modelContext).retry(mediaSaveIssue)
+                        showIssueIfNeeded(mediaSaveIssue)
+                    }
+                }
+            }
+            Button("改存 TimeLedger") {
+                if let mediaSaveIssue {
+                    Task {
+                        await MediaMomentService(modelContext: modelContext).saveToAppInstead(mediaSaveIssue)
+                        showIssueIfNeeded(mediaSaveIssue)
+                    }
+                }
+            }
+            Button("去设置") { openSystemSettings() }
+            Button("稍后", role: .cancel) {}
+        } message: {
+            Text(mediaSaveIssue?.lastError ?? "原件仍保留，可稍后重试。")
+        }
     }
 
     private var statusBar: some View {
@@ -99,13 +155,10 @@ struct TodayView: View {
                     Button("确认", action: confirmDrafts)
                         .font(TLTheme.statusFont.weight(.semibold))
                 } else {
-                    Button {
-                        showingThoughtCapture = true
-                    } label: {
-                        Image(systemName: "lightbulb.fill")
-                            .font(.system(size: TLTheme.statusIconSize, weight: .medium))
-                    }
-                    .accessibilityLabel("快速想法")
+                    QuickCaptureCameraControl(
+                        tapAction: { showingThoughtCapture = true },
+                        cameraAction: { beginCameraFlow() }
+                    )
                 }
             }
             .frame(width: 64, alignment: .trailing)
@@ -393,6 +446,50 @@ struct TodayView: View {
 
     private func currentCursorAt() -> Date {
         (try? TimeCursorService(modelContext: modelContext).getOrCreateCursor(now: now).cursorAt) ?? now
+    }
+
+    private func beginCameraFlow() {
+        if ProcessInfo.processInfo.arguments.contains("-ui-camera-fixture") {
+            showingCameraFixture = true
+            return
+        }
+
+        Task {
+            let result = await CameraPermissionService().prepareForCamera()
+            if result == .ready {
+                showingCamera = true
+            } else {
+                cameraAccessResult = result
+            }
+        }
+    }
+
+    private func saveCapture(_ capture: CameraCapture) async {
+        do {
+            let settings = try getOrCreateSettings()
+            let preference = MediaStoragePreference(rawValue: settings.mediaStoragePreference)
+                ?? .photosLibrary
+            let moment = try await MediaMomentService(modelContext: modelContext).saveCapture(
+                sourceURL: capture.sourceURL,
+                kind: capture.kind,
+                capturedAt: capture.capturedAt,
+                thumbnailData: capture.thumbnailData,
+                durationSeconds: capture.durationSeconds,
+                preference: preference
+            )
+            showIssueIfNeeded(moment)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func showIssueIfNeeded(_ moment: MediaMoment) {
+        mediaSaveIssue = moment.saveStatus == .saved ? nil : moment
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }
 
