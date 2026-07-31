@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProjectRowView: View {
     let project: Project
@@ -69,7 +70,8 @@ struct ProjectRowView: View {
         let tapGesture = TapGesture().onEnded {
             quickRecordAction()
         }
-        let longPressGesture = LongPressGesture(minimumDuration: 0.2).onEnded { _ in
+        let longPressGesture = LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             adjustAction()
         }
 
@@ -83,5 +85,6 @@ struct ProjectRowView: View {
             .contentShape(Rectangle())
             .gesture(longPressGesture.exclusively(before: tapGesture))
             .accessibilityAddTraits(.isButton)
+            .accessibilityHint("轻点快速记录，按住打开记录详情")
     }
 }

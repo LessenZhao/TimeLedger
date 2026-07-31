@@ -8,6 +8,8 @@ struct TimeEntryEditView: View {
     @Query private var allThoughts: [ThoughtNote]
     @Query private var allEntries: [TimeEntry]
     @Query private var allActionCompletions: [ActionCompletion]
+    @Query private var allMediaMoments: [MediaMoment]
+    @Query private var allThoughtMediaLinks: [ThoughtMediaLink]
 
     let entry: TimeEntry
 
@@ -22,9 +24,16 @@ struct TimeEntryEditView: View {
     @State private var showingAddThought = false
     @State private var editingStart = false
     @State private var editingEnd = false
+    @State private var attachmentDraft = ThoughtComposerDraft.empty
+    @State private var isAttachmentDraftLoaded = false
+    @State private var isImportingAttachments = false
+    @State private var isSaving = false
+
+    private let attachmentDraftStore: ThoughtComposerDraftStore
 
     init(entry: TimeEntry) {
         self.entry = entry
+        self.attachmentDraftStore = ComposerDraftStoreFactory.timeEntry(entry.id)
         _selectedProjectId = State(initialValue: entry.projectId)
         _note = State(initialValue: entry.note)
         _startAt = State(initialValue: entry.startAt)
@@ -102,30 +111,38 @@ struct TimeEntryEditView: View {
                     }
                 }
 
-                NavigationLink {
-                    TimeEntryNoteEditView(note: $note)
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("备注")
-                            .foregroundStyle(.primary)
-                        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text("点击编写")
-                                .font(.subheadline)
-                                .foregroundStyle(.tertiary)
-                        } else {
-                            Text(note)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .multilineTextAlignment(.leading)
-                        }
-                    }
-                }
             } footer: {
                 if SystemProject.isUnknownEntry(entry) {
                     Text("请选择具体项目后再确认。")
                 }
+            }
+
+            Section("备注") {
+                TextEditor(text: $note)
+                    .frame(minHeight: 110)
+                    .scrollContentBackground(.hidden)
+                    .accessibilityIdentifier("entry.detail.note")
+                    .overlay(alignment: .topLeading) {
+                        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("写点补充，可留空……")
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 8)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                PhotoAttachmentEditor(
+                    draft: $attachmentDraft,
+                    isImporting: $isImportingAttachments,
+                    draftStore: attachmentDraftStore,
+                    existingMoments: noteAttachments,
+                    isDisabled: isSaving,
+                    removeExisting: { moment in
+                        try TimeEntryAttachmentService(modelContext: modelContext)
+                            .removeFromNote(moment, entry: entry)
+                    }
+                )
             }
 
             Section {
@@ -152,12 +169,8 @@ struct TimeEntryEditView: View {
                 Text("思考")
             }
 
-            Section("完成事项") {
-                if linkedActionCompletions.isEmpty {
-                    Text("暂无关联事项")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
+            if !linkedActionCompletions.isEmpty {
+                Section("完成事项") {
                     ForEach(linkedActionCompletions) { completion in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(completion.actionTitleSnapshot)
@@ -169,8 +182,8 @@ struct TimeEntryEditView: View {
                         .padding(.vertical, 2)
                     }
                 }
+                .accessibilityIdentifier("entry.actions")
             }
-            .accessibilityIdentifier("entry.actions")
 
             if isDraft {
                 Section {
@@ -188,12 +201,16 @@ struct TimeEntryEditView: View {
                 }
             }
         }
-        .navigationTitle(isDraft ? "编辑草稿" : "编辑记录")
+        .navigationTitle("记录详情")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("保存", action: save)
-                    .disabled(saveDisabled)
+                if isSaving {
+                    ProgressView()
+                } else {
+                    Button("保存", action: save)
+                        .disabled(saveDisabled || isImportingAttachments)
+                }
             }
         }
         .alert("操作失败", isPresented: Binding(
@@ -217,8 +234,15 @@ struct TimeEntryEditView: View {
             Text("这条记录会变回草稿，时间位置不会改变。")
         }
         .sheet(isPresented: $showingAddThought) {
-            ThoughtAddSheet { newBody in
-                addThought(body: newBody)
+            ThoughtComposerSheet(targetEntry: entry)
+        }
+        .onAppear(perform: loadAttachmentDraft)
+        .onChange(of: note) { _, newValue in
+            guard isAttachmentDraftLoaded else { return }
+            do {
+                attachmentDraft = try attachmentDraftStore.updateBody(newValue)
+            } catch {
+                errorMessage = error.localizedDescription
             }
         }
         .onChange(of: startAt) { _, newStart in
@@ -307,6 +331,14 @@ struct TimeEntryEditView: View {
             .sorted { $0.completedAt < $1.completedAt }
     }
 
+    private var noteAttachments: [MediaMoment] {
+        (try? TimeEntryAttachmentService(modelContext: modelContext).noteAttachments(
+            for: entry,
+            moments: allMediaMoments,
+            thoughtLinks: allThoughtMediaLinks
+        )) ?? []
+    }
+
     private func thoughtRow(_ thought: ThoughtNote) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
@@ -323,17 +355,23 @@ struct TimeEntryEditView: View {
         .padding(.vertical, 4)
     }
 
-    private func addThought(body: String) -> Bool {
+    private func loadAttachmentDraft() {
         do {
-            _ = try ThoughtLinkingService(modelContext: modelContext).addThought(to: entry, body: body)
-            return true
+            let loaded = try attachmentDraftStore.load()
+            attachmentDraft = loaded
+            if loaded.hasContent {
+                note = loaded.body
+            } else {
+                attachmentDraft = try attachmentDraftStore.updateBody(note)
+            }
+            isAttachmentDraftLoaded = true
         } catch {
             errorMessage = error.localizedDescription
-            return false
         }
     }
 
     private func save() {
+        guard !isSaving else { return }
         guard let project = selectedProject else {
             errorMessage = "请选择项目。"
             return
@@ -356,18 +394,43 @@ struct TimeEntryEditView: View {
             }
         }
 
-        do {
-            try TimeCursorService(modelContext: modelContext).updateEntry(
-                entry,
-                project: project,
-                note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-                startAt: startAt,
-                endAt: endAt,
-                now: now
-            )
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
+        isSaving = true
+        Task {
+            do {
+                try TimeCursorService(modelContext: modelContext).updateEntry(
+                    entry,
+                    project: project,
+                    note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                    startAt: startAt,
+                    endAt: endAt,
+                    now: now
+                )
+
+                let attachmentService = TimeEntryAttachmentService(modelContext: modelContext)
+                let preference = try attachmentService.storagePreference()
+                var mediaIssues: [MediaMoment] = []
+                for attachment in attachmentDraft.attachments {
+                    let moment = try await attachmentService.commit(
+                        attachment,
+                        from: attachmentDraftStore,
+                        to: entry,
+                        preference: preference
+                    )
+                    if moment.saveStatus != .saved {
+                        mediaIssues.append(moment)
+                    }
+                }
+
+                if mediaIssues.isEmpty {
+                    try await attachmentDraftStore.discard()
+                    dismiss()
+                } else {
+                    errorMessage = "记录已保存，但有 \(mediaIssues.count) 张照片尚未完全保存。原件已保留，请再次点保存重试。"
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSaving = false
         }
     }
 

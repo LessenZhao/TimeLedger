@@ -19,39 +19,45 @@ struct UITestFixtureService {
         guard arguments.contains("-ui-media-fixture") else { return }
         guard try modelContext.fetch(FetchDescriptor<MediaMoment>()).isEmpty else { return }
 
+        let dayStart = Calendar.current.startOfDay(for: now)
+        let confirmedStart = dayStart.addingTimeInterval(60 * 60)
+        let confirmedEnd = dayStart.addingTimeInterval(90 * 60)
+        let draftStart = dayStart.addingTimeInterval(2 * 60 * 60)
+        let draftEnd = dayStart.addingTimeInterval(150 * 60)
+
         let draftProject = Project(name: "Fixture 草稿项目", categoryName: "测试")
         let confirmedProject = Project(name: "Fixture 已确认项目", categoryName: "测试")
         let draft = TimeEntry(
             projectId: draftProject.id,
             projectNameSnapshot: draftProject.name,
             categoryNameSnapshot: draftProject.categoryName,
-            startAt: now.addingTimeInterval(-7_200),
-            endAt: now.addingTimeInterval(-5_400),
+            startAt: draftStart,
+            endAt: draftEnd,
             status: .draft
         )
         let confirmed = TimeEntry(
             projectId: confirmedProject.id,
             projectNameSnapshot: confirmedProject.name,
             categoryNameSnapshot: confirmedProject.categoryName,
-            startAt: now.addingTimeInterval(-14_400),
-            endAt: now.addingTimeInterval(-12_600),
+            startAt: confirmedStart,
+            endAt: confirmedEnd,
             status: .confirmed
         )
         let draftThought = ThoughtNote(
             body: "Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。",
-            capturedAt: now.addingTimeInterval(-6_300),
+            capturedAt: draftStart.addingTimeInterval(15 * 60),
             linkedEntryId: draft.id,
             linkSource: .manual
         )
         let confirmedThought = ThoughtNote(
             body: "Fixture 已确认思考全文",
-            capturedAt: now.addingTimeInterval(-13_500),
+            capturedAt: confirmedStart.addingTimeInterval(15 * 60),
             linkedEntryId: confirmed.id,
             linkSource: .manual
         )
         let photo = MediaMoment(
             kind: .photo,
-            capturedAt: now.addingTimeInterval(-6_000),
+            capturedAt: draftStart.addingTimeInterval(20 * 60),
             linkedEntryId: draft.id,
             linkSource: .manual,
             requestedStorage: .app,
@@ -62,7 +68,7 @@ struct UITestFixtureService {
         )
         let video = MediaMoment(
             kind: .video,
-            capturedAt: now.addingTimeInterval(-13_200),
+            capturedAt: confirmedStart.addingTimeInterval(20 * 60),
             linkedEntryId: confirmed.id,
             linkSource: .manual,
             requestedStorage: .photosLibrary,

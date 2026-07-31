@@ -73,12 +73,19 @@ struct TodayView: View {
                 cursorAt: currentCursorAt(),
                 defaultEndAt: now,
                 saveAction: { startAt, endAt, note in
-                    saveAdjustedSegment(project: project, startAt: startAt, endAt: endAt, note: note)
+                    try saveAdjustedSegment(
+                        project: project,
+                        startAt: startAt,
+                        endAt: endAt,
+                        note: note
+                    )
                 },
                 skipAction: { endAt in
-                    skipSegment(to: endAt)
+                    try skipSegment(to: endAt)
                 }
             )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingThoughtCapture) {
             ThoughtComposerSheet(focusTextOnAppear: composerFocusText)
@@ -435,31 +442,29 @@ struct TodayView: View {
         adjustmentProject = project
     }
 
-    private func saveAdjustedSegment(project: Project, startAt: Date, endAt: Date, note: String) {
-        do {
-            _ = try TimeCursorService(modelContext: modelContext).recordSegment(
-                project: project,
-                startAt: startAt,
-                endAt: endAt,
-                note: note,
-                now: Date()
-            )
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            refreshUndoState()
-            now = Date()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func saveAdjustedSegment(
+        project: Project,
+        startAt: Date,
+        endAt: Date,
+        note: String
+    ) throws -> TimeEntry {
+        let entry = try TimeCursorService(modelContext: modelContext).recordSegment(
+            project: project,
+            startAt: startAt,
+            endAt: endAt,
+            note: note,
+            now: Date()
+        )
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        refreshUndoState()
+        now = Date()
+        return entry
     }
 
-    private func skipSegment(to endAt: Date) {
-        do {
-            try TimeCursorService(modelContext: modelContext).skipSegment(to: endAt)
-            refreshUndoState()
-            now = Date()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    private func skipSegment(to endAt: Date) throws {
+        try TimeCursorService(modelContext: modelContext).skipSegment(to: endAt)
+        refreshUndoState()
+        now = Date()
     }
 
     private func undoLastEntry() {

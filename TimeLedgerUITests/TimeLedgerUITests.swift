@@ -95,7 +95,7 @@ final class TimeLedgerUITests: XCTestCase {
             2
         )
 
-        app.navigationBars["编辑草稿"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["记录详情"].buttons.element(boundBy: 0).tap()
         app.tabBars.buttons["事项"].tap()
         let deleteCompletionButtons = app.buttons.matching(
             NSPredicate(format: "label == %@", "删除 吃药 记录")
@@ -142,6 +142,45 @@ final class TimeLedgerUITests: XCTestCase {
     }
 
     @MainActor
+    func testRecordDetailRetainsNoteAndCameraPhotoDraft() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-camera-fixture"]
+        app.launch()
+
+        app.buttons["添加项目"].tap()
+        let projectName = app.textFields["项目名称"]
+        XCTAssertTrue(projectName.waitForExistence(timeout: 3))
+        projectName.tap()
+        projectName.typeText("记录详情测试")
+        app.buttons["保存"].tap()
+
+        let projectButton = app.buttons["快速记录 记录详情测试"]
+        XCTAssertTrue(projectButton.waitForExistence(timeout: 3))
+        projectButton.press(forDuration: 0.5)
+
+        XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
+        let note = app.textViews["entry.detail.note"]
+        XCTAssertTrue(note.exists)
+        note.tap()
+        note.typeText("现场备注")
+
+        app.buttons["entry.attachment.add"].tap()
+        app.buttons["拍照"].tap()
+        XCTAssertTrue(app.staticTexts["系统相机边界已调用"].waitForExistence(timeout: 3))
+        app.buttons["camera.fixture.usePhoto"].tap()
+
+        XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["移除照片"].waitForExistence(timeout: 3))
+        app.buttons["取消"].tap()
+
+        XCTAssertTrue(projectButton.waitForExistence(timeout: 3))
+        projectButton.press(forDuration: 0.5)
+        XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.textViews["entry.detail.note"].value as? String, "现场备注")
+        XCTAssertTrue(app.buttons["移除照片"].exists)
+    }
+
+    @MainActor
     func testDraftAndConfirmedCardsUseTwoLevelExpansion() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-media-fixture"]
@@ -172,7 +211,14 @@ final class TimeLedgerUITests: XCTestCase {
         XCTAssertLessThanOrEqual(editDraft.frame.width, 40)
         XCTAssertLessThanOrEqual(draftCard.frame.maxX - editDraft.frame.maxX, 16)
         editDraft.tap()
-        XCTAssertTrue(app.navigationBars["编辑草稿"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
+        app.buttons["添加思考"].tap()
+        XCTAssertTrue(app.navigationBars["记录思考"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["关联到"].exists)
+        XCTAssertTrue(app.buttons["thought.composer.photoLibrary"].exists)
+        XCTAssertTrue(app.buttons["thought.composer.camera"].exists)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         app.segmentedControls.buttons["已确认"].tap()

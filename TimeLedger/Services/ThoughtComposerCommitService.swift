@@ -55,13 +55,14 @@ struct ThoughtComposerCommitService {
 
     func commit(
         _ draft: ThoughtComposerDraft,
-        preference: MediaStoragePreference
+        preference: MediaStoragePreference,
+        targetEntry: TimeEntry? = nil
     ) async throws -> ThoughtComposerCommitResult {
         guard draft.hasContent else {
             throw ThoughtComposerCommitError.emptyDraft
         }
 
-        let thought = try findOrCreateThought(for: draft)
+        let thought = try findOrCreateThought(for: draft, targetEntry: targetEntry)
         let existingMoments = try modelContext.fetch(FetchDescriptor<MediaMoment>())
         var momentByID = Dictionary(uniqueKeysWithValues: existingMoments.map { ($0.id, $0) })
         var committedMoments: [MediaMoment] = []
@@ -105,12 +106,19 @@ struct ThoughtComposerCommitService {
         )
     }
 
-    private func findOrCreateThought(for draft: ThoughtComposerDraft) throws -> ThoughtNote {
+    private func findOrCreateThought(
+        for draft: ThoughtComposerDraft,
+        targetEntry: TimeEntry?
+    ) throws -> ThoughtNote {
         let thoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
         if let existing = thoughts.first(where: { $0.id == draft.id }) {
             existing.body = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
             existing.updatedAt = Date()
             try modelContext.save()
+            if let targetEntry {
+                try ThoughtLinkingService(modelContext: modelContext)
+                    .manuallyLinkThought(existing, to: targetEntry)
+            }
             return existing
         }
 
@@ -125,8 +133,13 @@ struct ThoughtComposerCommitService {
         )
         modelContext.insert(thought)
         try modelContext.save()
-        _ = try ThoughtLinkingService(modelContext: modelContext)
-            .tryAutoLinkThought(thought: thought)
+        if let targetEntry {
+            try ThoughtLinkingService(modelContext: modelContext)
+                .manuallyLinkThought(thought, to: targetEntry)
+        } else {
+            _ = try ThoughtLinkingService(modelContext: modelContext)
+                .tryAutoLinkThought(thought: thought)
+        }
         return thought
     }
 }

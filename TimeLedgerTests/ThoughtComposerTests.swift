@@ -87,6 +87,49 @@ struct ThoughtComposerTests {
         #expect(moments[0].anchorAt == thoughts[0].anchorAt)
     }
 
+    @Test func entryTargetUsesManualLinkForThoughtAndPhoto() async throws {
+        let fixture = try DraftFixture()
+        let draftWithPhoto = try await fixture.store.addCapture(
+            fixture.capture(named: "manual-entry")
+        )
+        let draft = try fixture.store.updateBody("关联到指定记录", now: fixture.now)
+        #expect(draft.id == draftWithPhoto.id)
+
+        let schema = Schema(TimeLedgerModels.all)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let context = ModelContext(
+            try ModelContainer(for: schema, configurations: [configuration])
+        )
+        let entry = TimeEntry(
+            projectId: UUID(),
+            projectNameSnapshot: "运动",
+            categoryNameSnapshot: "生活",
+            startAt: fixture.now.addingTimeInterval(-1_800),
+            endAt: fixture.now.addingTimeInterval(1_800)
+        )
+        context.insert(entry)
+        try context.save()
+
+        let result = try await ThoughtComposerCommitService(
+            modelContext: context,
+            draftStore: fixture.store,
+            mediaFileStore: MediaFileStore(
+                rootURL: fixture.rootURL.appending(path: "ManualEntryMedia")
+            ),
+            photoLibrary: ComposerPhotoLibraryStub()
+        ).commit(
+            draft,
+            preference: .app,
+            targetEntry: entry
+        )
+
+        #expect(result.thought.linkedEntryId == entry.id)
+        #expect(result.thought.linkSourceEnum == .manual)
+        #expect(result.mediaMoments.count == 1)
+        #expect(result.mediaMoments[0].linkedEntryId == entry.id)
+        #expect(result.mediaMoments[0].linkSourceEnum == .manual)
+    }
+
     @Test func selectedLibraryPhotoIsNotWrittenBackToPhotosLibrary() async throws {
         let fixture = try DraftFixture()
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20))

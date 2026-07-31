@@ -224,6 +224,7 @@ struct MediaMomentTests {
     @Test func cameraConfigurationIncludesPhotoVideoHighQualityAndSixtySeconds() {
         #expect(SystemCameraConfiguration.mediaTypes.contains(UTType.image.identifier))
         #expect(SystemCameraConfiguration.mediaTypes.contains(UTType.movie.identifier))
+        #expect(SystemCameraConfiguration.photoOnlyMediaTypes == [UTType.image.identifier])
         #expect(SystemCameraConfiguration.videoMaximumDuration == 60)
         #expect(SystemCameraConfiguration.videoQuality == .typeHigh)
     }

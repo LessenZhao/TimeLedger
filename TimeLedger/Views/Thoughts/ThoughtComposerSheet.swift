@@ -9,6 +9,7 @@ struct ThoughtComposerSheet: View {
     @Environment(\.modelContext) private var modelContext
 
     let focusTextOnAppear: Bool
+    let targetEntry: TimeEntry?
 
     @State private var draft = ThoughtComposerDraft.empty
     @State private var thoughtBody = ""
@@ -25,10 +26,17 @@ struct ThoughtComposerSheet: View {
     @State private var showingDiscardConfirmation = false
     @FocusState private var isTextFocused: Bool
 
-    private let draftStore = ThoughtComposerDraftStore()
+    private let draftStore: ThoughtComposerDraftStore
 
-    init(focusTextOnAppear: Bool = true) {
+    init(
+        focusTextOnAppear: Bool = true,
+        targetEntry: TimeEntry? = nil
+    ) {
         self.focusTextOnAppear = focusTextOnAppear
+        self.targetEntry = targetEntry
+        self.draftStore = targetEntry.map {
+            ComposerDraftStoreFactory.thoughtForEntry($0.id)
+        } ?? ThoughtComposerDraftStore()
     }
 
     var body: some View {
@@ -51,6 +59,15 @@ struct ThoughtComposerSheet: View {
                             }
                         }
                         .accessibilityIdentifier("thought.composer.text")
+                }
+
+                if let targetEntry {
+                    Section {
+                        LabeledContent(
+                            "关联到",
+                            value: "\(DateFormatterFactory.timeOnly.string(from: targetEntry.startAt))–\(DateFormatterFactory.timeOnly.string(from: targetEntry.endAt)) · \(targetEntry.projectNameSnapshot)"
+                        )
+                    }
                 }
 
                 Section {
@@ -131,7 +148,9 @@ struct ThoughtComposerSheet: View {
                 isPresented: $showingCamera,
                 onDismiss: handleCameraDismissal
             ) {
-                SystemCameraPicker { result in
+                SystemCameraPicker(
+                    mediaTypes: SystemCameraConfiguration.photoOnlyMediaTypes
+                ) { result in
                     guard let result else {
                         showingCamera = false
                         return
@@ -344,7 +363,11 @@ struct ThoughtComposerSheet: View {
                 let result = try await ThoughtComposerCommitService(
                     modelContext: modelContext,
                     draftStore: draftStore
-                ).commit(draft, preference: preference)
+                ).commit(
+                    draft,
+                    preference: preference,
+                    targetEntry: targetEntry
+                )
                 if result.mediaIssues.isEmpty {
                     dismiss()
                 } else {

@@ -33,7 +33,7 @@ struct SettingsView: View {
                 } header: {
                     Text("记录")
                 } footer: {
-                    Text("超过阈值再打标时，会弹出调整时间。")
+                    Text("超过阈值再打标时，会打开记录详情。")
                 }
 
                 Section {

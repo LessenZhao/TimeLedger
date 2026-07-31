@@ -5,6 +5,7 @@ import UIKit
 
 enum SystemCameraConfiguration {
     static let mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
+    static let photoOnlyMediaTypes = [UTType.image.identifier]
     static let videoMaximumDuration: TimeInterval = 60
     static let videoQuality: UIImagePickerController.QualityType = .typeHigh
 }
@@ -18,7 +19,16 @@ nonisolated struct CameraCapture: Sendable {
 }
 
 struct SystemCameraPicker: UIViewControllerRepresentable {
+    let mediaTypes: [String]
     let completion: (Result<CameraCapture, Error>?) -> Void
+
+    init(
+        mediaTypes: [String] = SystemCameraConfiguration.mediaTypes,
+        completion: @escaping (Result<CameraCapture, Error>?) -> Void
+    ) {
+        self.mediaTypes = mediaTypes
+        self.completion = completion
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(completion: completion)
@@ -27,7 +37,7 @@ struct SystemCameraPicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.mediaTypes = SystemCameraConfiguration.mediaTypes
+        picker.mediaTypes = mediaTypes
         picker.videoMaximumDuration = SystemCameraConfiguration.videoMaximumDuration
         picker.videoQuality = SystemCameraConfiguration.videoQuality
         picker.allowsEditing = false
