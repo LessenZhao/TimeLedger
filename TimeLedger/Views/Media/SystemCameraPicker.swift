@@ -9,7 +9,7 @@ enum SystemCameraConfiguration {
     static let videoQuality: UIImagePickerController.QualityType = .typeHigh
 }
 
-struct CameraCapture {
+nonisolated struct CameraCapture: Sendable {
     let sourceURL: URL
     let kind: MediaKind
     let capturedAt: Date
@@ -101,7 +101,7 @@ private enum CameraCapturePreparation {
     private static func preparePhoto(_ image: UIImage) async throws -> CameraCapture {
         try await Task.detached(priority: .userInitiated) {
             guard let originalData = image.jpegData(compressionQuality: 0.96),
-                  let thumbnailData = await thumbnail(for: image) else {
+                  let thumbnailData = MediaThumbnailFactory.thumbnailData(for: image) else {
                 throw PreparationError.invalidImage
             }
             let url = FileManager.default.temporaryDirectory
@@ -125,7 +125,7 @@ private enum CameraCapturePreparation {
             generator.maximumSize = CGSize(width: 480, height: 480)
             let cgImage = try await generator.image(at: .zero).image
             let image = UIImage(cgImage: cgImage)
-            guard let thumbnailData = await thumbnail(for: image) else {
+            guard let thumbnailData = MediaThumbnailFactory.thumbnailData(for: image) else {
                 throw PreparationError.invalidVideo
             }
             let durationTime = try await asset.load(.duration)
@@ -140,7 +140,10 @@ private enum CameraCapturePreparation {
         }.value
     }
 
-    private static func thumbnail(for image: UIImage) -> Data? {
+}
+
+nonisolated enum MediaThumbnailFactory {
+    static func thumbnailData(for image: UIImage) -> Data? {
         let maximum: CGFloat = 360
         let ratio = min(maximum / max(image.size.width, 1), maximum / max(image.size.height, 1), 1)
         let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)

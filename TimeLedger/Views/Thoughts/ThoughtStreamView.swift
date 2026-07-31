@@ -5,6 +5,7 @@ struct ThoughtStreamView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ThoughtNote.capturedAt, order: .reverse) private var thoughts: [ThoughtNote]
     @Query(sort: \MediaMoment.capturedAt, order: .reverse) private var mediaMoments: [MediaMoment]
+    @Query private var thoughtMediaLinks: [ThoughtMediaLink]
     @Query private var entries: [TimeEntry]
 
     @State private var showingThoughtCapture = false
@@ -64,7 +65,7 @@ struct ThoughtStreamView: View {
                 }
             }
             .sheet(isPresented: $showingThoughtCapture) {
-                ThoughtQuickCaptureSheet()
+                ThoughtComposerSheet()
             }
         }
     }
@@ -89,7 +90,8 @@ struct ThoughtStreamView: View {
         case .thought(let thought):
             ThoughtCardView(
                 thought: thought,
-                linkedEntry: linkedEntry(for: thought)
+                linkedEntry: linkedEntry(for: thought),
+                mediaMoments: mediaMoments(for: thought)
             )
         case .media(let moment):
             MediaMomentCard(
@@ -102,12 +104,27 @@ struct ThoughtStreamView: View {
     private var filteredItems: [TimelineItem] {
         let thoughtItems = thoughts.map(TimelineItem.thought)
         let mediaItems = mediaMoments
-            .filter { filter.includes($0.kind) }
+            .filter { moment in
+                guard filter.includes(moment.kind) else { return false }
+                return filter != .all || !attachedMediaIDs.contains(moment.id)
+            }
             .map(TimelineItem.media)
         let items = filter == .thoughts ? thoughtItems
             : filter == .photos || filter == .videos ? mediaItems
             : thoughtItems + mediaItems
         return items.sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    private var attachedMediaIDs: Set<UUID> {
+        Set(thoughtMediaLinks.map(\.mediaMomentId))
+    }
+
+    private func mediaMoments(for thought: ThoughtNote) -> [MediaMoment] {
+        (try? ThoughtMediaLinkService(modelContext: modelContext).mediaMoments(
+            for: thought,
+            links: thoughtMediaLinks,
+            moments: mediaMoments
+        )) ?? []
     }
 
     private var daySections: [TimelineDaySection] {

@@ -40,5 +40,6 @@ enum TimeLedgerModels {
         ActionItem.self,
         ActionCompletion.self,
         MediaMoment.self,
+        ThoughtMediaLink.self,
     ]
 }

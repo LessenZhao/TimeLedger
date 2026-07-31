@@ -122,16 +122,23 @@ final class TimeLedgerUITests: XCTestCase {
         XCTAssertTrue(control.waitForExistence(timeout: 3))
 
         control.tap()
-        XCTAssertTrue(app.navigationBars["快速想法"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.navigationBars["记录思考"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["thought.composer.photoLibrary"].exists)
+        XCTAssertTrue(app.buttons["thought.composer.camera"].exists)
         XCTAssertFalse(app.staticTexts["系统相机边界已调用"].exists)
         app.buttons["取消"].tap()
 
         XCTAssertTrue(control.waitForExistence(timeout: 3))
         control.press(forDuration: 0.25)
         XCTAssertTrue(app.staticTexts["系统相机边界已调用"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.navigationBars["快速想法"].exists)
+        XCTAssertFalse(app.navigationBars["记录思考"].exists)
         XCTAssertFalse(app.buttons["系统相册"].exists)
         XCTAssertFalse(app.buttons["两边"].exists)
+        app.buttons["camera.fixture.usePhoto"].tap()
+
+        XCTAssertTrue(app.navigationBars["记录思考"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["1 张附件"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["thought.composer.camera"].exists)
     }
 
     @MainActor

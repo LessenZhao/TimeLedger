@@ -1,17 +1,30 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct ThoughtCardView: View {
     @Environment(\.modelContext) private var modelContext
 
     let thought: ThoughtNote
     let linkedEntry: TimeEntry?
+    let mediaMoments: [MediaMoment]
 
     @State private var showingEdit = false
     @State private var showingManualLink = false
     @State private var showingDeleteAlert = false
     @State private var errorMessage: String?
     @State private var isExpanded = false
+    @State private var selectedMedia: MediaMoment?
+
+    init(
+        thought: ThoughtNote,
+        linkedEntry: TimeEntry?,
+        mediaMoments: [MediaMoment] = []
+    ) {
+        self.thought = thought
+        self.linkedEntry = linkedEntry
+        self.mediaMoments = mediaMoments
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,16 +36,34 @@ struct ThoughtCardView: View {
                 lifecycleBadge
             }
 
-            Text(thought.body)
-                .font(.body)
-                .lineLimit(isExpanded ? nil : 3)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isExpanded.toggle()
+            if !thought.body.isEmpty {
+                Text(thought.body)
+                    .font(.body)
+                    .lineLimit(isExpanded ? nil : 3)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    }
+                    .accessibilityHint(isExpanded ? "轻点收起" : "轻点展开全文")
+            }
+
+            if !mediaMoments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(mediaMoments) { moment in
+                            Button {
+                                selectedMedia = moment
+                            } label: {
+                                attachmentThumbnail(moment)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(moment.kind == .photo ? "查看照片" : "查看视频")
+                        }
                     }
                 }
-                .accessibilityHint(isExpanded ? "轻点收起" : "轻点展开全文")
+            }
 
             if let linkedEntry {
                 linkedEntryInfo(linkedEntry)
@@ -81,6 +112,9 @@ struct ThoughtCardView: View {
         }
         .sheet(isPresented: $showingManualLink) {
             ThoughtManualLinkView(thought: thought, date: thought.capturedAt)
+        }
+        .fullScreenCover(item: $selectedMedia) { moment in
+            MediaViewer(moment: moment)
         }
         .alert("删除这条思考？", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) {}
@@ -145,6 +179,22 @@ struct ThoughtCardView: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func attachmentThumbnail(_ moment: MediaMoment) -> some View {
+        Group {
+            if let image = UIImage(data: moment.thumbnailData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: moment.kind == .photo ? "photo" : "video")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 104, height: 78)
+        .background(Color(.tertiarySystemFill))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func unlink() {

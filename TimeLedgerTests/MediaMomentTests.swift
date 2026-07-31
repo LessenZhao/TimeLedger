@@ -71,6 +71,30 @@ struct MediaMomentTests {
         #expect(moment.pendingRelativePath == nil)
     }
 
+    @Test func failedDurableStagingCreatesNoDatabaseRecord() async throws {
+        let fixture = try Fixture()
+        let blockedRoot = fixture.directory.appending(path: "blocked-root")
+        try Data("not-a-directory".utf8).write(to: blockedRoot, options: .atomic)
+        let service = MediaMomentService(
+            modelContext: fixture.context,
+            fileStore: MediaFileStore(rootURL: blockedRoot),
+            photoLibrary: PhotoLibraryStub()
+        )
+
+        do {
+            _ = try await service.saveCapture(
+                sourceURL: fixture.sourceURL,
+                kind: .photo,
+                capturedAt: fixture.now,
+                thumbnailData: Data([1]),
+                preference: .app
+            )
+            Issue.record("持久暂存失败时不应创建媒体记录")
+        } catch {
+            #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).isEmpty)
+        }
+    }
+
     @Test func photosOnlySavesAssetWithoutAppOriginal() async throws {
         let fixture = try Fixture()
         let photos = PhotoLibraryStub(results: [.success("photos-1")])

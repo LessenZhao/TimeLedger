@@ -6,6 +6,12 @@ struct UITestFixtureService {
 
     func seedIfRequested(now: Date = Date()) throws {
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-testing") {
+            let draftRoot = ThoughtComposerDraftStore().rootURL
+            if FileManager.default.fileExists(atPath: draftRoot.path) {
+                try FileManager.default.removeItem(at: draftRoot)
+            }
+        }
         if arguments.contains("-ui-draft-scroll-fixture") {
             try seedDraftScrollFixture(now: now)
             return

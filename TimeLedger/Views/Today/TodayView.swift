@@ -15,11 +15,12 @@ struct TodayView: View {
     @State private var adjustmentProject: Project?
     @State private var selectedView = 0
     @State private var showingThoughtCapture = false
+    @State private var composerFocusText = true
     @State private var showingAddProject = false
     @State private var showingCamera = false
     @State private var showingCameraFixture = false
+    @State private var pendingCameraCapture: CameraCapture?
     @State private var cameraAccessResult: CameraAccessResult?
-    @State private var mediaSaveIssue: MediaMoment?
     @State private var actionItemAwaitingNewCycle: ActionItem?
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -80,26 +81,38 @@ struct TodayView: View {
             )
         }
         .sheet(isPresented: $showingThoughtCapture) {
-            ThoughtQuickCaptureSheet()
+            ThoughtComposerSheet(focusTextOnAppear: composerFocusText)
         }
         .sheet(isPresented: $showingAddProject) {
             ProjectEditView(project: nil)
         }
-        .fullScreenCover(isPresented: $showingCamera) {
+        .fullScreenCover(
+            isPresented: $showingCamera,
+            onDismiss: handleCameraDismissal
+        ) {
             SystemCameraPicker { result in
-                showingCamera = false
-                guard let result else { return }
+                guard let result else {
+                    showingCamera = false
+                    return
+                }
                 switch result {
                 case .success(let capture):
-                    Task { await saveCapture(capture) }
+                    pendingCameraCapture = capture
                 case .failure(let error):
                     errorMessage = error.localizedDescription
                 }
+                showingCamera = false
             }
             .ignoresSafeArea()
         }
-        .fullScreenCover(isPresented: $showingCameraFixture) {
-            CameraBoundaryFixtureView()
+        .fullScreenCover(
+            isPresented: $showingCameraFixture,
+            onDismiss: handleCameraDismissal
+        ) {
+            CameraBoundaryFixtureView { capture in
+                pendingCameraCapture = capture
+                showingCameraFixture = false
+            }
         }
         .alert("无法打开相机", isPresented: Binding(
             get: { cameraAccessResult != nil },
@@ -111,31 +124,6 @@ struct TodayView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(cameraAccessResult?.message ?? "")
-        }
-        .alert("媒体未完全保存", isPresented: Binding(
-            get: { mediaSaveIssue != nil },
-            set: { if !$0 { mediaSaveIssue = nil } }
-        )) {
-            Button("重试") {
-                if let mediaSaveIssue {
-                    Task {
-                        await MediaMomentService(modelContext: modelContext).retry(mediaSaveIssue)
-                        showIssueIfNeeded(mediaSaveIssue)
-                    }
-                }
-            }
-            Button("改存 TimeLedger") {
-                if let mediaSaveIssue {
-                    Task {
-                        await MediaMomentService(modelContext: modelContext).saveToAppInstead(mediaSaveIssue)
-                        showIssueIfNeeded(mediaSaveIssue)
-                    }
-                }
-            }
-            Button("去设置") { openSystemSettings() }
-            Button("稍后", role: .cancel) {}
-        } message: {
-            Text(mediaSaveIssue?.lastError ?? "原件仍保留，可稍后重试。")
         }
     }
 
@@ -168,7 +156,10 @@ struct TodayView: View {
                         .font(TLTheme.statusFont.weight(.semibold))
                 } else {
                     QuickCaptureCameraControl(
-                        tapAction: { showingThoughtCapture = true },
+                        tapAction: {
+                            composerFocusText = true
+                            showingThoughtCapture = true
+                        },
                         cameraAction: { beginCameraFlow() }
                     )
                 }
@@ -532,27 +523,18 @@ struct TodayView: View {
         }
     }
 
-    private func saveCapture(_ capture: CameraCapture) async {
-        do {
-            let settings = try getOrCreateSettings()
-            let preference = MediaStoragePreference(rawValue: settings.mediaStoragePreference)
-                ?? .photosLibrary
-            let moment = try await MediaMomentService(modelContext: modelContext).saveCapture(
-                sourceURL: capture.sourceURL,
-                kind: capture.kind,
-                capturedAt: capture.capturedAt,
-                thumbnailData: capture.thumbnailData,
-                durationSeconds: capture.durationSeconds,
-                preference: preference
-            )
-            showIssueIfNeeded(moment)
-        } catch {
-            errorMessage = error.localizedDescription
+    private func handleCameraDismissal() {
+        guard let capture = pendingCameraCapture else { return }
+        pendingCameraCapture = nil
+        Task {
+            do {
+                _ = try await ThoughtComposerDraftStore().addCapture(capture)
+                composerFocusText = false
+                showingThoughtCapture = true
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
-    }
-
-    private func showIssueIfNeeded(_ moment: MediaMoment) {
-        mediaSaveIssue = moment.saveStatus == .saved ? nil : moment
     }
 
     private func openSystemSettings() {

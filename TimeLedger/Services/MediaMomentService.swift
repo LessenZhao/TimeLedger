@@ -179,36 +179,41 @@ struct MediaMomentService {
 
     @discardableResult
     func saveCapture(
+        id: UUID = UUID(),
         sourceURL: URL,
         kind: MediaKind,
         capturedAt: Date,
         thumbnailData: Data,
         durationSeconds: Double = 0,
-        preference: MediaStoragePreference
+        preference: MediaStoragePreference,
+        autoLink: Bool = true
     ) async throws -> MediaMoment {
-        let id = UUID()
         let fileExtension = preferredExtension(sourceURL: sourceURL, kind: kind)
+        let pendingRelativePath = try await fileStore.stage(
+            originalAt: sourceURL,
+            id: id,
+            fileExtension: fileExtension
+        )
         let moment = MediaMoment(
             id: id,
             kind: kind,
             capturedAt: capturedAt,
             requestedStorage: preference,
+            pendingRelativePath: pendingRelativePath,
             sourceTemporaryPath: sourceURL.path,
             thumbnailData: thumbnailData,
             durationSeconds: durationSeconds
         )
         modelContext.insert(moment)
-        try modelContext.save()
-        _ = try? MediaLinkingService(modelContext: modelContext).tryAutoLink(moment)
         do {
-            moment.pendingRelativePath = try await fileStore.stage(
-                originalAt: sourceURL,
-                id: id,
-                fileExtension: fileExtension
-            )
             try modelContext.save()
         } catch {
-            mark(moment, status: .failed, errors: [error])
+            modelContext.delete(moment)
+            await fileStore.delete(relativePath: pendingRelativePath)
+            throw error
+        }
+        if autoLink {
+            _ = try? MediaLinkingService(modelContext: modelContext).tryAutoLink(moment)
         }
         await completeDestinations(for: moment)
         return moment
@@ -244,6 +249,7 @@ struct MediaMomentService {
         await fileStore.delete(relativePath: moment.appRelativePath)
         await fileStore.delete(relativePath: moment.pendingRelativePath)
         await fileStore.delete(absolutePath: moment.sourceTemporaryPath)
+        try? ThoughtMediaLinkService(modelContext: modelContext).removeLinks(for: moment)
         modelContext.delete(moment)
         try? modelContext.save()
     }

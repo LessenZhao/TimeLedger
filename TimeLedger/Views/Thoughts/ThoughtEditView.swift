@@ -4,6 +4,7 @@ import SwiftData
 struct ThoughtEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query private var mediaLinks: [ThoughtMediaLink]
 
     let thought: ThoughtNote
     let entry: TimeEntry?
@@ -51,7 +52,10 @@ struct ThoughtEditView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("保存", action: save)
-                    .disabled(thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            && !hasAttachedMedia
+                    )
             }
         }
         .alert("操作失败", isPresented: Binding(
@@ -70,6 +74,10 @@ struct ThoughtEditView: View {
         case .auto: "自动关联"
         case .manual: "手动关联"
         }
+    }
+
+    private var hasAttachedMedia: Bool {
+        mediaLinks.contains { $0.thoughtId == thought.id }
     }
 
     private func save() {

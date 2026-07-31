@@ -40,6 +40,8 @@ struct ThoughtLinkingService {
             thought.linkSource = ThoughtLinkSource.auto.rawValue
             thought.updatedAt = Date()
             try modelContext.save()
+            try ThoughtMediaLinkService(modelContext: modelContext)
+                .synchronizeAttachedMedia(for: thought)
             return true
         } else {
             let sorted = covering.sorted { a, b in
@@ -54,6 +56,8 @@ struct ThoughtLinkingService {
             thought.linkSource = ThoughtLinkSource.auto.rawValue
             thought.updatedAt = Date()
             try modelContext.save()
+            try ThoughtMediaLinkService(modelContext: modelContext)
+                .synchronizeAttachedMedia(for: thought)
             return true
         }
     }
@@ -81,6 +85,10 @@ struct ThoughtLinkingService {
 
         if !toLink.isEmpty {
             try modelContext.save()
+            for thought in toLink {
+                try ThoughtMediaLinkService(modelContext: modelContext)
+                    .synchronizeAttachedMedia(for: thought)
+            }
         }
         return toLink.count
     }
@@ -162,6 +170,10 @@ struct ThoughtLinkingService {
 
         if relinkedCount > 0 {
             try modelContext.save()
+            for thought in thoughts {
+                try ThoughtMediaLinkService(modelContext: modelContext)
+                    .synchronizeAttachedMedia(for: thought)
+            }
         }
         return relinkedCount
     }
@@ -188,6 +200,8 @@ struct ThoughtLinkingService {
         thought.linkSource = ThoughtLinkSource.manual.rawValue
         thought.updatedAt = Date()
         try modelContext.save()
+        try ThoughtMediaLinkService(modelContext: modelContext)
+            .synchronizeAttachedMedia(for: thought)
     }
 
     func unlinkThought(_ thought: ThoughtNote) throws {
@@ -195,6 +209,8 @@ struct ThoughtLinkingService {
         thought.linkSource = ThoughtLinkSource.none.rawValue
         thought.updatedAt = Date()
         try modelContext.save()
+        try ThoughtMediaLinkService(modelContext: modelContext)
+            .synchronizeAttachedMedia(for: thought)
     }
 
     // MARK: - Queries
@@ -233,6 +249,7 @@ struct ThoughtLinkingService {
     }
 
     func deleteThought(_ thought: ThoughtNote) throws {
+        try ThoughtMediaLinkService(modelContext: modelContext).removeLinks(for: thought)
         modelContext.delete(thought)
         try modelContext.save()
     }
