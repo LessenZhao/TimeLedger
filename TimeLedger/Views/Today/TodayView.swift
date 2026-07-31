@@ -20,6 +20,7 @@ struct TodayView: View {
     @State private var showingCameraFixture = false
     @State private var cameraAccessResult: CameraAccessResult?
     @State private var mediaSaveIssue: MediaMoment?
+    @State private var actionItemAwaitingNewCycle: ActionItem?
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -53,6 +54,17 @@ struct TodayView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+        .alert("开始新一轮？", isPresented: Binding(
+            get: { actionItemAwaitingNewCycle != nil },
+            set: { if !$0 { actionItemAwaitingNewCycle = nil } }
+        )) {
+            Button("开始新一轮") {
+                startNewActionCycle()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会保留之前的完成记录，并让这个事项恢复为待完成。")
         }
         .sheet(item: $adjustmentProject) { project in
             TimeAdjustmentSheet(
@@ -266,42 +278,78 @@ struct TodayView: View {
     private func actionButton(_ item: ActionItem) -> some View {
         let completed = isCompletedToday(item)
 
-        return Button {
-            completeAction(item)
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: completed ? "checkmark.circle.fill" : "circle")
-                Text(item.title)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(completed ? Color.white : Color.primary)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 42)
-            .background(
+        return HStack(spacing: 7) {
+            Text(actionDisplayTitle(for: item))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 14, weight: .semibold))
+        .foregroundStyle(completed ? Color.white : Color.primary)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 42)
+        .background(
+            RoundedRectangle(cornerRadius: TLTheme.cardRadius)
+                .fill(completed ? Color.accentColor : TLTheme.cardBackground)
+        )
+        .overlay {
+            if !completed {
                 RoundedRectangle(cornerRadius: TLTheme.cardRadius)
-                    .fill(completed ? Color.accentColor : TLTheme.cardBackground)
-            )
-            .overlay {
-                if !completed {
-                    RoundedRectangle(cornerRadius: TLTheme.cardRadius)
-                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                }
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
-        .disabled(completed)
+        .contentShape(Rectangle())
+        .gesture(
+            LongPressGesture(minimumDuration: 0.2, maximumDistance: 24)
+                .exclusively(before: TapGesture())
+                .onEnded { result in
+                    switch result {
+                    case .first:
+                        if completed {
+                            offerNewActionCycle(for: item)
+                        } else {
+                            completeAction(item)
+                        }
+                    case .second:
+                        break
+                    }
+                }
+        )
+        .accessibilityElement()
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(item.title)
-        .accessibilityValue(completed ? "已完成" : "未完成")
+        .accessibilityValue(actionAccessibilityValue(for: item))
+        .accessibilityAction {
+            guard !completed else { return }
+            completeAction(item)
+        }
+        .accessibilityAction(named: Text("开始新一轮")) {
+            offerNewActionCycle(for: item)
+        }
         .accessibilityIdentifier("today.action.\(item.id.uuidString)")
     }
 
     private func isCompletedToday(_ item: ActionItem) -> Bool {
+        item.activeCycleStartedAt == nil && todayCompletionCount(for: item) > 0
+    }
+
+    private func todayCompletionCount(for item: ActionItem) -> Int {
         let today = Calendar.current.startOfDay(for: now)
-        return actionCompletions.contains {
+        return actionCompletions.count {
             $0.actionItemId == item.id && $0.dayStart == today
         }
+    }
+
+    private func actionDisplayTitle(for item: ActionItem) -> String {
+        let count = todayCompletionCount(for: item)
+        return "\(count)次  \(item.title)"
+    }
+
+    private func actionAccessibilityValue(for item: ActionItem) -> String {
+        let count = todayCompletionCount(for: item)
+        if item.activeCycleStartedAt != nil {
+            return "第\(count + 1)轮未完成，今天已完成\(count)次"
+        }
+        return count > 0 ? "已完成，今天\(count)次" : "未完成，今天0次"
     }
 
     private func completeAction(_ item: ActionItem) {
@@ -311,6 +359,26 @@ struct TodayView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             now = completedAt
         } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func offerNewActionCycle(for item: ActionItem) {
+        guard isCompletedToday(item) else { return }
+        actionItemAwaitingNewCycle = item
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func startNewActionCycle() {
+        guard let item = actionItemAwaitingNewCycle else { return }
+        do {
+            let startedAt = Date()
+            try ActionCompletionService(modelContext: modelContext).startNewCycle(for: item, now: startedAt)
+            actionItemAwaitingNewCycle = nil
+            now = startedAt
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } catch {
+            actionItemAwaitingNewCycle = nil
             errorMessage = error.localizedDescription
         }
     }

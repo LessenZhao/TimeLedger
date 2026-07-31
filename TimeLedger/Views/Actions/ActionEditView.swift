@@ -4,7 +4,6 @@ import SwiftUI
 struct ActionEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query private var completions: [ActionCompletion]
 
     let item: ActionItem?
     let defaultSortOrder: Int
@@ -13,7 +12,6 @@ struct ActionEditView: View {
     @State private var sortOrder = 0
     @State private var isArchived = false
     @State private var errorMessage: String?
-    @State private var showingUndoConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -24,29 +22,6 @@ struct ActionEditView: View {
                     Stepper("排序：\(sortOrder)", value: $sortOrder, in: 0...999)
                     if item != nil {
                         Toggle("已归档", isOn: $isArchived)
-                    }
-                }
-
-                if let item {
-                    Section("今天") {
-                        if let completion = todayCompletion(for: item) {
-                            LabeledContent("状态", value: "已完成")
-                            LabeledContent(
-                                "完成时间",
-                                value: DateFormatterFactory.dateTime.string(from: completion.completedAt)
-                            )
-                            if completion.linkedEntryId == nil {
-                                Text("尚未找到覆盖这个时刻的时间项目，补录后会自动关联。")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Button("撤销今日完成", role: .destructive) {
-                                showingUndoConfirmation = true
-                            }
-                            .accessibilityIdentifier("action.undo")
-                        } else {
-                            LabeledContent("状态", value: "未完成")
-                        }
                     }
                 }
 
@@ -72,12 +47,6 @@ struct ActionEditView: View {
             }
             .onAppear(perform: load)
         }
-        .alert("撤销今天的完成记录？", isPresented: $showingUndoConfirmation) {
-            Button("保留", role: .cancel) {}
-            Button("撤销完成", role: .destructive, action: undoToday)
-        } message: {
-            Text("只删除今天这一次完成事实，不影响事项和时间项目。")
-        }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -85,13 +54,6 @@ struct ActionEditView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
-        }
-    }
-
-    private func todayCompletion(for item: ActionItem) -> ActionCompletion? {
-        let today = Calendar.current.startOfDay(for: Date())
-        return completions.first {
-            $0.actionItemId == item.id && $0.dayStart == today
         }
     }
 
@@ -124,13 +86,4 @@ struct ActionEditView: View {
         }
     }
 
-    private func undoToday() {
-        guard let item else { return }
-        do {
-            try ActionCompletionService(modelContext: modelContext).undoCompletion(for: item)
-            showingUndoConfirmation = false
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
 }

@@ -27,6 +27,107 @@ struct ActionCompletionServiceTests {
         #expect(try context.fetch(FetchDescriptor<ActionCompletion>()).count == 1)
     }
 
+    @Test func persistedNewCycleAllowsSecondCompletionWithinNaturalDay() throws {
+        let context = try makeContext()
+        let service = ActionCompletionService(modelContext: context, calendar: calendar)
+        let item = try service.createItem(title: "吃药")
+
+        let first = try service.complete(item, now: date("2026-07-08 00:30"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 08:00"))
+        #expect(item.activeCycleStartedAt == date("2026-07-08 08:00"))
+
+        let second = try service.complete(item, now: date("2026-07-08 12:00"))
+
+        let completions = try context.fetch(
+            FetchDescriptor<ActionCompletion>(sortBy: [SortDescriptor(\.completedAt)])
+        )
+        #expect(completions.map(\.id) == [first.id, second.id])
+        #expect(completions.map(\.dayStart) == [
+            calendar.startOfDay(for: date("2026-07-08 00:30")),
+            calendar.startOfDay(for: date("2026-07-08 12:00")),
+        ])
+        #expect(item.activeCycleStartedAt == nil)
+        #expect(try service.completionCount(for: item, on: date("2026-07-08 23:00")) == 2)
+    }
+
+    @Test func pendingCycleSurvivesStoreReopen() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "ActionCyclePersistence-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appending(path: "TimeLedger.store")
+        let schema = Schema(TimeLedgerModels.all)
+        let configuration = ModelConfiguration("ActionCyclePersistence", schema: schema, url: storeURL)
+
+        var container: ModelContainer? = try ModelContainer(
+            for: schema,
+            configurations: [configuration]
+        )
+        var context: ModelContext? = ModelContext(container!)
+        let service = ActionCompletionService(modelContext: context!, calendar: calendar)
+        let item = try service.createItem(title: "吃药", now: date("2026-07-08 00:20"))
+        _ = try service.complete(item, now: date("2026-07-08 00:30"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 08:00"))
+        let itemID = item.id
+        context = nil
+        container = nil
+
+        let reopenedContainer = try ModelContainer(
+            for: schema,
+            configurations: [configuration]
+        )
+        let reopenedContext = ModelContext(reopenedContainer)
+        let reopenedItem = try reopenedContext.fetch(FetchDescriptor<ActionItem>()).first {
+            $0.id == itemID
+        }
+
+        #expect(reopenedItem?.activeCycleStartedAt == date("2026-07-08 08:00"))
+    }
+
+    @Test func completionCountUsesCompletionDayAndResetsAtMidnight() throws {
+        let context = try makeContext()
+        let service = ActionCompletionService(modelContext: context, calendar: calendar)
+        let item = try service.createItem(title: "吃药")
+
+        _ = try service.complete(item, now: date("2026-07-08 23:50"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 23:55"))
+        _ = try service.complete(item, now: date("2026-07-09 00:10"))
+        try service.startNewCycle(for: item, now: date("2026-07-09 08:00"))
+        _ = try service.complete(item, now: date("2026-07-09 12:00"))
+
+        #expect(try service.completionCount(for: item, on: date("2026-07-08 23:59")) == 1)
+        #expect(try service.completionCount(for: item, on: date("2026-07-09 23:59")) == 2)
+    }
+
+    @Test func sameDayCyclesLinkToTheirOwnCoveringEntries() throws {
+        let context = try makeContext()
+        let firstEntry = TimeEntry(
+            projectId: UUID(),
+            projectNameSnapshot: "上午",
+            categoryNameSnapshot: "测试",
+            startAt: date("2026-07-08 08:00"),
+            endAt: date("2026-07-08 09:00")
+        )
+        let secondEntry = TimeEntry(
+            projectId: UUID(),
+            projectNameSnapshot: "下午",
+            categoryNameSnapshot: "测试",
+            startAt: date("2026-07-08 14:00"),
+            endAt: date("2026-07-08 15:00")
+        )
+        context.insert(firstEntry)
+        context.insert(secondEntry)
+        let service = ActionCompletionService(modelContext: context, calendar: calendar)
+        let item = try service.createItem(title: "吃药")
+
+        let first = try service.complete(item, now: date("2026-07-08 08:30"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 10:00"))
+        let second = try service.complete(item, now: date("2026-07-08 14:30"))
+
+        #expect(first.linkedEntryId == firstEntry.id)
+        #expect(second.linkedEntryId == secondEntry.id)
+    }
+
     @Test func completionResetsAtLocalMidnight() throws {
         let context = try makeContext()
         let service = ActionCompletionService(modelContext: context, calendar: calendar)
@@ -222,6 +323,37 @@ struct ActionCompletionServiceTests {
         let completions = try context.fetch(FetchDescriptor<ActionCompletion>())
         #expect(completions.count == 1)
         #expect(completions.first?.dayStart == calendar.startOfDay(for: date("2026-07-08 12:00")))
+    }
+
+    @Test func undoRemovesOnlyLatestCompletionWithinSameDay() throws {
+        let context = try makeContext()
+        let service = ActionCompletionService(modelContext: context, calendar: calendar)
+        let item = try service.createItem(title: "吃药")
+        let first = try service.complete(item, now: date("2026-07-08 08:00"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 10:00"))
+        _ = try service.complete(item, now: date("2026-07-08 12:00"))
+
+        try service.undoCompletion(for: item, on: date("2026-07-08 20:00"))
+
+        let completions = try context.fetch(FetchDescriptor<ActionCompletion>())
+        #expect(completions.map(\.id) == [first.id])
+    }
+
+    @Test func deletingSpecificCompletionPreservesOtherRecordsAndItem() throws {
+        let context = try makeContext()
+        let service = ActionCompletionService(modelContext: context, calendar: calendar)
+        let item = try service.createItem(title: "吃药")
+        let first = try service.complete(item, now: date("2026-07-08 08:00"))
+        try service.startNewCycle(for: item, now: date("2026-07-08 10:00"))
+        let second = try service.complete(item, now: date("2026-07-08 12:00"))
+
+        try service.deleteCompletion(first)
+
+        let completions = try context.fetch(FetchDescriptor<ActionCompletion>())
+        let items = try context.fetch(FetchDescriptor<ActionItem>())
+        #expect(completions.map(\.id) == [second.id])
+        #expect(items.map(\.id) == [item.id])
+        #expect(try service.completionCount(for: item, on: date("2026-07-08 20:00")) == 1)
     }
 
     @Test func archivedItemCannotBeCompleted() throws {

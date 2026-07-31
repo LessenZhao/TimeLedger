@@ -5,6 +5,7 @@ enum ActionCompletionError: LocalizedError {
     case emptyTitle
     case archivedItem
     case missingCompletion
+    case completionRequiredBeforeNewCycle
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum ActionCompletionError: LocalizedError {
             "已归档事项不能标记完成。"
         case .missingCompletion:
             "今天还没有这条完成记录。"
+        case .completionRequiredBeforeNewCycle:
+            "请先完成当前这一轮。"
         }
     }
 }
@@ -60,15 +63,42 @@ struct ActionCompletionService {
         item.title = trimmed
         item.sortOrder = sortOrder
         item.isArchived = isArchived
+        if isArchived {
+            item.activeCycleStartedAt = nil
+        }
         item.updatedAt = now
         try modelContext.save()
     }
 
-    func completion(for item: ActionItem, on date: Date = Date()) throws -> ActionCompletion? {
+    func completions(for item: ActionItem, on date: Date = Date()) throws -> [ActionCompletion] {
         let day = calendar.startOfDay(for: date)
-        return try allCompletions().first {
+        return try allCompletions().filter {
             $0.actionItemId == item.id && $0.dayStart == day
         }
+    }
+
+    func completion(for item: ActionItem, on date: Date = Date()) throws -> ActionCompletion? {
+        try completions(for: item, on: date).last
+    }
+
+    func completionCount(for item: ActionItem, on date: Date = Date()) throws -> Int {
+        try completions(for: item, on: date).count
+    }
+
+    func startNewCycle(for item: ActionItem, now: Date = Date()) throws {
+        guard !item.isArchived else {
+            throw ActionCompletionError.archivedItem
+        }
+        guard item.activeCycleStartedAt == nil else {
+            return
+        }
+        guard try completionCount(for: item, on: now) > 0 else {
+            throw ActionCompletionError.completionRequiredBeforeNewCycle
+        }
+
+        item.activeCycleStartedAt = now
+        item.updatedAt = now
+        try modelContext.save()
     }
 
     @discardableResult
@@ -76,10 +106,23 @@ struct ActionCompletionService {
         guard !item.isArchived else {
             throw ActionCompletionError.archivedItem
         }
+        if item.activeCycleStartedAt != nil {
+            let completion = try makeCompletion(for: item, now: now)
+            item.activeCycleStartedAt = nil
+            item.updatedAt = now
+            try modelContext.save()
+            return completion
+        }
         if let existing = try completion(for: item, on: now) {
             return existing
         }
 
+        let completion = try makeCompletion(for: item, now: now)
+        try modelContext.save()
+        return completion
+    }
+
+    private func makeCompletion(for item: ActionItem, now: Date) throws -> ActionCompletion {
         let completion = ActionCompletion(
             actionItemId: item.id,
             actionTitleSnapshot: item.title,
@@ -90,7 +133,6 @@ struct ActionCompletionService {
             updatedAt: now
         )
         modelContext.insert(completion)
-        try modelContext.save()
         return completion
     }
 
@@ -98,6 +140,11 @@ struct ActionCompletionService {
         guard let completion = try completion(for: item, on: date) else {
             throw ActionCompletionError.missingCompletion
         }
+        modelContext.delete(completion)
+        try modelContext.save()
+    }
+
+    func deleteCompletion(_ completion: ActionCompletion) throws {
         modelContext.delete(completion)
         try modelContext.save()
     }

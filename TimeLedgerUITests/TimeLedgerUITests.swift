@@ -50,10 +50,24 @@ final class TimeLedgerUITests: XCTestCase {
         app.tabBars.buttons["今天"].tap()
         let actionButton = app.buttons["吃药"]
         XCTAssertTrue(actionButton.waitForExistence(timeout: 3))
-        XCTAssertEqual(actionButton.value as? String, "未完成")
+        XCTAssertEqual(actionButton.images.count, 0)
+        XCTAssertEqual(actionButton.value as? String, "未完成，今天0次")
         actionButton.tap()
-        XCTAssertEqual(actionButton.value as? String, "已完成")
-        XCTAssertFalse(actionButton.isEnabled)
+        XCTAssertEqual(actionButton.value as? String, "未完成，今天0次")
+        actionButton.press(forDuration: 0.1)
+        XCTAssertEqual(actionButton.value as? String, "未完成，今天0次")
+        actionButton.press(forDuration: 0.25)
+        XCTAssertEqual(actionButton.value as? String, "已完成，今天1次")
+        XCTAssertTrue(actionButton.isEnabled)
+
+        actionButton.press(forDuration: 0.25)
+        XCTAssertTrue(app.alerts["开始新一轮？"].waitForExistence(timeout: 3))
+        app.alerts["开始新一轮？"].buttons["开始新一轮"].tap()
+        XCTAssertEqual(actionButton.value as? String, "第2轮未完成，今天已完成1次")
+        actionButton.press(forDuration: 0.1)
+        XCTAssertEqual(actionButton.value as? String, "第2轮未完成，今天已完成1次")
+        actionButton.press(forDuration: 0.25)
+        XCTAssertEqual(actionButton.value as? String, "已完成，今天2次")
 
         let addProject = app.buttons["添加项目"]
         XCTAssertTrue(addProject.waitForExistence(timeout: 3))
@@ -76,7 +90,26 @@ final class TimeLedgerUITests: XCTestCase {
         XCTAssertTrue(editEntry.waitForExistence(timeout: 3))
         editEntry.tap()
         XCTAssertTrue(app.staticTexts["完成事项"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["吃药"].exists)
+        XCTAssertEqual(
+            app.staticTexts.matching(NSPredicate(format: "label == %@", "吃药")).count,
+            2
+        )
+
+        app.navigationBars["编辑草稿"].buttons.element(boundBy: 0).tap()
+        app.tabBars.buttons["事项"].tap()
+        let deleteCompletionButtons = app.buttons.matching(
+            NSPredicate(format: "label == %@", "删除 吃药 记录")
+        )
+        XCTAssertEqual(deleteCompletionButtons.count, 2)
+        deleteCompletionButtons.firstMatch.tap()
+        XCTAssertTrue(app.alerts["删除这次完成记录？"].waitForExistence(timeout: 3))
+        app.alerts["删除这次完成记录？"].buttons["删除"].tap()
+        XCTAssertEqual(deleteCompletionButtons.count, 1)
+
+        app.tabBars.buttons["今天"].tap()
+        app.segmentedControls.buttons["项目"].tap()
+        XCTAssertTrue(app.buttons["吃药"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["吃药"].value as? String, "已完成，今天1次")
     }
 
     @MainActor

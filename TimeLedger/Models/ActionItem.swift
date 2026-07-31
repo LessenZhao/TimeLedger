@@ -7,6 +7,7 @@ final class ActionItem {
     var title: String
     var sortOrder: Int
     var isArchived: Bool
+    var activeCycleStartedAt: Date?
     var createdAt: Date
     var updatedAt: Date
 
@@ -15,6 +16,7 @@ final class ActionItem {
         title: String,
         sortOrder: Int = 0,
         isArchived: Bool = false,
+        activeCycleStartedAt: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -22,6 +24,7 @@ final class ActionItem {
         self.title = title
         self.sortOrder = sortOrder
         self.isArchived = isArchived
+        self.activeCycleStartedAt = activeCycleStartedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
