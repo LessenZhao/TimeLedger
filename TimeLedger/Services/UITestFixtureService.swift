@@ -79,6 +79,40 @@ struct UITestFixtureService {
             status: .saved,
             originalAvailability: .unavailable
         )
+        let standalonePhoto = MediaMoment(
+            kind: .photo,
+            capturedAt: draftStart.addingTimeInterval(25 * 60),
+            linkedEntryId: draft.id,
+            linkSource: .manual,
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let standaloneVideo = MediaMoment(
+            kind: .video,
+            capturedAt: confirmedStart.addingTimeInterval(25 * 60),
+            linkedEntryId: confirmed.id,
+            linkSource: .manual,
+            requestedStorage: .photosLibrary,
+            storedLocation: .photosLibrary,
+            photosAssetIdentifier: "ui-fixture-standalone-video",
+            thumbnailData: Data(),
+            durationSeconds: 12,
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let photoLink = ThoughtMediaLink(
+            thoughtId: draftThought.id,
+            mediaMomentId: photo.id,
+            sortOrder: 0
+        )
+        let videoLink = ThoughtMediaLink(
+            thoughtId: confirmedThought.id,
+            mediaMomentId: video.id,
+            sortOrder: 0
+        )
 
         modelContext.insert(draftProject)
         modelContext.insert(confirmedProject)
@@ -88,6 +122,10 @@ struct UITestFixtureService {
         modelContext.insert(confirmedThought)
         modelContext.insert(photo)
         modelContext.insert(video)
+        modelContext.insert(standalonePhoto)
+        modelContext.insert(standaloneVideo)
+        modelContext.insert(photoLink)
+        modelContext.insert(videoLink)
         try modelContext.save()
     }
 

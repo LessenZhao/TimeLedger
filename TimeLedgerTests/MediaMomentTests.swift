@@ -71,6 +71,23 @@ struct MediaMomentTests {
         #expect(moment.pendingRelativePath == nil)
     }
 
+    @Test func refreshingAnUnchangedAvailabilityDoesNotRewriteTheMediaMoment() async throws {
+        let fixture = try Fixture()
+        let moment = try await fixture.service(photos: PhotoLibraryStub()).saveCapture(
+            sourceURL: fixture.sourceURL,
+            kind: .photo,
+            capturedAt: fixture.now,
+            thumbnailData: Data([1, 2]),
+            preference: .app
+        )
+        let updatedAt = moment.updatedAt
+
+        await fixture.service(photos: PhotoLibraryStub()).refreshOriginalAvailability(moment)
+
+        #expect(moment.availability == .available)
+        #expect(moment.updatedAt == updatedAt)
+    }
+
     @Test func failedDurableStagingCreatesNoDatabaseRecord() async throws {
         let fixture = try Fixture()
         let blockedRoot = fixture.directory.appending(path: "blocked-root")

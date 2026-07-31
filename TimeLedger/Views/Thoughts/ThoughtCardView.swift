@@ -1,6 +1,5 @@
 import SwiftData
 import SwiftUI
-import UIKit
 
 struct ThoughtCardView: View {
     @Environment(\.modelContext) private var modelContext
@@ -182,19 +181,12 @@ struct ThoughtCardView: View {
     }
 
     private func attachmentThumbnail(_ moment: MediaMoment) -> some View {
-        Group {
-            if let image = UIImage(data: moment.thumbnailData) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: moment.kind == .photo ? "photo" : "video")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: 104, height: 78)
-        .background(Color(.tertiarySystemFill))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        TimelineThumbnailView(
+            mediaID: moment.id,
+            thumbnailData: moment.thumbnailData,
+            kind: moment.kind,
+            size: CGSize(width: 104, height: 78)
+        )
     }
 
     private func unlink() {

@@ -250,34 +250,57 @@ final class TimeLedgerUITests: XCTestCase {
     }
 
     @MainActor
-    func testTimelineFourFiltersShowCorrectKinds() throws {
+    func testTimelineFilterSheetShowsCorrectKinds() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-media-fixture"]
         app.launch()
         app.tabBars.buttons["时间线"].tap()
 
-        let filter = app.segmentedControls["timeline.filter"]
+        let filter = app.buttons["timeline.filter.button"]
         XCTAssertTrue(filter.waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
         XCTAssertTrue(app.staticTexts["照片"].exists)
         XCTAssertTrue(app.staticTexts["视频"].exists)
 
-        filter.buttons["思考"].tap()
+        filter.tap()
+        app.buttons["timeline.filter.option.text"].tap()
+        app.buttons["timeline.filter.done"].tap()
         XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
         XCTAssertFalse(app.staticTexts["照片"].exists)
         XCTAssertFalse(app.staticTexts["视频"].exists)
 
-        filter.buttons["照片"].tap()
+        filter.tap()
+        app.buttons["timeline.filter.reset"].tap()
+        app.buttons["timeline.filter.option.photos"].tap()
+        app.buttons["timeline.filter.done"].tap()
         XCTAssertTrue(app.staticTexts["照片"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
         XCTAssertFalse(app.staticTexts["Fixture 已确认思考全文"].exists)
         XCTAssertFalse(app.staticTexts["视频"].exists)
 
-        filter.buttons["视频"].tap()
+        filter.tap()
+        app.buttons["timeline.filter.reset"].tap()
+        app.buttons["timeline.filter.option.videos"].tap()
+        app.buttons["timeline.filter.done"].tap()
         XCTAssertTrue(app.staticTexts["视频"].exists)
-        XCTAssertFalse(app.staticTexts["照片"].exists)
         XCTAssertFalse(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)
+        XCTAssertFalse(app.staticTexts["照片"].exists)
 
-        filter.buttons["全部"].tap()
+        filter.tap()
+        app.buttons["timeline.filter.reset"].tap()
+        app.buttons["timeline.filter.option.text"].tap()
+        app.buttons["timeline.filter.option.photos"].tap()
+        app.buttons["timeline.filter.done"].tap()
+        XCTAssertTrue(app.staticTexts["照片"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)
+        XCTAssertTrue(app.staticTexts["Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。"].exists)
+        XCTAssertFalse(app.staticTexts["视频"].exists)
+
+        filter.tap()
+        app.buttons["timeline.filter.reset"].tap()
+        app.buttons["timeline.filter.done"].tap()
         XCTAssertTrue(app.staticTexts["照片"].exists)
         XCTAssertTrue(app.staticTexts["视频"].exists)
         XCTAssertTrue(app.staticTexts["Fixture 已确认思考全文"].exists)

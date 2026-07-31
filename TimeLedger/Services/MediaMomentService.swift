@@ -368,6 +368,7 @@ struct MediaMomentService {
     }
 
     private func setAvailability(_ availability: MediaOriginalAvailability, for moment: MediaMoment) {
+        guard moment.originalAvailability != availability.rawValue else { return }
         moment.originalAvailability = availability.rawValue
         moment.updatedAt = Date()
         try? modelContext.save()

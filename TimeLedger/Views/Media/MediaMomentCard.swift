@@ -1,6 +1,5 @@
 import SwiftData
 import SwiftUI
-import UIKit
 
 struct MediaMomentCard: View {
     @Environment(\.modelContext) private var modelContext
@@ -111,20 +110,12 @@ struct MediaMomentCard: View {
     }
 
     private var thumbnail: some View {
-        Group {
-            if let image = UIImage(data: moment.thumbnailData) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: moment.kind == .photo ? "photo" : "video")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: 92, height: 72)
-        .background(Color(.tertiarySystemFill))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        TimelineThumbnailView(
+            mediaID: moment.id,
+            thumbnailData: moment.thumbnailData,
+            kind: moment.kind,
+            size: CGSize(width: 92, height: 72)
+        )
         .overlay(alignment: .center) {
             if moment.kind == .video {
                 Image(systemName: "play.circle.fill")

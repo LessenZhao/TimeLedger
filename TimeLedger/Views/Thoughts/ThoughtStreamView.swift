@@ -2,43 +2,44 @@ import SwiftData
 import SwiftUI
 
 struct ThoughtStreamView: View {
-    @Environment(\.modelContext) private var modelContext
     @Query(sort: \ThoughtNote.capturedAt, order: .reverse) private var thoughts: [ThoughtNote]
     @Query(sort: \MediaMoment.capturedAt, order: .reverse) private var mediaMoments: [MediaMoment]
     @Query private var thoughtMediaLinks: [ThoughtMediaLink]
     @Query private var entries: [TimeEntry]
 
     @State private var showingThoughtCapture = false
-    @State private var filter = TimelineFilter.all
+    @State private var showingFilter = false
+    @State private var selectedFilters: Set<TimelineContentFilter> = []
 
     var body: some View {
+        let records = TimelineProjection.records(
+            thoughts: thoughts,
+            mediaMoments: mediaMoments,
+            mediaLinks: thoughtMediaLinks
+        )
+        .filter { TimelineContentFilter.matches($0, selectedFilters: selectedFilters) }
+        let sections = daySections(for: records)
+        let entriesByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("筛选", selection: $filter) {
-                    ForEach(TimelineFilter.allCases) { item in
-                        Text(item.title).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .accessibilityIdentifier("timeline.filter")
+                filterSummary(recordsCount: records.count)
 
-                if filteredItems.isEmpty {
+                if sections.isEmpty {
                     ContentUnavailableView(
-                        filter.emptyTitle,
-                        systemImage: filter.emptyIcon,
-                        description: Text(filter.emptyDescription)
+                        selectedFilters.isEmpty ? "还没有时间点" : "没有符合筛选的记录",
+                        systemImage: selectedFilters.isEmpty ? "clock" : "line.3.horizontal.decrease.circle",
+                        description: Text(emptyDescription)
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
-                            ForEach(daySections) { section in
+                            ForEach(sections) { section in
                                 Section {
                                     LazyVStack(spacing: 10) {
-                                        ForEach(section.items) { item in
-                                            timelineCard(item)
+                                        ForEach(section.items) { record in
+                                            timelineCard(record, entriesByID: entriesByID)
                                         }
                                     }
                                     .padding(.horizontal, 16)
@@ -67,78 +68,100 @@ struct ThoughtStreamView: View {
             .sheet(isPresented: $showingThoughtCapture) {
                 ThoughtComposerSheet()
             }
+            .sheet(isPresented: $showingFilter) {
+                TimelineFilterSheet(selectedFilters: $selectedFilters)
+            }
         }
     }
 
-    private var entryById: [UUID: TimeEntry] {
-        Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+    private func filterSummary(recordsCount: Int) -> some View {
+        Button {
+            showingFilter = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selectedFilters.isEmpty
+                      ? "line.3.horizontal.decrease.circle"
+                      : "line.3.horizontal.decrease.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedFilters.isEmpty ? "显示：全部" : "已筛选：\(selectedFilterTitles)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(recordsCount) 条记录")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(TLTheme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .accessibilityIdentifier("timeline.filter.button")
     }
 
-    private func linkedEntry(for thought: ThoughtNote) -> TimeEntry? {
-        guard let id = thought.linkedEntryId else { return nil }
-        return entryById[id]
+    private var selectedFilterTitles: String {
+        TimelineContentFilter.allCases
+            .filter(selectedFilters.contains)
+            .map(\.displayTitle)
+            .joined(separator: "、")
     }
 
-    private func linkedEntry(for moment: MediaMoment) -> TimeEntry? {
-        guard let id = moment.linkedEntryId else { return nil }
-        return entryById[id]
+    private var emptyDescription: String {
+        selectedFilters.isEmpty
+            ? "文字、照片和视频会按时间展示在这里。"
+            : "调整筛选条件，或重置为查看全部记录。"
     }
 
     @ViewBuilder
-    private func timelineCard(_ item: TimelineItem) -> some View {
-        switch item {
-        case .thought(let thought):
+    private func timelineCard(
+        _ record: TimelineRecord,
+        entriesByID: [UUID: TimeEntry]
+    ) -> some View {
+        if let thought = record.thought {
             ThoughtCardView(
                 thought: thought,
-                linkedEntry: linkedEntry(for: thought),
-                mediaMoments: mediaMoments(for: thought)
+                linkedEntry: linkedEntry(for: thought.linkedEntryId, entriesByID: entriesByID),
+                mediaMoments: record.mediaMoments
             )
-        case .media(let moment):
+        } else if let moment = record.mediaMoments.first {
             MediaMomentCard(
                 moment: moment,
-                linkedEntry: linkedEntry(for: moment)
+                linkedEntry: linkedEntry(for: moment.linkedEntryId, entriesByID: entriesByID)
             )
         }
     }
 
-    private var filteredItems: [TimelineItem] {
-        let thoughtItems = thoughts.map(TimelineItem.thought)
-        let mediaItems = mediaMoments
-            .filter { moment in
-                guard filter.includes(moment.kind) else { return false }
-                return filter != .all || !attachedMediaIDs.contains(moment.id)
-            }
-            .map(TimelineItem.media)
-        let items = filter == .thoughts ? thoughtItems
-            : filter == .photos || filter == .videos ? mediaItems
-            : thoughtItems + mediaItems
-        return items.sorted { $0.capturedAt > $1.capturedAt }
+    private func linkedEntry(
+        for entryID: UUID?,
+        entriesByID: [UUID: TimeEntry]
+    ) -> TimeEntry? {
+        entryID.flatMap { entriesByID[$0] }
     }
 
-    private var attachedMediaIDs: Set<UUID> {
-        Set(thoughtMediaLinks.map(\.mediaMomentId))
-    }
-
-    private func mediaMoments(for thought: ThoughtNote) -> [MediaMoment] {
-        (try? ThoughtMediaLinkService(modelContext: modelContext).mediaMoments(
-            for: thought,
-            links: thoughtMediaLinks,
-            moments: mediaMoments
-        )) ?? []
-    }
-
-    private var daySections: [TimelineDaySection] {
+    private func daySections(for records: [TimelineRecord]) -> [TimelineDaySection] {
         let calendar = Calendar.current
-        var buckets: [(dayStart: Date, items: [TimelineItem])] = []
+        var buckets: [(dayStart: Date, items: [TimelineRecord])] = []
         var indexByDayStart: [Date: Int] = [:]
 
-        for item in filteredItems {
-            let dayStart = calendar.startOfDay(for: item.capturedAt)
+        for record in records {
+            let dayStart = calendar.startOfDay(for: record.capturedAt)
             if let index = indexByDayStart[dayStart] {
-                buckets[index].items.append(item)
+                buckets[index].items.append(record)
             } else {
                 indexByDayStart[dayStart] = buckets.count
-                buckets.append((dayStart, [item]))
+                buckets.append((dayStart, [record]))
             }
         }
 
@@ -172,87 +195,92 @@ struct ThoughtStreamView: View {
     }
 }
 
-private enum TimelineFilter: String, CaseIterable, Identifiable {
-    case all
-    case thoughts
-    case photos
-    case videos
+private struct TimelineFilterSheet: View {
+    @Binding var selectedFilters: Set<TimelineContentFilter>
+    @Environment(\.dismiss) private var dismiss
 
-    var id: String { rawValue }
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("显示包含以下内容的记录")
+                    .font(.headline)
 
-    var title: String {
+                HStack(spacing: 10) {
+                    ForEach(TimelineContentFilter.allCases) { filter in
+                        filterOption(filter)
+                    }
+                }
+
+                Text("选择一个或多个；会显示含其中任一内容的记录。未选择时显示全部。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .navigationTitle("筛选时间线")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !selectedFilters.isEmpty {
+                        Button("重置") {
+                            selectedFilters.removeAll()
+                        }
+                        .accessibilityIdentifier("timeline.filter.reset")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("timeline.filter.done")
+                }
+            }
+        }
+        .presentationDetents([.height(250)])
+    }
+
+    private func filterOption(_ filter: TimelineContentFilter) -> some View {
+        let isSelected = selectedFilters.contains(filter)
+        return Button {
+            if isSelected {
+                selectedFilters.remove(filter)
+            } else {
+                selectedFilters.insert(filter)
+            }
+        } label: {
+            Label(filter.displayTitle, systemImage: isSelected ? "checkmark.circle.fill" : filter.symbolName)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(isSelected ? Color.accentColor.opacity(0.12) : TLTheme.cardBackground)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(isSelected ? Color.accentColor.opacity(0.45) : .secondary.opacity(0.2))
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("timeline.filter.option.\(filter.rawValue)")
+    }
+}
+
+private extension TimelineContentFilter {
+    var displayTitle: String {
         switch self {
-        case .all: "全部"
-        case .thoughts: "思考"
+        case .text: "文字"
         case .photos: "照片"
         case .videos: "视频"
         }
     }
 
-    var emptyTitle: String {
+    var symbolName: String {
         switch self {
-        case .all: "还没有时间点"
-        case .thoughts: "还没有思考"
-        case .photos: "还没有照片"
-        case .videos: "还没有视频"
-        }
-    }
-
-    var emptyIcon: String {
-        switch self {
-        case .all: "clock"
-        case .thoughts: "lightbulb"
+        case .text: "text.alignleft"
         case .photos: "photo"
         case .videos: "video"
-        }
-    }
-
-    var emptyDescription: String {
-        switch self {
-        case .all:
-            "快速想法和拍摄媒体会按时间混排在这里。"
-        case .thoughts:
-            "点右上角灯泡记下想法。"
-        case .photos:
-            "在今天页按住灯泡 0.2 秒进入系统相机拍照。"
-        case .videos:
-            "在今天页按住灯泡 0.2 秒进入系统相机录像。"
-        }
-    }
-
-    func includes(_ kind: MediaKind) -> Bool {
-        switch self {
-        case .all:
-            true
-        case .thoughts:
-            false
-        case .photos:
-            kind == .photo
-        case .videos:
-            kind == .video
-        }
-    }
-}
-
-private enum TimelineItem: Identifiable {
-    case thought(ThoughtNote)
-    case media(MediaMoment)
-
-    var id: String {
-        switch self {
-        case .thought(let thought):
-            "thought-\(thought.id.uuidString)"
-        case .media(let moment):
-            "media-\(moment.id.uuidString)"
-        }
-    }
-
-    var capturedAt: Date {
-        switch self {
-        case .thought(let thought):
-            thought.capturedAt
-        case .media(let moment):
-            moment.capturedAt
         }
     }
 }
@@ -260,7 +288,7 @@ private enum TimelineItem: Identifiable {
 private struct TimelineDaySection: Identifiable {
     let id: Date
     let title: String
-    let items: [TimelineItem]
+    let items: [TimelineRecord]
 }
 
 #Preview {
