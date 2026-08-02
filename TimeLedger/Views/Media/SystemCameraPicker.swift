@@ -5,7 +5,6 @@ import UIKit
 
 enum SystemCameraConfiguration {
     static let mediaTypes = [UTType.image.identifier, UTType.movie.identifier]
-    static let photoOnlyMediaTypes = [UTType.image.identifier]
     static let videoMaximumDuration: TimeInterval = 60
     static let videoQuality: UIImagePickerController.QualityType = .typeHigh
 }
@@ -65,7 +64,7 @@ struct SystemCameraPicker: UIViewControllerRepresentable {
         ) {
             Task {
                 do {
-                    let capture = try await CameraCapturePreparation.prepare(info: info)
+                    let capture = try await MediaCapturePreparation.prepare(info: info)
                     completion(.success(capture))
                 } catch {
                     completion(.failure(error))
@@ -75,7 +74,7 @@ struct SystemCameraPicker: UIViewControllerRepresentable {
     }
 }
 
-private enum CameraCapturePreparation {
+enum MediaCapturePreparation {
     enum PreparationError: LocalizedError {
         case missingCapture
         case invalidImage
@@ -103,7 +102,7 @@ private enum CameraCapturePreparation {
         }
         if mediaType == UTType.movie.identifier,
            let movieURL = info[.mediaURL] as? URL {
-            return try await prepareVideo(movieURL)
+            return try await prepareVideo(at: movieURL)
         }
         throw PreparationError.missingCapture
     }
@@ -127,7 +126,10 @@ private enum CameraCapturePreparation {
         }.value
     }
 
-    private static func prepareVideo(_ movieURL: URL) async throws -> CameraCapture {
+    static func prepareVideo(
+        at movieURL: URL,
+        capturedAt: Date = Date()
+    ) async throws -> CameraCapture {
         try await Task.detached(priority: .userInitiated) {
             let asset = AVURLAsset(url: movieURL)
             let generator = AVAssetImageGenerator(asset: asset)
@@ -143,7 +145,7 @@ private enum CameraCapturePreparation {
             return CameraCapture(
                 sourceURL: movieURL,
                 kind: .video,
-                capturedAt: Date(),
+                capturedAt: capturedAt,
                 thumbnailData: thumbnailData,
                 durationSeconds: duration.isFinite ? duration : 0
             )

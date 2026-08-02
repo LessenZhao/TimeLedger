@@ -137,7 +137,7 @@ final class TimeLedgerUITests: XCTestCase {
         app.buttons["camera.fixture.usePhoto"].tap()
 
         XCTAssertTrue(app.navigationBars["记录思考"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["1 张附件"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["1 个附件"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["thought.composer.camera"].exists)
     }
 
@@ -165,19 +165,19 @@ final class TimeLedgerUITests: XCTestCase {
         note.typeText("现场备注")
 
         app.buttons["entry.attachment.add"].tap()
-        app.buttons["拍照"].tap()
+        app.buttons["拍照或录像"].tap()
         XCTAssertTrue(app.staticTexts["系统相机边界已调用"].waitForExistence(timeout: 3))
         app.buttons["camera.fixture.usePhoto"].tap()
 
         XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["移除照片"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["移除媒体"].waitForExistence(timeout: 3))
         app.buttons["取消"].tap()
 
         XCTAssertTrue(projectButton.waitForExistence(timeout: 3))
         projectButton.press(forDuration: 0.5)
         XCTAssertTrue(app.navigationBars["记录详情"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.textViews["entry.detail.note"].value as? String, "现场备注")
-        XCTAssertTrue(app.buttons["移除照片"].exists)
+        XCTAssertTrue(app.buttons["移除媒体"].exists)
     }
 
     @MainActor

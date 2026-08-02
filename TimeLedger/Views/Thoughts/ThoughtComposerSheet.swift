@@ -2,7 +2,6 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 struct ThoughtComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
@@ -50,7 +49,7 @@ struct ThoughtComposerSheet: View {
                         .focused($isTextFocused)
                         .overlay(alignment: .topLeading) {
                             if thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text("记下你的想法，也可以只添加照片…")
+                                Text("记下你的想法，也可以只添加照片或视频…")
                                     .font(.body)
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 8)
@@ -72,11 +71,11 @@ struct ThoughtComposerSheet: View {
 
                 Section {
                     if draft.attachments.isEmpty {
-                        Text("还没有照片")
+                        Text("还没有媒体")
                             .foregroundStyle(.secondary)
                     } else {
                         attachmentStrip
-                        Text("\(draft.attachments.count) 张附件")
+                        Text("\(draft.attachments.count) 个附件")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("thought.composer.attachmentCount")
@@ -85,7 +84,7 @@ struct ThoughtComposerSheet: View {
                     PhotosPicker(
                         selection: $selectedPhotoItems,
                         maxSelectionCount: max(1, remainingAttachmentCount),
-                        matching: .images
+                        matching: .any(of: [.images, .videos])
                     ) {
                         Label("从照片库添加", systemImage: "photo.on.rectangle")
                     }
@@ -95,14 +94,14 @@ struct ThoughtComposerSheet: View {
                     Button {
                         beginCameraFlow()
                     } label: {
-                        Label("拍照", systemImage: "camera")
+                        Label("拍照或录像", systemImage: "camera")
                     }
                     .disabled(remainingAttachmentCount == 0 || isBusy)
                     .accessibilityIdentifier("thought.composer.camera")
                 } header: {
-                    Text("照片")
+                    Text("媒体")
                 } footer: {
-                    Text("最多 9 个附件。拍照或选图后会先保存为可恢复草稿。")
+                    Text("最多 9 个附件。拍照、录像或从照片库选择后，会先保存为可恢复草稿。")
                 }
 
                 if draft.hasContent {
@@ -142,15 +141,13 @@ struct ThoughtComposerSheet: View {
             }
             .onChange(of: selectedPhotoItems) { _, newItems in
                 guard !newItems.isEmpty else { return }
-                Task { await importPhotos(newItems) }
+                Task { await importMedia(newItems) }
             }
             .fullScreenCover(
                 isPresented: $showingCamera,
                 onDismiss: handleCameraDismissal
             ) {
-                SystemCameraPicker(
-                    mediaTypes: SystemCameraConfiguration.photoOnlyMediaTypes
-                ) { result in
+                SystemCameraPicker { result in
                     guard let result else {
                         showingCamera = false
                         return
@@ -229,19 +226,12 @@ struct ThoughtComposerSheet: View {
             HStack(spacing: 10) {
                 ForEach(draft.attachments) { attachment in
                     ZStack(alignment: .topTrailing) {
-                        Group {
-                            if let image = UIImage(data: attachment.thumbnailData) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                            } else {
-                                Image(systemName: attachment.kind == .photo ? "photo" : "video")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .frame(width: 112, height: 88)
-                        .background(Color(.tertiarySystemFill))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        TimelineThumbnailView(
+                            mediaID: attachment.id,
+                            thumbnailData: attachment.thumbnailData,
+                            kind: attachment.kind,
+                            size: CGSize(width: 112, height: 88)
+                        )
 
                         Button {
                             Task { await removeAttachment(attachment) }
@@ -279,7 +269,7 @@ struct ThoughtComposerSheet: View {
         }
     }
 
-    private func importPhotos(_ items: [PhotosPickerItem]) async {
+    private func importMedia(_ items: [PhotosPickerItem]) async {
         isImporting = true
         defer {
             selectedPhotoItems = []
@@ -288,21 +278,9 @@ struct ThoughtComposerSheet: View {
 
         do {
             for item in items.prefix(remainingAttachmentCount) {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    throw ThoughtComposerDraftStoreError.invalidPhoto
-                }
-                guard let image = UIImage(data: data),
-                      let thumbnailData = MediaThumbnailFactory.thumbnailData(for: image) else {
-                    throw ThoughtComposerDraftStoreError.invalidPhoto
-                }
-                let fileExtension = item.supportedContentTypes
-                    .first(where: { $0.conforms(to: .image) })?
-                    .preferredFilenameExtension
-                    ?? "jpg"
-                draft = try await draftStore.addPhotoData(
-                    data,
-                    thumbnailData: thumbnailData,
-                    fileExtension: fileExtension
+                draft = try await PhotoLibraryMediaImportService.add(
+                    item,
+                    to: draftStore
                 )
                 thoughtBody = draft.body
             }

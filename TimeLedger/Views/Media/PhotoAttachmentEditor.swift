@@ -1,7 +1,6 @@
 import PhotosUI
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 struct PhotoAttachmentEditor: View {
     @Binding var draft: ThoughtComposerDraft
@@ -46,20 +45,20 @@ struct PhotoAttachmentEditor: View {
             Button {
                 showingSourcePicker = true
             } label: {
-                Label("添加照片", systemImage: "plus")
+                Label("添加媒体", systemImage: "plus")
             }
             .disabled(remainingAttachmentCount == 0 || isDisabled || isImporting)
             .accessibilityIdentifier("entry.attachment.add")
         }
         .confirmationDialog(
-            "添加照片",
+            "添加媒体",
             isPresented: $showingSourcePicker,
             titleVisibility: .visible
         ) {
-            Button("拍照") {
+            Button("拍照或录像") {
                 beginCameraFlow()
             }
-            Button("从照片库选择") {
+            Button("从照片库选择照片或视频") {
                 showingPhotoLibrary = true
             }
             Button("取消", role: .cancel) {}
@@ -68,19 +67,17 @@ struct PhotoAttachmentEditor: View {
             isPresented: $showingPhotoLibrary,
             selection: $selectedPhotoItems,
             maxSelectionCount: max(1, remainingAttachmentCount),
-            matching: .images
+            matching: .any(of: [.images, .videos])
         )
         .onChange(of: selectedPhotoItems) { _, newItems in
             guard !newItems.isEmpty else { return }
-            Task { await importPhotos(newItems) }
+            Task { await importMedia(newItems) }
         }
         .fullScreenCover(
             isPresented: $showingCamera,
             onDismiss: handleCameraDismissal
         ) {
-            SystemCameraPicker(
-                mediaTypes: SystemCameraConfiguration.photoOnlyMediaTypes
-            ) { result in
+            SystemCameraPicker { result in
                 guard let result else {
                     showingCamera = false
                     return
@@ -132,6 +129,7 @@ struct PhotoAttachmentEditor: View {
                     thumbnail(
                         id: moment.id,
                         data: moment.thumbnailData,
+                        kind: moment.kind,
                         hasIssue: moment.saveStatus != .saved
                     ) {
                         Task { await remove(moment) }
@@ -142,6 +140,7 @@ struct PhotoAttachmentEditor: View {
                     thumbnail(
                         id: attachment.id,
                         data: attachment.thumbnailData,
+                        kind: attachment.kind,
                         hasIssue: false
                     ) {
                         Task { await remove(attachment) }
@@ -155,23 +154,17 @@ struct PhotoAttachmentEditor: View {
     private func thumbnail(
         id: UUID,
         data: Data,
+        kind: MediaKind,
         hasIssue: Bool,
         removeAction: @escaping () -> Void
     ) -> some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let image = UIImage(data: data) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "photo")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(width: 72, height: 58)
-            .background(Color(.tertiarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 9))
+            TimelineThumbnailView(
+                mediaID: id,
+                thumbnailData: data,
+                kind: kind,
+                size: CGSize(width: 72, height: 58)
+            )
             .overlay(alignment: .bottomLeading) {
                 if hasIssue {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -187,12 +180,12 @@ struct PhotoAttachmentEditor: View {
                     .foregroundStyle(.white, .black.opacity(0.65))
             }
             .offset(x: 5, y: -5)
-            .accessibilityLabel("移除照片")
+            .accessibilityLabel("移除媒体")
         }
         .accessibilityIdentifier("entry.attachment.\(id.uuidString)")
     }
 
-    private func importPhotos(_ items: [PhotosPickerItem]) async {
+    private func importMedia(_ items: [PhotosPickerItem]) async {
         isImporting = true
         defer {
             selectedPhotoItems = []
@@ -201,19 +194,9 @@ struct PhotoAttachmentEditor: View {
 
         do {
             for item in items.prefix(remainingAttachmentCount) {
-                guard let data = try await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data),
-                      let thumbnailData = MediaThumbnailFactory.thumbnailData(for: image) else {
-                    throw ThoughtComposerDraftStoreError.invalidPhoto
-                }
-                let fileExtension = item.supportedContentTypes
-                    .first(where: { $0.conforms(to: .image) })?
-                    .preferredFilenameExtension
-                    ?? "jpg"
-                draft = try await draftStore.addPhotoData(
-                    data,
-                    thumbnailData: thumbnailData,
-                    fileExtension: fileExtension
+                draft = try await PhotoLibraryMediaImportService.add(
+                    item,
+                    to: draftStore
                 )
             }
         } catch {

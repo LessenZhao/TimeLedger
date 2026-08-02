@@ -102,6 +102,17 @@ nonisolated struct ThoughtComposerDraftStore: Sendable {
     }
 
     func addCapture(_ capture: CameraCapture) async throws -> ThoughtComposerDraft {
+        try await addCapture(capture, sourceOrigin: "camera")
+    }
+
+    func addLibraryCapture(_ capture: CameraCapture) async throws -> ThoughtComposerDraft {
+        try await addCapture(capture, sourceOrigin: "photoLibrary")
+    }
+
+    private func addCapture(
+        _ capture: CameraCapture,
+        sourceOrigin: String
+    ) async throws -> ThoughtComposerDraft {
         let rootURL = rootURL
         return try await Task.detached(priority: .userInitiated) {
             let store = ThoughtComposerDraftStore(rootURL: rootURL)
@@ -111,7 +122,7 @@ nonisolated struct ThoughtComposerDraftStore: Sendable {
             return try store.stageOriginal(
                 sourceURL: capture.sourceURL,
                 kind: capture.kind,
-                sourceOrigin: "camera",
+                sourceOrigin: sourceOrigin,
                 capturedAt: capture.capturedAt,
                 durationSeconds: capture.durationSeconds,
                 thumbnailData: capture.thumbnailData,

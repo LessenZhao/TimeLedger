@@ -166,6 +166,39 @@ struct ThoughtComposerTests {
         #expect(result.mediaMoments[0].storedLocationEnum == .app)
         #expect(result.mediaMoments[0].photosAssetIdentifier == nil)
     }
+
+    @Test func selectedLibraryVideoStaysRecoverableAndIsNotWrittenBackToPhotosLibrary() async throws {
+        let fixture = try DraftFixture()
+        let draft = try await fixture.store.addLibraryCapture(
+            fixture.videoCapture(named: "library-video")
+        )
+        let attachment = try #require(draft.attachments.first)
+
+        #expect(attachment.kind == .video)
+        #expect(attachment.cameFromPhotoLibrary)
+        #expect(attachment.durationSeconds == 12.5)
+        #expect(FileManager.default.fileExists(atPath: fixture.store.originalURL(for: attachment).path))
+
+        let schema = Schema(TimeLedgerModels.all)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let context = ModelContext(
+            try ModelContainer(for: schema, configurations: [configuration])
+        )
+        let photos = ComposerPhotoLibraryStub()
+        let result = try await ThoughtComposerCommitService(
+            modelContext: context,
+            draftStore: fixture.store,
+            mediaFileStore: MediaFileStore(
+                rootURL: fixture.rootURL.appending(path: "ImportedVideo")
+            ),
+            photoLibrary: photos
+        ).commit(draft, preference: .photosLibrary)
+
+        #expect(photos.saveCallCount == 0)
+        #expect(result.mediaMoments[0].kind == .video)
+        #expect(result.mediaMoments[0].storedLocationEnum == .app)
+        #expect(result.mediaMoments[0].durationSeconds == 12.5)
+    }
 }
 
 private struct DraftFixture {
@@ -196,6 +229,18 @@ private struct DraftFixture {
             capturedAt: now.addingTimeInterval(TimeInterval(name.count)),
             thumbnailData: Data("thumbnail-\(name)".utf8),
             durationSeconds: 0
+        )
+    }
+
+    func videoCapture(named name: String) throws -> CameraCapture {
+        let sourceURL = temporarySourcesURL.appending(path: "\(name).mov")
+        try Data("video-original-\(name)".utf8).write(to: sourceURL, options: .atomic)
+        return CameraCapture(
+            sourceURL: sourceURL,
+            kind: .video,
+            capturedAt: now.addingTimeInterval(TimeInterval(name.count)),
+            thumbnailData: Data("video-thumbnail-\(name)".utf8),
+            durationSeconds: 12.5
         )
     }
 }
