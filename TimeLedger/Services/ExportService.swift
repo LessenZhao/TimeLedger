@@ -1,101 +1,72 @@
 import Foundation
 import SwiftData
 
+nonisolated struct ExportDateRange: Sendable {
+    let start: Date
+    let endExclusive: Date
+
+    func overlaps(startAt: Date, endAt: Date) -> Bool {
+        startAt < endExclusive && endAt > start
+    }
+
+    func contains(_ date: Date) -> Bool {
+        date >= start && date < endExclusive
+    }
+}
+
+nonisolated struct PreparedJSONExport: Sendable {
+    let data: Data
+    let entryCount: Int
+    let thoughtCount: Int
+}
+
+nonisolated struct JSONExportService {
+    let modelContext: ModelContext
+
+    func prepareJSON(range: ExportDateRange, onlyConfirmed: Bool) throws -> PreparedJSONExport {
+        let allEntries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
+        let entries = allEntries
+            .filter { range.overlaps(startAt: $0.startAt, endAt: $0.endAt) }
+            .filter { !onlyConfirmed || $0.status == TimeEntryStatus.confirmed.rawValue }
+            .sorted { $0.startAt < $1.startAt }
+        let entryIDs = Set(entries.map(\.id))
+
+        let allThoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
+        let thoughts = allThoughts
+            .filter { thought in
+                range.contains(thought.capturedAt)
+                    || thought.linkedEntryId.map(entryIDs.contains) == true
+            }
+            .sorted { $0.capturedAt < $1.capturedAt }
+
+        let projectIDs = Set(entries.map(\.projectId))
+        let projects = try modelContext.fetch(FetchDescriptor<Project>())
+            .filter { projectIDs.contains($0.id) }
+            .sorted { lhs, rhs in
+                lhs.sortOrder == rhs.sortOrder ? lhs.name < rhs.name : lhs.sortOrder < rhs.sortOrder
+            }
+
+        let payload = JSONDataPackage(
+            schemaVersion: 2,
+            exportedAt: Date(),
+            scope: .init(from: range.start, toExclusive: range.endExclusive),
+            mediaIncluded: false,
+            projects: projects.map(ProjectExport.init),
+            timeEntries: entries.map(TimeEntryExport.init),
+            thoughtNotes: thoughts.map(ThoughtNoteExport.init)
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(payload)
+        return PreparedJSONExport(data: data, entryCount: entries.count, thoughtCount: thoughts.count)
+    }
+}
+
 struct ExportService {
     let modelContext: ModelContext
     var calendar: Calendar = .current
-
-    // MARK: - CSV
-
-    func exportCSV(onlyConfirmed: Bool) throws -> String {
-        let entries = try fetchAllEntries(onlyConfirmed: onlyConfirmed)
-        let allThoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
-        let header = "date,startAt,endAt,durationMinutes,projectName,categoryName,note,status,linkedThoughtCount,linkedThoughts"
-        let rows = entries.map { entry in
-            let linked = allThoughts.filter { $0.linkedEntryId == entry.id }
-            let linkedBodies = linked.map { $0.body }.joined(separator: " | ")
-            return csvField(DateFormatterFactory.dateTitle.string(from: entry.startAt)) + "," +
-                csvField(DateFormatterFactory.dateTime.string(from: entry.startAt)) + "," +
-                csvField(DateFormatterFactory.dateTime.string(from: entry.endAt)) + "," +
-                "\(entry.durationMinutesRounded)," +
-                csvField(entry.projectNameSnapshot) + "," +
-                csvField(entry.categoryNameSnapshot) + "," +
-                csvField(entry.note) + "," +
-                csvField(entry.status) + "," +
-                "\(linked.count)," +
-                csvField(linkedBodies)
-        }
-        return ([header] + rows).joined(separator: "\n")
-    }
-
-    // MARK: - JSON Backup
-
-    func exportJSON() throws -> String {
-        let projects = try modelContext.fetch(FetchDescriptor<Project>())
-        let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
-        let thoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
-        let settings = (try? modelContext.fetch(FetchDescriptor<AppSettings>()))?.first
-
-        let projectDicts: [[String: Any]] = projects.map { p in
-            [
-                "id": p.id.uuidString,
-                "name": p.name,
-                "categoryName": p.categoryName,
-                "emoji": p.emoji ?? "",
-                "colorHex": p.colorHex ?? "",
-                "sortOrder": p.sortOrder,
-                "isArchived": p.isArchived,
-                "createdAt": iso8601(p.createdAt),
-                "updatedAt": iso8601(p.updatedAt)
-            ]
-        }
-
-        let entryDicts: [[String: Any]] = entries.map { e in
-            [
-                "id": e.id.uuidString,
-                "projectId": e.projectId.uuidString,
-                "projectNameSnapshot": e.projectNameSnapshot,
-                "categoryNameSnapshot": e.categoryNameSnapshot,
-                "startAt": iso8601(e.startAt),
-                "endAt": iso8601(e.endAt),
-                "note": e.note,
-                "status": e.status,
-                "createdAt": iso8601(e.createdAt),
-                "updatedAt": iso8601(e.updatedAt)
-            ]
-        }
-
-        let thoughtDicts: [[String: Any]] = thoughts.map { t in
-            [
-                "id": t.id.uuidString,
-                "body": t.body,
-                "capturedAt": iso8601(t.capturedAt),
-                "anchorAt": iso8601(t.anchorAt),
-                "linkedEntryId": t.linkedEntryId?.uuidString ?? "",
-                "linkSource": t.linkSource,
-                "createdAt": iso8601(t.createdAt),
-                "updatedAt": iso8601(t.updatedAt)
-            ]
-        }
-
-        let settingsDict: [String: Any] = [
-            "longUnclassifiedThresholdMinutes": settings?.longUnclassifiedThresholdMinutes ?? 90,
-            "exportOnlyConfirmed": settings?.exportOnlyConfirmed ?? true,
-            "includeDraftInTodaySummary": settings?.includeDraftInTodaySummary ?? true
-        ]
-
-        let backup: [String: Any] = [
-            "version": 1,
-            "exportedAt": iso8601(Date()),
-            "projects": projectDicts,
-            "timeEntries": entryDicts,
-            "thoughtNotes": thoughtDicts,
-            "settings": settingsDict
-        ]
-
-        let data = try JSONSerialization.data(withJSONObject: backup, options: [.prettyPrinted, .sortedKeys])
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
 
     // MARK: - Markdown Daily Report
 
@@ -206,25 +177,91 @@ struct ExportService {
 
         return lines.joined(separator: "\n")
     }
+}
 
-    // MARK: - Helpers
+private nonisolated struct JSONDataPackage: Encodable {
+    let schemaVersion: Int
+    let exportedAt: Date
+    let scope: Scope
+    let mediaIncluded: Bool
+    let projects: [ProjectExport]
+    let timeEntries: [TimeEntryExport]
+    let thoughtNotes: [ThoughtNoteExport]
 
-    private func fetchAllEntries(onlyConfirmed: Bool) throws -> [TimeEntry] {
-        let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.startAt)]))
-        return onlyConfirmed
-            ? entries.filter { $0.status == TimeEntryStatus.confirmed.rawValue }
-            : entries
+    struct Scope: Encodable {
+        let from: Date
+        let toExclusive: Date
     }
+}
 
-    private func csvField(_ value: String) -> String {
-        if value.contains(",") || value.contains("\"") || value.contains("\n") {
-            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-            return "\"\(escaped)\""
-        }
-        return value
+private nonisolated struct ProjectExport: Encodable {
+    let id: UUID
+    let name: String
+    let categoryName: String
+    let emoji: String?
+    let colorHex: String?
+    let sortOrder: Int
+    let isArchived: Bool
+    let createdAt: Date
+    let updatedAt: Date
+
+    init(_ project: Project) {
+        id = project.id
+        name = project.name
+        categoryName = project.categoryName
+        emoji = project.emoji
+        colorHex = project.colorHex
+        sortOrder = project.sortOrder
+        isArchived = project.isArchived
+        createdAt = project.createdAt
+        updatedAt = project.updatedAt
     }
+}
 
-    private func iso8601(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+private nonisolated struct TimeEntryExport: Encodable {
+    let id: UUID
+    let projectId: UUID
+    let projectNameSnapshot: String
+    let categoryNameSnapshot: String
+    let startAt: Date
+    let endAt: Date
+    let note: String
+    let status: String
+    let createdAt: Date
+    let updatedAt: Date
+
+    init(_ entry: TimeEntry) {
+        id = entry.id
+        projectId = entry.projectId
+        projectNameSnapshot = entry.projectNameSnapshot
+        categoryNameSnapshot = entry.categoryNameSnapshot
+        startAt = entry.startAt
+        endAt = entry.endAt
+        note = entry.note
+        status = entry.status
+        createdAt = entry.createdAt
+        updatedAt = entry.updatedAt
+    }
+}
+
+private nonisolated struct ThoughtNoteExport: Encodable {
+    let id: UUID
+    let body: String
+    let capturedAt: Date
+    let anchorAt: Date
+    let linkedEntryId: UUID?
+    let linkSource: String
+    let createdAt: Date
+    let updatedAt: Date
+
+    init(_ thought: ThoughtNote) {
+        id = thought.id
+        body = thought.body
+        capturedAt = thought.capturedAt
+        anchorAt = thought.anchorAt
+        linkedEntryId = thought.linkedEntryId
+        linkSource = thought.linkSource
+        createdAt = thought.createdAt
+        updatedAt = thought.updatedAt
     }
 }

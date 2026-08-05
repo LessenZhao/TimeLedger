@@ -16,6 +16,10 @@ struct UITestFixtureService {
             try seedDraftScrollFixture(now: now)
             return
         }
+        if arguments.contains("-ui-review-fixture") {
+            try seedReviewFixture(now: now)
+            return
+        }
         guard arguments.contains("-ui-media-fixture") else { return }
         guard try modelContext.fetch(FetchDescriptor<MediaMoment>()).isEmpty else { return }
 
@@ -143,6 +147,136 @@ struct UITestFixtureService {
                     startAt: startAt,
                     endAt: startAt.addingTimeInterval(1_500),
                     status: .draft
+                )
+            )
+        }
+
+        try modelContext.save()
+    }
+
+    /// Deterministic review data: cross-midnight, same-day multi sessions,
+    /// confirmed+draft, multi-project sort order, ≥35 days history.
+    private func seedReviewFixture(now: Date) throws {
+        guard try modelContext.fetch(FetchDescriptor<TimeEntry>()).isEmpty else { return }
+
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: now)
+
+        let alpha = Project(name: "复盘Alpha", categoryName: "测试")
+        let beta = Project(name: "复盘Beta", categoryName: "测试")
+        let gamma = Project(name: "复盘Gamma", categoryName: "测试")
+        modelContext.insert(alpha)
+        modelContext.insert(beta)
+        modelContext.insert(gamma)
+
+        // 35 days of modest Alpha history for long-term / anomaly baseline
+        for offset in 1...35 {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: dayStart) else { continue }
+            let start = day.addingTimeInterval(9 * 3_600)
+            modelContext.insert(
+                TimeEntry(
+                    projectId: alpha.id,
+                    projectNameSnapshot: alpha.name,
+                    categoryNameSnapshot: alpha.categoryName,
+                    startAt: start,
+                    endAt: start.addingTimeInterval(3_600),
+                    status: .confirmed
+                )
+            )
+        }
+
+        // Place today's sessions relative to `now` so unfinished-day effectiveRange always covers them.
+        let anchor = min(now, dayStart.addingTimeInterval(20 * 3_600))
+        func todayAt(hoursBefore endOffset: TimeInterval, duration: TimeInterval) -> (Date, Date) {
+            let end = max(dayStart.addingTimeInterval(duration), anchor.addingTimeInterval(-endOffset))
+            let start = end.addingTimeInterval(-duration)
+            return (max(start, dayStart), end)
+        }
+
+        let (c1Start, c1End) = todayAt(hoursBefore: 5 * 3_600, duration: 3_600)
+        modelContext.insert(
+            TimeEntry(
+                projectId: alpha.id,
+                projectNameSnapshot: alpha.name,
+                categoryNameSnapshot: alpha.categoryName,
+                startAt: c1Start,
+                endAt: c1End,
+                status: .confirmed
+            )
+        )
+        let (c2Start, c2End) = todayAt(hoursBefore: 3 * 3_600, duration: 3_600)
+        modelContext.insert(
+            TimeEntry(
+                projectId: alpha.id,
+                projectNameSnapshot: alpha.name,
+                categoryNameSnapshot: alpha.categoryName,
+                startAt: c2Start,
+                endAt: c2End,
+                status: .confirmed
+            )
+        )
+        let (dStart, dEnd) = todayAt(hoursBefore: 30 * 60, duration: 1_800)
+        modelContext.insert(
+            TimeEntry(
+                projectId: alpha.id,
+                projectNameSnapshot: alpha.name,
+                categoryNameSnapshot: alpha.categoryName,
+                startAt: dStart,
+                endAt: dEnd,
+                status: .draft
+            )
+        )
+
+        let (bStart, bEnd) = todayAt(hoursBefore: 4 * 3_600, duration: 2_400)
+        modelContext.insert(
+            TimeEntry(
+                projectId: beta.id,
+                projectNameSnapshot: beta.name,
+                categoryNameSnapshot: beta.categoryName,
+                startAt: bStart,
+                endAt: bEnd,
+                status: .confirmed
+            )
+        )
+
+        let (gStart, gEnd) = todayAt(hoursBefore: 2 * 3_600, duration: 1_200)
+        modelContext.insert(
+            TimeEntry(
+                projectId: gamma.id,
+                projectNameSnapshot: gamma.name,
+                categoryNameSnapshot: gamma.categoryName,
+                startAt: gStart,
+                endAt: gEnd,
+                status: .confirmed
+            )
+        )
+
+        // Cross-midnight into today (counts toward today morning)
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: dayStart) else {
+            try modelContext.save()
+            return
+        }
+        modelContext.insert(
+            TimeEntry(
+                projectId: alpha.id,
+                projectNameSnapshot: alpha.name,
+                categoryNameSnapshot: alpha.categoryName,
+                startAt: yesterday.addingTimeInterval(23 * 3_600),
+                endAt: dayStart.addingTimeInterval(1 * 3_600),
+                status: .confirmed
+            )
+        )
+
+        // Earlier this week / month extra Beta for week charts
+        if let twoDaysAgo = calendar.date(byAdding: .day, value: -2, to: dayStart) {
+            modelContext.insert(
+                TimeEntry(
+                    projectId: beta.id,
+                    projectNameSnapshot: beta.name,
+                    categoryNameSnapshot: beta.categoryName,
+                    startAt: twoDaysAgo.addingTimeInterval(14 * 3_600),
+                    endAt: twoDaysAgo.addingTimeInterval(15 * 3_600),
+                    status: .confirmed
                 )
             )
         }

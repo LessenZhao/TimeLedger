@@ -50,11 +50,16 @@ struct ThoughtExportTests {
         context.insert(thought)
         try context.save()
 
-        let service = ExportService(modelContext: context, calendar: calendar)
-        let json = try service.exportJSON()
+        let service = JSONExportService(modelContext: context)
+        let prepared = try service.prepareJSON(
+            range: ExportDateRange(
+                start: date("2026-07-08 00:00", calendar: calendar),
+                endExclusive: date("2026-07-09 00:00", calendar: calendar)
+            ),
+            onlyConfirmed: true
+        )
 
-        let data = json.data(using: .utf8)!
-        let parsed = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let parsed = try JSONSerialization.jsonObject(with: prepared.data) as! [String: Any]
 
         let thoughtNotes = parsed["thoughtNotes"] as? [[String: Any]]
         #expect(thoughtNotes?.count == 1)
@@ -191,39 +196,4 @@ struct ThoughtExportTests {
         #expect(md.contains("关联：在外面吃饭"))
     }
 
-    // 6. CSV includes linkedThoughtCount and linkedThoughts columns
-    @Test func csvIncludesThoughtColumns() throws {
-        let calendar = fixedCalendar
-        let container = try makeContainer()
-        let context = ModelContext(container)
-        let project = Project(name: "写作", categoryName: "工作")
-        context.insert(project)
-        let entry = TimeEntry(
-            projectId: project.id,
-            projectNameSnapshot: project.name,
-            categoryNameSnapshot: project.categoryName,
-            startAt: date("2026-07-08 09:00", calendar: calendar),
-            endAt: date("2026-07-08 09:30", calendar: calendar),
-            status: .confirmed
-        )
-        context.insert(entry)
-        let thought = ThoughtNote(
-            body: "写作效率不错",
-            capturedAt: date("2026-07-08 09:15", calendar: calendar),
-            anchorAt: date("2026-07-08 09:15", calendar: calendar),
-            linkedEntryId: entry.id,
-            linkSource: .auto
-        )
-        context.insert(thought)
-        try context.save()
-
-        let service = ExportService(modelContext: context, calendar: calendar)
-        let csv = try service.exportCSV(onlyConfirmed: false)
-        let lines = csv.components(separatedBy: "\n")
-
-        #expect(lines[0].contains("linkedThoughtCount"))
-        #expect(lines[0].contains("linkedThoughts"))
-        #expect(lines[1].contains(",1,"))
-        #expect(lines[1].contains("写作效率不错"))
-    }
 }

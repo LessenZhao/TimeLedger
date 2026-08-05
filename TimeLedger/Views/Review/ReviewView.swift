@@ -5,14 +5,15 @@ import SwiftUI
 struct ReviewView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TimeEntry.startAt) private var refreshEntries: [TimeEntry]
-    @Query(sort: \ActionCompletion.dayStart) private var refreshCompletions: [ActionCompletion]
     @Query(sort: \Project.updatedAt) private var refreshProjects: [Project]
 
     @State private var period: ReviewPeriod = .day
     @State private var anchorDate = Date()
-    @State private var selectedActionId: UUID?
-    @State private var expandedActionIds: Set<UUID> = []
-    @State private var showFullProjectRanking = false
+    @State private var expandedProjectId: UUID?
+    @State private var selectedBucketStart: Date?
+    @State private var longTermProjectId: UUID?
+    @State private var longTermGranularity: ReviewLongTermGranularity = .month
+    @State private var evidenceProjectFilter: UUID?
 
     var body: some View {
         NavigationStack {
@@ -24,11 +25,14 @@ struct ReviewView: View {
                 if let summary {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            overviewSection(summary)
-                            actionFootprintSection(summary)
-                            timeTrendSection(summary)
-                            projectStructureSection(summary)
-                            evidenceSection(summary)
+                            if summary.pendingCount > 0 {
+                                pendingBanner(summary)
+                            }
+                            observationsSection(summary)
+                            projectTrendsSection(summary)
+                            if period == .day {
+                                evidenceSection(summary)
+                            }
                         }
                         .padding(16)
                     }
@@ -43,19 +47,38 @@ struct ReviewView: View {
             }
             .navigationTitle("复盘")
             .navigationBarTitleDisplayMode(.inline)
-        }
-        .onChange(of: period) {
-            selectedActionId = nil
+            .sheet(item: longTermSheetItem) { item in
+                longTermSheet(projectId: item.id)
+            }
+            .onChange(of: period) {
+                selectedBucketStart = nil
+                evidenceProjectFilter = nil
+                syncExpandedProject()
+            }
+            .onChange(of: anchorDate) {
+                selectedBucketStart = nil
+                evidenceProjectFilter = nil
+                syncExpandedProject()
+            }
+            .onAppear {
+                syncExpandedProject()
+            }
         }
     }
 
     private var summary: ReviewSummary? {
         _ = refreshEntries.count
-        _ = refreshCompletions.count
         _ = refreshProjects.count
         return try? ReviewSummaryService(modelContext: modelContext).summary(
             period: period,
             anchorDate: anchorDate
+        )
+    }
+
+    private var longTermSheetItem: Binding<IdentifiedUUID?> {
+        Binding(
+            get: { longTermProjectId.map(IdentifiedUUID.init) },
+            set: { longTermProjectId = $0?.id }
         )
     }
 
@@ -117,348 +140,325 @@ struct ReviewView: View {
         .padding(.vertical, 8)
     }
 
-    private func overviewSection(_ summary: ReviewSummary) -> some View {
-        ReviewCard(title: "本期概览") {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("已确认总时长")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(DurationFormatter.compact(summary.confirmedDuration))
-                        .font(.largeTitle.weight(.bold))
-                        .monospacedDigit()
-                        .accessibilityIdentifier("review.total.confirmed")
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("较上一可比周期")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(comparisonText(summary.comparison))
-                        .font(.headline)
-                        .foregroundStyle(comparisonColor(summary.comparison.delta))
-                        .accessibilityIdentifier("review.comparison")
-                }
-            }
-
-            Divider()
-
-            HStack {
-                Label("待确认", systemImage: "clock.badge.questionmark")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(summary.pendingCount) 条 · \(DurationFormatter.compact(summary.pendingDuration))")
-                    .font(.subheadline.weight(.medium))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("review.pending")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func actionFootprintSection(_ summary: ReviewSummary) -> some View {
-        ReviewCard(title: "事项足迹") {
-            if summary.actionFootprints.isEmpty {
-                emptyText("本期没有完成事项")
-            } else {
-                switch period {
-                case .day:
-                    dailyActions(summary.actionFootprints)
-                case .week:
-                    weeklyActionMatrix(summary)
-                case .month:
-                    monthlyActionCalendar(summary)
-                case .year:
-                    yearlyActionHeatmap(summary)
-                }
-            }
-        }
-    }
-
-    private func dailyActions(_ actions: [ReviewActionFootprint]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(actions) { action in
-                actionSummaryHeader(action)
-                Text("具体日期：\(action.completionDates.map(shortDate).joined(separator: "、"))")
+    private func pendingBanner(_ summary: ReviewSummary) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "clock.badge.questionmark")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("有 \(summary.pendingCount) 条草稿待确认")
+                    .font(.subheadline.weight(.semibold))
+                Text("草稿已计入趋势（浅色），精确值单独标明。草稿时长 \(DurationFormatter.compact(summary.pendingDuration))。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 8)
             }
+            Spacer(minLength: 0)
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("review.pending.banner")
     }
 
-    private func weeklyActionMatrix(_ summary: ReviewSummary) -> some View {
-        let days = ReviewPeriod.week.bucketRanges(in: summary.range, calendar: .current)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 5) {
-                Text("事项")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(days, id: \.lowerBound) { day in
-                    Text(day.lowerBound, format: .dateTime.weekday(.narrow))
-                        .font(.caption2)
-                        .frame(width: 22)
-                }
-            }
-            ForEach(summary.actionFootprints) { action in
-                Button {
-                    toggleDates(action.id)
-                } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 5) {
-                            Text(action.displayTitle)
-                                .font(.subheadline)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            ForEach(days, id: \.lowerBound) { day in
-                                footprintCell(
-                                    completed: action.completionDates.contains(day.lowerBound),
-                                    accessibilityText: "\(shortDate(day.lowerBound))\(action.completionDates.contains(day.lowerBound) ? "已完成" : "未完成")"
-                                )
-                            }
-                        }
-                        actionStats(action)
-                        if expandedActionIds.contains(action.id) {
-                            explicitDates(action)
-                        }
+    private func observationsSection(_ summary: ReviewSummary) -> some View {
+        ReviewCard(title: "值得注意") {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(summary.observations.enumerated()), id: \.element.id) { index, observation in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(observation.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(observation.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("review.action.\(action.id.uuidString)")
-            }
-        }
-    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("review.observation.\(index)")
 
-    private func monthlyActionCalendar(_ summary: ReviewSummary) -> some View {
-        let selected = selectedActionId.flatMap { id in
-            summary.actionFootprints.first { $0.id == id }
-        } ?? summary.actionFootprints.first
-
-        return VStack(alignment: .leading, spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(summary.actionFootprints) { action in
-                        Button(action.displayTitle) {
-                            selectedActionId = action.id
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(selected?.id == action.id ? .accentColor : .secondary)
-                        .lineLimit(1)
-                        .accessibilityIdentifier("review.action.select.\(action.id.uuidString)")
+                    if index < summary.observations.count - 1 {
+                        Divider()
                     }
                 }
             }
-
-            if let selected {
-                monthGrid(action: selected, range: summary.range)
-                actionStats(selected)
-                explicitDates(selected)
-            }
         }
+        .accessibilityIdentifier("review.observations")
     }
 
-    private func monthGrid(
-        action: ReviewActionFootprint,
-        range: Range<Date>
+    private func projectTrendsSection(_ summary: ReviewSummary) -> some View {
+        ReviewCard(title: "项目趋势") {
+            if summary.projectTrends.isEmpty {
+                Text("本期暂无记录")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(summary.projectTrends.enumerated()), id: \.element.id) { index, project in
+                        projectCard(project, rank: index + 1, summary: summary)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("review.projects")
+    }
+
+    private func projectCard(
+        _ project: ReviewProjectTrend,
+        rank: Int,
+        summary: ReviewSummary
     ) -> some View {
-        let days = ReviewPeriod.month.bucketRanges(in: range, calendar: .current)
-        let weekday = Calendar.current.component(.weekday, from: range.lowerBound)
-        let leading = (weekday - Calendar.current.firstWeekday + 7) % 7
-
-        return VStack(spacing: 5) {
-            HStack(spacing: 5) {
-                ForEach(Calendar.current.veryShortWeekdaySymbols, id: \.self) { symbol in
-                    Text(symbol)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 7),
-                spacing: 5
-            ) {
-                ForEach(0..<leading, id: \.self) { _ in
-                    Color.clear.frame(height: 30)
-                }
-                ForEach(days, id: \.lowerBound) { day in
-                    let completed = action.completionDates.contains(day.lowerBound)
-                    Text(day.lowerBound, format: .dateTime.day())
-                        .font(.caption.weight(completed ? .bold : .regular))
-                        .frame(maxWidth: .infinity, minHeight: 30)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(completed ? Color.accentColor : Color.secondary.opacity(0.12))
-                        )
-                        .foregroundStyle(completed ? Color.white : Color.primary)
-                        .accessibilityLabel("\(shortDate(day.lowerBound))\(completed ? "已完成" : "未完成")")
-                }
-            }
-        }
-        .accessibilityIdentifier("review.action.month.grid")
-    }
-
-    private func yearlyActionHeatmap(_ summary: ReviewSummary) -> some View {
-        let months = ReviewPeriod.year.bucketRanges(in: summary.range, calendar: .current)
+        let isExpanded = expandedProjectId == project.projectId
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 3) {
-                Text("事项")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(months, id: \.lowerBound) { month in
-                    Text(month.lowerBound, format: .dateTime.month(.narrow))
-                        .font(.system(size: 8))
-                        .frame(width: 13)
-                }
-            }
-
-            ForEach(summary.actionFootprints) { action in
-                Button {
-                    toggleDates(action.id)
-                } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 3) {
-                            Text(action.displayTitle)
-                                .font(.caption)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            ForEach(months, id: \.lowerBound) { month in
-                                let count = action.completionDates.count {
-                                    month.contains($0)
-                                }
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(heatColor(count: count))
-                                    .frame(width: 13, height: 18)
-                                    .accessibilityLabel(
-                                        "\(month.lowerBound.formatted(.dateTime.month(.wide)))完成 \(count) 天"
-                                    )
-                            }
-                        }
-                        actionStats(action)
-                        if expandedActionIds.contains(action.id) {
-                            explicitDates(action)
-                        }
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    if isExpanded {
+                        expandedProjectId = nil
+                        selectedBucketStart = nil
+                    } else {
+                        expandedProjectId = project.projectId
+                        selectedBucketStart = preferredBucketStart(in: project.buckets)
+                        evidenceProjectFilter = project.projectId
                     }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("review.action.\(action.id.uuidString)")
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, height: 18)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("\(rank). \(project.displayName)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 8)
+                            Text(DurationFormatter.compact(project.totalDuration))
+                                .font(.subheadline.weight(.bold))
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
+                        }
+                        Text(projectMetaText(project))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(rank). \(project.displayName)，\(DurationFormatter.compact(project.totalDuration))，\(projectMetaText(project))")
+            .accessibilityIdentifier("review.project.header.\(project.projectId.uuidString)")
+
+            if isExpanded {
+                let selectedBucket = resolvedSelectedBucket(for: project)
+                projectChart(project)
+                bucketSelector(project, selected: selectedBucket?.start)
+                selectedBucketDetail(selectedBucket)
+                HStack(spacing: 12) {
+                    if period == .week || period == .month {
+                        Button("查看当天") {
+                            if let start = selectedBucket?.start {
+                                drillDown(to: start)
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .disabled(selectedBucket == nil)
+                        .accessibilityIdentifier("review.project.drill.day")
+                    }
+                    if period == .year {
+                        Button("查看该月") {
+                            if let start = selectedBucket?.start {
+                                drillDown(to: start)
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .disabled(selectedBucket == nil)
+                        .accessibilityIdentifier("review.project.drill.month")
+                    }
+                    Spacer()
+                    Button("长期趋势") {
+                        longTermGranularity = .month
+                        longTermProjectId = project.projectId
+                    }
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("review.project.longterm.\(project.projectId.uuidString)")
+                }
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.tertiarySystemBackground))
+        )
+        .accessibilityIdentifier("review.project.\(project.projectId.uuidString)")
     }
 
-    private func timeTrendSection(_ summary: ReviewSummary) -> some View {
-        ReviewCard(title: "时间趋势") {
-            Chart(summary.timeBuckets) { bucket in
+    private func projectChart(_ project: ReviewProjectTrend) -> some View {
+        Chart {
+            ForEach(project.buckets) { bucket in
                 BarMark(
                     x: .value("时间", bucket.start, unit: chartUnit),
-                    y: .value("已确认小时", bucket.confirmedDuration / 3_600)
+                    y: .value("小时", bucket.confirmedDuration / 3_600)
                 )
-                .foregroundStyle(Color.accentColor.gradient)
-                .cornerRadius(3)
-                .accessibilityLabel(bucketLabel(bucket.start))
-                .accessibilityValue(DurationFormatter.compact(bucket.confirmedDuration))
-            }
-            .chartYScale(domain: chartMaximum(summary.timeBuckets))
-            .chartYAxis {
-                AxisMarks(position: .leading)
-            }
-            .frame(height: 190)
-            .accessibilityLabel("已确认时间柱状图")
-            .accessibilityHint(chartDrillHint)
-            .accessibilityIdentifier("review.time.chart")
-            .chartOverlay { proxy in
-                if period != .day {
-                    GeometryReader { geometry in
-                        if let plotFrame = proxy.plotFrame {
-                            let frame = geometry[plotFrame]
-                            HStack(spacing: 0) {
-                                ForEach(Array(summary.timeBuckets.enumerated()), id: \.element.id) { index, bucket in
-                                    Button {
-                                        drillDown(to: bucket.start)
-                                    } label: {
-                                        Color.clear
-                                            .contentShape(Rectangle())
-                                    }
-                                    .accessibilityLabel("打开\(bucketLabel(bucket.start))")
-                                    .accessibilityValue(DurationFormatter.compact(bucket.confirmedDuration))
-                                    .accessibilityIdentifier("review.time.bucket.\(index)")
-                                }
-                            }
-                            .frame(width: frame.width, height: frame.height)
-                            .position(x: frame.midX, y: frame.midY)
-                        }
-                    }
-                }
-            }
+                .foregroundStyle(by: .value("类型", "已确认"))
 
-            if summary.timeBuckets.allSatisfy({ $0.confirmedDuration == 0 }) {
-                emptyText("本期暂无已确认时间")
-            } else {
-                VStack(spacing: 5) {
-                    ForEach(summary.timeBuckets.filter { $0.confirmedDuration > 0 }) { bucket in
-                        HStack {
-                            Text(bucketLabel(bucket.start))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(DurationFormatter.compact(bucket.confirmedDuration))
-                                .fontWeight(.medium)
-                                .monospacedDigit()
+                BarMark(
+                    x: .value("时间", bucket.start, unit: chartUnit),
+                    y: .value("小时", bucket.draftDuration / 3_600)
+                )
+                .foregroundStyle(by: .value("类型", "草稿"))
+            }
+        }
+        .chartForegroundStyleScale([
+            "已确认": Color.accentColor,
+            "草稿": Color.accentColor.opacity(0.35)
+        ])
+        .chartLegend(position: .top, alignment: .leading)
+        .chartYScale(domain: chartMaximum(project.buckets))
+        .chartYAxis {
+            AxisMarks(position: .leading)
+        }
+        .frame(height: 180)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                if let plotFrame = proxy.plotFrame {
+                    let frame = geometry[plotFrame]
+                    HStack(spacing: 0) {
+                        ForEach(Array(project.buckets.enumerated()), id: \.element.id) { index, bucket in
+                            Button {
+                                selectedBucketStart = bucket.start
+                                if period == .day {
+                                    evidenceProjectFilter = project.projectId
+                                }
+                            } label: {
+                                Color.clear
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("选择\(bucketLabel(bucket.start))")
+                            .accessibilityValue(bucketAccessibilityValue(bucket))
+                            .accessibilityIdentifier(
+                                "review.project.chart.bucket.\(project.projectId.uuidString).\(index)"
+                            )
                         }
-                        .font(.caption)
                     }
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
                 }
+            }
+        }
+        .accessibilityLabel("\(project.displayName) 时间趋势")
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("review.project.chart.\(project.projectId.uuidString)")
+    }
+
+    private func bucketSelector(_ project: ReviewProjectTrend, selected: Date?) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(project.buckets.enumerated()), id: \.element.id) { index, bucket in
+                    let isSelected = selected == bucket.start
+                    Button {
+                        selectedBucketStart = bucket.start
+                        if period == .day {
+                            evidenceProjectFilter = project.projectId
+                        }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Text(shortBucketLabel(bucket.start))
+                                .font(.caption2.weight(.semibold))
+                            Text(bucket.totalDuration > 0
+                                 ? DurationFormatter.compact(bucket.totalDuration)
+                                 : "—")
+                                .font(.system(size: 9))
+                                .foregroundStyle(bucket.totalDuration > 0 ? Color.primary : Color.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(isSelected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(bucketLabel(bucket.start))
+                    .accessibilityValue(bucketAccessibilityValue(bucket))
+                    .accessibilityIdentifier(
+                        "review.project.bucket.\(project.projectId.uuidString).\(index)"
+                    )
+                }
+            }
+        }
+        .accessibilityIdentifier("review.project.buckets.\(project.projectId.uuidString)")
+    }
+
+    private func selectedBucketDetail(_ bucket: ReviewTimeBucket?) -> some View {
+        Group {
+            if let bucket {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("已选时段")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("review.project.selected")
+                    Text(bucketLabel(bucket.start))
+                        .font(.caption.weight(.semibold))
+                    Text(bucketDetailText(bucket))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.secondarySystemBackground))
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("review.project.selected.detail")
+            } else {
+                Text("点击柱子查看精确时长与次数")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("review.project.selected.empty")
             }
         }
     }
 
-    private func projectStructureSection(_ summary: ReviewSummary) -> some View {
-        let topFive = Array(summary.projectRanking.prefix(5))
-        let otherDuration = summary.projectRanking.dropFirst(5).reduce(0) {
-            $0 + $1.confirmedDuration
+    private func resolvedSelectedBucket(for project: ReviewProjectTrend) -> ReviewTimeBucket? {
+        if let start = selectedBucketStart,
+           let bucket = project.buckets.first(where: { $0.start == start })
+        {
+            return bucket
         }
-        let maximum = max(summary.projectRanking.first?.confirmedDuration ?? 0, 1)
+        return preferredBucket(in: project.buckets)
+    }
 
-        return ReviewCard(title: "项目结构") {
-            if summary.projectRanking.isEmpty {
-                emptyText("本期暂无已确认项目")
-            } else {
-                ForEach(topFive) { project in
-                    projectBar(
-                        name: project.displayName,
-                        duration: project.confirmedDuration,
-                        maximum: maximum
-                    )
-                }
-                if otherDuration > 0 {
-                    projectBar(name: "其他", duration: otherDuration, maximum: maximum)
-                }
-
-                DisclosureGroup("完整排名", isExpanded: $showFullProjectRanking) {
-                    VStack(spacing: 6) {
-                        ForEach(Array(summary.projectRanking.enumerated()), id: \.element.id) { index, project in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text("\(index + 1). \(project.displayName)")
-                                    .lineLimit(2)
-                                Spacer()
-                                Text(DurationFormatter.compact(project.confirmedDuration))
-                                    .monospacedDigit()
-                            }
-                            .font(.caption)
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.subheadline.weight(.medium))
-                .accessibilityIdentifier("review.projects.full")
-            }
-        }
+    private func preferredBucket(in buckets: [ReviewTimeBucket]) -> ReviewTimeBucket? {
+        buckets.last(where: { $0.totalDuration > 0 }) ?? buckets.last ?? buckets.first
     }
 
     private func evidenceSection(_ summary: ReviewSummary) -> some View {
-        ReviewCard(title: "证据明细") {
-            if summary.evidenceEntries.isEmpty {
-                emptyText("本期暂无已确认记录")
+        let entries: [ReviewEvidenceEntry] = {
+            if let filter = evidenceProjectFilter {
+                return summary.evidenceEntries.filter { $0.projectId == filter }
+            }
+            if let expanded = expandedProjectId {
+                return summary.evidenceEntries.filter { $0.projectId == expanded }
+            }
+            return summary.evidenceEntries
+        }()
+
+        return ReviewCard(title: "证据明细") {
+            if entries.isEmpty {
+                Text("本日暂无记录")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             } else {
-                ForEach(summary.evidenceEntries) { entry in
+                ForEach(entries) { entry in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(entry.projectName)
@@ -469,9 +469,15 @@ struct ReviewView: View {
                                 .font(.caption.weight(.semibold))
                                 .monospacedDigit()
                         }
-                        Text(evidenceTimeText(entry))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text(evidenceTimeText(entry))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(entry.status == .confirmed ? "已确认" : "草稿")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(entry.status == .confirmed ? Color.accentColor : Color.orange)
+                        }
                     }
                     .padding(.vertical, 4)
                     .accessibilityElement(children: .combine)
@@ -479,88 +485,175 @@ struct ReviewView: View {
                 }
             }
         }
+        .accessibilityIdentifier("review.evidence")
     }
 
-    private func actionSummaryHeader(_ action: ReviewActionFootprint) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(action.displayTitle)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(2)
-            Spacer()
-            Text("\(action.completedDayCount) 天")
-                .font(.caption.weight(.semibold))
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("review.action.\(action.id.uuidString)")
-    }
+    @ViewBuilder
+    private func longTermSheet(projectId: UUID) -> some View {
+        let detail = try? ReviewSummaryService(modelContext: modelContext).longTermDetail(
+            projectId: projectId,
+            granularity: longTermGranularity
+        )
+        NavigationStack {
+            Group {
+                if let detail {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Picker("粒度", selection: $longTermGranularity) {
+                                ForEach(ReviewLongTermGranularity.allCases) { value in
+                                    Text(value.title).tag(value)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("review.longterm.granularity")
 
-    private func actionStats(_ action: ReviewActionFootprint) -> some View {
-        Text("完成 \(action.completedDayCount) 天 · 当前连续 \(action.currentStreak) 天 · 最长连续 \(action.longestStreak) 天")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func explicitDates(_ action: ReviewActionFootprint) -> some View {
-        Text("具体日期：\(action.completionDates.map(shortDate).joined(separator: "、"))")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("review.action.dates.\(action.id.uuidString)")
-    }
-
-    private func footprintCell(
-        completed: Bool,
-        accessibilityText: String
-    ) -> some View {
-        RoundedRectangle(cornerRadius: 4)
-            .fill(completed ? Color.accentColor : Color.secondary.opacity(0.12))
-            .frame(width: 22, height: 22)
-            .overlay {
-                if completed {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
+                            longTermStats(detail)
+                            longTermChart(detail)
+                            rhythmMatrixView(detail)
+                        }
+                        .padding(16)
+                    }
+                } else {
+                    ContentUnavailableView("暂无长期数据", systemImage: "chart.line.uptrend.xyaxis")
                 }
             }
-            .accessibilityLabel(accessibilityText)
-    }
-
-    private func projectBar(
-        name: String,
-        duration: TimeInterval,
-        maximum: TimeInterval
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(name)
-                    .font(.subheadline)
-                    .lineLimit(2)
-                Spacer()
-                Text(DurationFormatter.compact(duration))
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
+            .navigationTitle(detail?.displayName ?? "长期趋势")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { longTermProjectId = nil }
+                        .accessibilityIdentifier("review.longterm.close")
+                }
             }
-            GeometryReader { geometry in
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.secondary.opacity(0.12))
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.accentColor)
-                            .frame(width: geometry.size.width * duration / maximum)
-                    }
-            }
-            .frame(height: 8)
         }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("review.longterm.sheet")
     }
 
-    private func emptyText(_ value: String) -> some View {
-        Text(value)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func longTermStats(_ detail: ReviewProjectLongTerm) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            statRow("累计时长", DurationFormatter.compact(detail.cumulativeDuration))
+            statRow("活跃天数", "\(detail.activeDays) 天")
+            statRow("单次时长中位数", DurationFormatter.compact(detail.medianSessionDuration))
+            statRow("最长连续记录", "\(detail.longestConsecutiveDays) 天")
+            statRow(
+                "首条记录",
+                detail.firstEntryAt.formatted(.dateTime.year().month().day().hour().minute())
+            )
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .accessibilityIdentifier("review.longterm.stats")
+    }
+
+    private func longTermChart(_ detail: ReviewProjectLongTerm) -> some View {
+        let unit: Calendar.Component = switch detail.granularity {
+        case .day: .day
+        case .week: .weekOfYear
+        case .month: .month
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("长期趋势")
+                .font(.headline)
+            Chart {
+                ForEach(detail.buckets) { bucket in
+                    BarMark(
+                        x: .value("时间", bucket.start, unit: unit),
+                        y: .value("已确认", bucket.confirmedDuration / 3_600)
+                    )
+                    .foregroundStyle(Color.accentColor)
+                    BarMark(
+                        x: .value("时间", bucket.start, unit: unit),
+                        y: .value("草稿", bucket.draftDuration / 3_600)
+                    )
+                    .foregroundStyle(Color.accentColor.opacity(0.35))
+                }
+            }
+            .frame(height: 200)
+            .accessibilityIdentifier("review.longterm.chart")
+        }
+    }
+
+    private func rhythmMatrixView(_ detail: ReviewProjectLongTerm) -> some View {
+        let symbols = weekdaySymbols()
+        let blocks = ["00-06", "06-12", "12-18", "18-24"]
+        let maxValue = max(detail.rhythmMatrix.flatMap { $0 }.max() ?? 0, 1)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("节律矩阵")
+                .font(.headline)
+            HStack(spacing: 4) {
+                Text("")
+                    .frame(width: 28)
+                ForEach(blocks, id: \.self) { block in
+                    Text(block)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            ForEach(0..<7, id: \.self) { weekday in
+                HStack(spacing: 4) {
+                    Text(symbols[weekday])
+                        .font(.caption2)
+                        .frame(width: 28, alignment: .leading)
+                    ForEach(0..<4, id: \.self) { block in
+                        let value = detail.rhythmMatrix[weekday][block]
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.accentColor.opacity(0.12 + 0.88 * value / maxValue))
+                            .frame(height: 22)
+                            .overlay {
+                                if value > 0 {
+                                    Text(shortHours(value))
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.primary)
+                                }
+                            }
+                            .accessibilityLabel("\(symbols[weekday]) \(blocks[block]) \(DurationFormatter.compact(value))")
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .accessibilityIdentifier("review.longterm.rhythm")
+    }
+
+    private func statRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+        }
+    }
+
+    private func projectMetaText(_ project: ReviewProjectTrend) -> String {
+        var parts = ["\(project.entryCount) 次"]
+        parts.append("确认 \(DurationFormatter.compact(project.confirmedDuration))")
+        if project.draftCount > 0 {
+            parts.append("草稿 \(project.draftCount) 条 · \(DurationFormatter.compact(project.draftDuration))")
+        } else {
+            parts.append("草稿 0")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func bucketDetailText(_ bucket: ReviewTimeBucket) -> String {
+        "确认 \(DurationFormatter.compact(bucket.confirmedDuration)) · 草稿 \(DurationFormatter.compact(bucket.draftDuration)) · 合计 \(DurationFormatter.compact(bucket.totalDuration)) · \(bucket.entryCount) 次"
+    }
+
+    private func bucketAccessibilityValue(_ bucket: ReviewTimeBucket) -> String {
+        bucketDetailText(bucket)
     }
 
     private var periodRangeTitle: String {
@@ -587,74 +680,78 @@ struct ReviewView: View {
         }
     }
 
-    private var chartDrillHint: String {
-        switch period {
-        case .week, .month: "点击柱子进入对应日"
-        case .year: "点击柱子进入对应月"
-        case .day: "按小时显示"
-        }
-    }
-
     private func chartMaximum(_ buckets: [ReviewTimeBucket]) -> ClosedRange<Double> {
-        let maximum = buckets.map(\.confirmedDuration).max() ?? 0
+        let maximum = buckets.map(\.totalDuration).max() ?? 0
         return 0...max(maximum / 3_600 * 1.15, 1)
     }
 
     private func bucketLabel(_ date: Date) -> String {
         switch period {
         case .day:
-            return date.formatted(.dateTime.hour())
+            return date.formatted(.dateTime.hour().minute())
         case .week, .month:
-            return date.formatted(.dateTime.month().day())
+            return date.formatted(.dateTime.year().month().day())
         case .year:
-            return date.formatted(.dateTime.month(.wide))
+            return date.formatted(.dateTime.year().month(.wide))
         }
     }
 
-    private func comparisonText(_ comparison: ReviewComparison) -> String {
-        if comparison.currentDuration == 0 && comparison.previousDuration == 0 {
-            return "持平 · 0分钟"
+    private func shortBucketLabel(_ date: Date) -> String {
+        switch period {
+        case .day:
+            return date.formatted(.dateTime.hour())
+        case .week:
+            return date.formatted(.dateTime.weekday(.narrow))
+        case .month:
+            return date.formatted(.dateTime.day())
+        case .year:
+            return date.formatted(.dateTime.month(.narrow))
         }
-        let prefix = comparison.delta > 0 ? "增加" : comparison.delta < 0 ? "减少" : "持平"
-        let duration = DurationFormatter.compact(abs(comparison.delta))
-        if let percentage = comparison.percentageChange {
-            let percentageText = abs(percentage).formatted(
-                .percent.precision(.fractionLength(0))
-            )
-            return "\(prefix) \(duration) · \(percentageText)"
-        }
-        return comparison.delta > 0 ? "\(prefix) \(duration) · 上期为 0" : "\(prefix) \(duration)"
-    }
-
-    private func comparisonColor(_ delta: TimeInterval) -> Color {
-        if delta > 0 { return .blue }
-        if delta < 0 { return .orange }
-        return .secondary
-    }
-
-    private func heatColor(count: Int) -> Color {
-        switch count {
-        case 0: Color.secondary.opacity(0.12)
-        case 1...2: Color.accentColor.opacity(0.35)
-        case 3...7: Color.accentColor.opacity(0.65)
-        default: Color.accentColor
-        }
-    }
-
-    private func shortDate(_ date: Date) -> String {
-        date.formatted(.dateTime.year().month().day())
     }
 
     private func evidenceTimeText(_ entry: ReviewEvidenceEntry) -> String {
         "\(entry.startAt.formatted(.dateTime.month().day().hour().minute())) – \(entry.endAt.formatted(.dateTime.month().day().hour().minute()))"
     }
 
-    private func toggleDates(_ actionId: UUID) {
-        if expandedActionIds.contains(actionId) {
-            expandedActionIds.remove(actionId)
-        } else {
-            expandedActionIds.insert(actionId)
+    private func weekdaySymbols() -> [String] {
+        let calendar = Calendar.current
+        let symbols = calendar.veryShortWeekdaySymbols
+        let first = calendar.firstWeekday - 1
+        return Array(symbols[first...]) + Array(symbols[..<first])
+    }
+
+    private func shortHours(_ value: TimeInterval) -> String {
+        let hours = value / 3_600
+        if hours < 1 {
+            return "\(max(1, Int((value / 60).rounded())))m"
         }
+        return String(format: "%.1fh", hours)
+    }
+
+    private func syncExpandedProject() {
+        guard let summary else {
+            expandedProjectId = nil
+            return
+        }
+        if let expandedProjectId,
+           let project = summary.projectTrends.first(where: { $0.projectId == expandedProjectId })
+        {
+            if selectedBucketStart == nil {
+                selectedBucketStart = preferredBucketStart(in: project.buckets)
+            }
+            return
+        }
+        expandedProjectId = summary.projectTrends.first?.projectId
+        evidenceProjectFilter = expandedProjectId
+        if let first = summary.projectTrends.first {
+            selectedBucketStart = preferredBucketStart(in: first.buckets)
+        } else {
+            selectedBucketStart = nil
+        }
+    }
+
+    private func preferredBucketStart(in buckets: [ReviewTimeBucket]) -> Date? {
+        preferredBucket(in: buckets)?.start
     }
 
     private func drillDown(to date: Date) {
@@ -668,7 +765,12 @@ struct ReviewView: View {
         case .day:
             break
         }
+        selectedBucketStart = nil
     }
+}
+
+private struct IdentifiedUUID: Identifiable {
+    let id: UUID
 }
 
 private struct ReviewCard<Content: View>: View {

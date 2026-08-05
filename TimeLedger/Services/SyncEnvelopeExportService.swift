@@ -1,13 +1,23 @@
 import Foundation
 import SwiftData
 
+nonisolated struct PreparedSyncExport: Sendable {
+    let json: String
+    let entryCount: Int
+    let thoughtCount: Int
+}
+
 /// File-exchange SyncBatch (matches EvolutionCore SyncBatchFile schema). No SQLite copy.
-struct SyncEnvelopeExportService {
+nonisolated struct SyncEnvelopeExportService {
     let modelContext: ModelContext
     var deviceId: String
+    private let dateFormatter: ISO8601DateFormatter
 
     init(modelContext: ModelContext, deviceId: String? = nil) {
         self.modelContext = modelContext
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        dateFormatter = formatter
         if let deviceId {
             self.deviceId = deviceId
         } else if let id = UserDefaults.standard.string(forKey: "pee.deviceId") {
@@ -20,10 +30,35 @@ struct SyncEnvelopeExportService {
     }
 
     func exportSyncBatchJSON() throws -> String {
-        let projects = try modelContext.fetch(FetchDescriptor<Project>())
-        let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
-        let thoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
-        let cursors = try modelContext.fetch(FetchDescriptor<TimeCursor>())
+        try prepareSyncBatchJSON(range: nil, onlyConfirmed: false).json
+    }
+
+    func prepareSyncBatchJSON(
+        range: ExportDateRange?,
+        onlyConfirmed: Bool
+    ) throws -> PreparedSyncExport {
+        let allEntries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
+        let entries = allEntries.filter { entry in
+            let isInRange = range?.overlaps(startAt: entry.startAt, endAt: entry.endAt) ?? true
+            return isInRange && (!onlyConfirmed || entry.status == TimeEntryStatus.confirmed.rawValue)
+        }
+        let entryIDs = Set(entries.map(\.id))
+
+        let allThoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
+        let thoughts = allThoughts.filter { thought in
+            guard let range else { return true }
+            return range.contains(thought.capturedAt)
+                || thought.linkedEntryId.map(entryIDs.contains) == true
+        }
+
+        let projectIDs = Set(entries.map(\.projectId))
+        let allProjects = try modelContext.fetch(FetchDescriptor<Project>())
+        let projects = range == nil
+            ? allProjects
+            : allProjects.filter { projectIDs.contains($0.id) }
+        let cursors = range == nil
+            ? try modelContext.fetch(FetchDescriptor<TimeCursor>())
+            : []
 
         var envelopes: [[String: Any]] = []
 
@@ -104,7 +139,11 @@ struct SyncEnvelopeExportService {
             "envelopes": envelopes
         ]
         let data = try JSONSerialization.data(withJSONObject: batch, options: [.prettyPrinted, .sortedKeys])
-        return String(data: data, encoding: .utf8) ?? "{}"
+        return PreparedSyncExport(
+            json: String(data: data, encoding: .utf8) ?? "{}",
+            entryCount: entries.count,
+            thoughtCount: thoughts.count
+        )
     }
 
     private func envelope(
@@ -133,8 +172,6 @@ struct SyncEnvelopeExportService {
     }
 
     private func iso(_ date: Date) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: date)
+        dateFormatter.string(from: date)
     }
 }

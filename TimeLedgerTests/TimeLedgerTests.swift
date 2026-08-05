@@ -1084,43 +1084,8 @@ struct TimeLedgerTests {
 // MARK: - ExportService Tests
 
 extension TimeLedgerTests {
-    @Test func exportCSVProducesHeaderAndEntryRows() throws {
+    @Test func exportJSONUsesDateRangeAndConfirmedFilter() throws {
         let calendar = fixedCalendar
-        let container = try makeContainer()
-        let context = ModelContext(container)
-        let project = Project(name: "写作", categoryName: "工作")
-        context.insert(project)
-        context.insert(TimeEntry(
-            projectId: project.id,
-            projectNameSnapshot: project.name,
-            categoryNameSnapshot: project.categoryName,
-            startAt: date("2026-07-08 09:00", calendar: calendar),
-            endAt: date("2026-07-08 09:30", calendar: calendar),
-            status: .confirmed
-        ))
-        context.insert(TimeEntry(
-            projectId: project.id,
-            projectNameSnapshot: project.name,
-            categoryNameSnapshot: project.categoryName,
-            startAt: date("2026-07-08 10:00", calendar: calendar),
-            endAt: date("2026-07-08 10:20", calendar: calendar),
-            status: .draft
-        ))
-        try context.save()
-
-        let service = ExportService(modelContext: context)
-
-        let csvAll = try service.exportCSV(onlyConfirmed: false)
-        let linesAll = csvAll.components(separatedBy: "\n")
-        #expect(linesAll.count == 3)
-        #expect(linesAll[0].contains("date,startAt,endAt,durationMinutes,projectName,categoryName,note,status"))
-
-        let csvConfirmed = try service.exportCSV(onlyConfirmed: true)
-        let linesConfirmed = csvConfirmed.components(separatedBy: "\n")
-        #expect(linesConfirmed.count == 2)
-    }
-
-    @Test func exportJSONContainsProjectsEntriesAndSettings() throws {
         let container = try makeContainer()
         let context = ModelContext(container)
         let project = Project(name: "阅读", categoryName: "学习")
@@ -1129,27 +1094,46 @@ extension TimeLedgerTests {
             projectId: project.id,
             projectNameSnapshot: project.name,
             categoryNameSnapshot: project.categoryName,
-            startAt: Date(timeIntervalSince1970: 1_000),
-            endAt: Date(timeIntervalSince1970: 1_600),
+            startAt: date("2026-07-07 23:50", calendar: calendar),
+            endAt: date("2026-07-08 00:20", calendar: calendar),
             status: .confirmed
         ))
-        let settings = AppSettings()
-        context.insert(settings)
+        context.insert(TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: date("2026-07-08 09:00", calendar: calendar),
+            endAt: date("2026-07-08 09:30", calendar: calendar),
+            status: .draft
+        ))
+        context.insert(TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: date("2026-07-09 09:00", calendar: calendar),
+            endAt: date("2026-07-09 09:30", calendar: calendar),
+            status: .confirmed
+        ))
         try context.save()
 
-        let service = ExportService(modelContext: context)
-        let json = try service.exportJSON()
+        let service = JSONExportService(modelContext: context)
+        let prepared = try service.prepareJSON(
+            range: ExportDateRange(
+                start: date("2026-07-08 00:00", calendar: calendar),
+                endExclusive: date("2026-07-09 00:00", calendar: calendar)
+            ),
+            onlyConfirmed: true
+        )
 
-        let data = json.data(using: .utf8)!
-        let parsed = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let parsed = try JSONSerialization.jsonObject(with: prepared.data) as! [String: Any]
 
-        #expect(parsed["version"] as? Int == 1)
+        #expect(parsed["schemaVersion"] as? Int == 2)
+        #expect(parsed["mediaIncluded"] as? Bool == false)
         let projects = parsed["projects"] as? [[String: Any]]
         #expect(projects?.count == 1)
         let entries = parsed["timeEntries"] as? [[String: Any]]
         #expect(entries?.count == 1)
-        let settingsDict = parsed["settings"] as? [String: Any]
-        #expect(settingsDict?["exportOnlyConfirmed"] as? Bool == true)
+        #expect(prepared.entryCount == 1)
     }
 
     @Test func exportMarkdownDailyReportContainsTotalAndTimeline() throws {
