@@ -6,79 +6,90 @@ struct MediaMomentCard: View {
 
     let moment: MediaMoment
     let linkedEntry: TimeEntry?
+    let displayStartAt: Date?
+    let displayEndAt: Date?
+    let isRelatedToNote: Bool
+    let onEdit: (() -> Void)?
 
     @State private var showingViewer = false
     @State private var showingManualLink = false
     @State private var showingDeleteAlert = false
+    @State private var showingUnlinkConfirm = false
     @State private var errorMessage: String?
 
+    init(
+        moment: MediaMoment,
+        linkedEntry: TimeEntry?,
+        displayStartAt: Date? = nil,
+        displayEndAt: Date? = nil,
+        isRelatedToNote: Bool = false,
+        onEdit: (() -> Void)? = nil
+    ) {
+        self.moment = moment
+        self.linkedEntry = linkedEntry
+        self.displayStartAt = displayStartAt
+        self.displayEndAt = displayEndAt
+        self.isRelatedToNote = isRelatedToNote
+        self.onEdit = onEdit
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: TimelineCardActionMetrics.spacing) {
+                Text(timeText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                TimelineKindBadge(
+                    title: "思考",
+                    tint: Color.purple.opacity(0.16),
+                    foreground: Color.purple
+                )
+                if let onEdit {
+                    VisibleEditButton(
+                        accessibilityLabel: "编辑",
+                        accessibilityIdentifier: "timeline.media.edit",
+                        action: onEdit
+                    )
+                }
+                menuButton
+            }
+
+            TimelineMediaGrid(moments: [moment]) { _ in
                 showingViewer = true
-            } label: {
-                HStack(alignment: .top, spacing: 12) {
-                    thumbnail
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Label(
-                                moment.kind == .photo ? "照片" : "视频",
-                                systemImage: moment.kind == .photo ? "photo" : "video"
-                            )
-                            .font(.body.weight(.semibold))
-                            Spacer()
-                            Text(DateFormatterFactory.timeOnly.string(from: moment.capturedAt))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(linkedEntry?.projectNameSnapshot ?? "未关联时间项目")
-                            .font(.footnote)
-                            .foregroundStyle(linkedEntry == nil ? Color.orange : Color.secondary)
-                        if moment.kind == .video {
-                            Text(DurationFormatter.compact(moment.durationSeconds))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        statusLine
-                    }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: moment.kind == .photo ? "photo" : "video")
+                Text(moment.kind == .photo ? "照片" : "视频")
+                    .fontWeight(.semibold)
+                if moment.kind == .video {
+                    Text("· \(DurationFormatter.compact(moment.durationSeconds))")
+                        .foregroundStyle(.secondary)
                 }
             }
-            .buttonStyle(.plain)
+            .font(.subheadline)
 
-            HStack(spacing: 16) {
-                if moment.linkedEntryId == nil {
-                    Button("手动关联") { showingManualLink = true }
-                } else {
-                    Button("取消关联", role: .destructive) { unlink() }
-                }
+            Text(linkedEntry?.projectNameSnapshot ?? "未关联时间项目")
+                .font(.caption)
+                .foregroundStyle(linkedEntry == nil ? Color.orange : Color.secondary)
 
-                if moment.saveStatus == .partial || moment.saveStatus == .failed {
-                    Button("重试") {
-                        Task {
-                            await MediaMomentService(modelContext: modelContext).retry(moment)
-                        }
-                    }
-                    Button("改存 App") {
-                        Task {
-                            await MediaMomentService(modelContext: modelContext).saveToAppInstead(moment)
-                        }
-                    }
-                }
-
-                Spacer()
-                Button(role: .destructive) {
-                    showingDeleteAlert = true
-                } label: {
-                    Image(systemName: "trash")
-                }
+            if isRelatedToNote {
+                Text("关联备注")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityIdentifier("timeline.media.relatedNote")
             }
-            .font(.caption)
+
+            statusLine
         }
-        .padding(14)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemBackground))
+            RoundedRectangle(cornerRadius: TimelineCardStyle.cornerRadius, style: .continuous)
+                .fill(Color(.systemBackground))
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("timeline.card.media")
         .fullScreenCover(isPresented: $showingViewer) {
             MediaViewer(moment: moment)
         }
@@ -95,6 +106,12 @@ struct MediaMomentCard: View {
         } message: {
             Text("只删除 TimeLedger 中的 App 文件、缩略图和记录，绝不会删除系统相册原件。")
         }
+        .alert("取消关联？", isPresented: $showingUnlinkConfirm) {
+            Button("保留关联", role: .cancel) {}
+            Button("确认取消关联", role: .destructive, action: unlink)
+        } message: {
+            Text(unlinkMessage)
+        }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -109,21 +126,64 @@ struct MediaMomentCard: View {
         }
     }
 
-    private var thumbnail: some View {
-        TimelineThumbnailView(
-            mediaID: moment.id,
-            thumbnailData: moment.thumbnailData,
-            kind: moment.kind,
-            size: CGSize(width: 92, height: 72)
-        )
-        .overlay(alignment: .center) {
-            if moment.kind == .video {
-                Image(systemName: "play.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.white)
-                    .shadow(radius: 2)
+    private var menuButton: some View {
+        Menu {
+            if moment.linkedEntryId == nil {
+                Button("手动关联") { showingManualLink = true }
+            } else {
+                Button("取消关联", role: .destructive) {
+                    showingUnlinkConfirm = true
+                }
+                .accessibilityIdentifier("timeline.media.unlink")
             }
+
+            if moment.saveStatus == .partial || moment.saveStatus == .failed {
+                Button("重试") {
+                    Task {
+                        await MediaMomentService(modelContext: modelContext).retry(moment)
+                    }
+                }
+                Button("改存 App") {
+                    Task {
+                        await MediaMomentService(modelContext: modelContext).saveToAppInstead(moment)
+                    }
+                }
+            }
+
+            Button("删除", role: .destructive) {
+                showingDeleteAlert = true
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(
+                    minWidth: TimelineCardActionMetrics.minTouch,
+                    minHeight: TimelineCardActionMetrics.minTouch
+                )
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("更多操作")
+        .accessibilityIdentifier("timeline.media.menu")
+    }
+
+    private var timeText: String {
+        let start = displayStartAt ?? moment.capturedAt
+        if let end = displayEndAt {
+            let startText = DateFormatterFactory.timeOnly.string(from: start)
+            let endText = DateFormatterFactory.timeOnly.string(from: end)
+            return "\(startText) – \(endText)"
+        }
+        return DateFormatterFactory.dateTime.string(from: start)
+    }
+
+    private var unlinkMessage: String {
+        if let linkedEntry {
+            let start = DateFormatterFactory.timeOnly.string(from: linkedEntry.startAt)
+            let end = DateFormatterFactory.timeOnly.string(from: linkedEntry.endAt)
+            return "将解除与「\(linkedEntry.projectNameSnapshot)」\(start)–\(end) 的关联。"
+        }
+        return "将解除与当前时间条目的关联。"
     }
 
     @ViewBuilder

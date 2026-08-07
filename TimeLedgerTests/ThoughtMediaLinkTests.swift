@@ -40,6 +40,31 @@ struct ThoughtMediaLinkTests {
         #expect(moment.linkSourceEnum == .manual)
     }
 
+
+    @Test func hasAttachedMediaReportsPresenceAndAbsence() throws {
+        let context = try makeContext()
+        let withMedia = ThoughtNote(body: "有媒体")
+        let withoutMedia = ThoughtNote(body: "无媒体")
+        let moment = MediaMoment(
+            kind: .photo,
+            capturedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            requestedStorage: .app,
+            thumbnailData: Data([1])
+        )
+        context.insert(withMedia)
+        context.insert(withoutMedia)
+        context.insert(moment)
+        try context.save()
+
+        let service = ThoughtMediaLinkService(modelContext: context)
+        #expect(try service.hasAttachedMedia(for: withMedia) == false)
+        #expect(try service.hasAttachedMedia(for: withoutMedia) == false)
+
+        _ = try service.link(moment, to: withMedia, sortOrder: 0)
+        #expect(try service.hasAttachedMedia(for: withMedia) == true)
+        #expect(try service.hasAttachedMedia(for: withoutMedia) == false)
+    }
+
     @Test func additiveLinkSchemaKeepsExistingMediaStore() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "ThoughtMediaLinkMigration-\(UUID().uuidString)", directoryHint: .isDirectory)

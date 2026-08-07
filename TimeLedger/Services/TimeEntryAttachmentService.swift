@@ -73,7 +73,6 @@ struct TimeEntryAttachmentService {
         return allMoments
             .filter {
                 $0.linkedEntryId == entry.id
-                    && $0.linkSourceEnum == .manual
                     && !thoughtMediaIDs.contains($0.id)
             }
             .sorted { $0.capturedAt < $1.capturedAt }
@@ -81,12 +80,10 @@ struct TimeEntryAttachmentService {
 
     func removeFromNote(_ moment: MediaMoment, entry: TimeEntry) throws {
         guard moment.linkedEntryId == entry.id else { return }
-        if moment.anchorAt >= entry.startAt && moment.anchorAt <= entry.endAt {
-            moment.linkSource = ThoughtLinkSource.auto.rawValue
-        } else {
-            moment.linkedEntryId = nil
-            moment.linkSource = ThoughtLinkSource.none.rawValue
-        }
+        moment.linkedEntryId = nil
+        // Manual standalone ownership prevents later auto-reconciliation from
+        // silently attaching this preserved media to another card.
+        moment.linkSource = ThoughtLinkSource.manual.rawValue
         moment.updatedAt = Date()
         try modelContext.save()
     }

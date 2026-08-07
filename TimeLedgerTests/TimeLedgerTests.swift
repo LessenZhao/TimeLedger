@@ -1081,6 +1081,472 @@ struct TimeLedgerTests {
     }
 }
 
+// MARK: - Unified rich content contract tests
+
+@MainActor
+extension TimeLedgerTests {
+    @Test func unifiedContentReadOnlyModeLoadsTextAndMediaWithoutEditingState() throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "已有备注")
+        let moment = fixture.moment(linkedTo: entry)
+        fixture.context.insert(entry)
+        fixture.context.insert(moment)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .readOnly,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+
+        #expect(session.mode == .readOnly)
+        #expect(session.textDraft == "已有备注")
+        #expect(session.existingMedia.map(\.id) == [moment.id])
+    }
+
+    @Test func unifiedContentCancelDoesNotPersistTextOrPendingRemoval() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "取消前备注")
+        let moment = fixture.moment(linkedTo: entry)
+        fixture.context.insert(entry)
+        fixture.context.insert(moment)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.updateText("取消不应写入")
+        session.stageRemoval(moment)
+        try await session.cancel()
+
+        let storedEntry = try #require(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).first)
+        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
+        #expect(storedEntry.note == "取消前备注")
+        #expect(storedMoment.id == moment.id)
+        #expect(storedMoment.linkedEntryId == entry.id)
+    }
+
+    @Test func unifiedContentSaveCommitsTextAndNewMediaTogether() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "保存前备注")
+        fixture.context.insert(entry)
+        try fixture.context.save()
+        let stagedDraft = try await fixture.draftStore.addPhotoData(
+            Data("new-media".utf8),
+            thumbnailData: Data("thumbnail".utf8),
+            fileExtension: "jpg",
+            capturedAt: fixture.now
+        )
+        let attachment = try #require(stagedDraft.attachments.first)
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.updateText("保存后的备注")
+        session.stageMedia(attachment)
+        try await session.save()
+
+        let storedEntry = try #require(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).first)
+        let storedMedia = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
+        #expect(storedEntry.note == "保存后的备注")
+        #expect(storedMedia.id == attachment.id)
+        #expect(storedMedia.linkedEntryId == entry.id)
+        #expect(storedMedia.linkSourceEnum == .manual)
+    }
+
+    @Test func unifiedContentDefersDraftCleanupUntilOuterSaveFinishes() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "保存前备注")
+        fixture.context.insert(entry)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.updateText("等待外层提交")
+
+        try await session.save(discardDraft: false)
+        #expect(try fixture.draftStore.load().body == "等待外层提交")
+
+        try await session.finishSuccessfulSave()
+        #expect(try fixture.draftStore.load().hasContent == false)
+    }
+
+    @Test func unifiedContentConfirmedEntrySaveChangesOnlyContent() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let projectID = UUID()
+        let startAt = fixture.now.addingTimeInterval(-3_600)
+        let endAt = fixture.now.addingTimeInterval(-1_800)
+        let entry = fixture.entry(
+            note: "已确认备注",
+            projectID: projectID,
+            startAt: startAt,
+            endAt: endAt,
+            status: .confirmed
+        )
+        fixture.context.insert(entry)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.updateText("已确认只改内容")
+        try await session.save()
+
+        #expect(entry.note == "已确认只改内容")
+        #expect(entry.projectId == projectID)
+        #expect(entry.startAt == startAt)
+        #expect(entry.endAt == endAt)
+        #expect(entry.status == TimeEntryStatus.confirmed.rawValue)
+    }
+
+    @Test func unifiedContentThoughtCancelPreservesBodyAndMediaLink() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let thought = ThoughtNote(body: "原思考", capturedAt: fixture.now)
+        let moment = fixture.moment()
+        let link = ThoughtMediaLink(thoughtId: thought.id, mediaMomentId: moment.id, sortOrder: 0)
+        fixture.context.insert(thought)
+        fixture.context.insert(moment)
+        fixture.context.insert(link)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .thought(thought),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.updateText("取消不应改思考")
+        session.stageRemoval(moment)
+        try await session.cancel()
+
+        #expect(thought.body == "原思考")
+        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).count == 1)
+        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first?.id == moment.id)
+    }
+
+    @Test func unifiedContentSaveFailureKeepsOriginalAndRecoverableDraft() async throws {
+        let fixture = try UnifiedContentFixture(photoResults: [.failure(UnifiedContentFixtureError.photoWrite)])
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "保存失败前的原备注")
+        fixture.context.insert(entry)
+        try fixture.context.save()
+        let stagedDraft = try await fixture.draftStore.addCapture(
+            try fixture.cameraCapture(named: "failure-media")
+        )
+        let attachment = try #require(stagedDraft.attachments.first)
+
+        let session = try RichCardContentSession(
+            target: .timeEntry(entry),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary,
+            mediaPreference: .photosLibrary
+        )
+        session.updateText("失败后仍可恢复")
+        session.stageMedia(attachment)
+
+        do {
+            try await session.save()
+            #expect(Bool(false), "媒体保存失败时共享内容模块必须保留原内容并返回失败")
+        } catch {
+            // Expected: the editor must not partially commit the text.
+        }
+
+        #expect(entry.note == "保存失败前的原备注")
+        #expect(try fixture.draftStore.load().body == "失败后仍可恢复")
+        #expect(try fixture.draftStore.load().attachments.map(\.id) == [attachment.id])
+    }
+
+    @Test func removingEntryMediaDetachesCardButKeepsMediaMoment() throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let entry = fixture.entry(note: "有媒体")
+        let moment = fixture.moment(linkedTo: entry)
+        fixture.context.insert(entry)
+        fixture.context.insert(moment)
+        try fixture.context.save()
+
+        try TimeEntryAttachmentService(modelContext: fixture.context).removeFromNote(moment, entry: entry)
+
+        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
+        #expect(storedMoment.id == moment.id)
+        #expect(storedMoment.linkedEntryId == nil)
+        #expect(storedMoment.linkSourceEnum == .manual)
+    }
+
+    @Test func removingThoughtMediaDetachesLinkButKeepsMediaMoment() async throws {
+        let fixture = try UnifiedContentFixture()
+        defer { fixture.cleanup() }
+        let thought = ThoughtNote(body: "有思考媒体", capturedAt: fixture.now)
+        let moment = fixture.moment()
+        let link = ThoughtMediaLink(
+            thoughtId: thought.id,
+            mediaMomentId: moment.id,
+            sortOrder: 0
+        )
+        fixture.context.insert(thought)
+        fixture.context.insert(moment)
+        fixture.context.insert(link)
+        try fixture.context.save()
+
+        let session = try RichCardContentSession(
+            target: .thought(thought),
+            mode: .edit,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary
+        )
+        session.stageRemoval(moment)
+        try await session.save()
+
+        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).isEmpty)
+        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
+        #expect(storedMoment.id == moment.id)
+        #expect(storedMoment.linkedEntryId == nil)
+        #expect(storedMoment.linkSourceEnum == .manual)
+    }
+
+    @Test func newTimeEntryMediaFailureRetryDoesNotCreateDuplicateEntry() async throws {
+        let fixture = try UnifiedContentFixture(
+            photoResults: [
+                .failure(UnifiedContentFixtureError.photoWrite),
+                .success("retry-photo")
+            ]
+        )
+        defer { fixture.cleanup() }
+
+        let project = Project(name: "新建时间项目", categoryName: "测试")
+        fixture.context.insert(project)
+        try fixture.context.save()
+
+        var createdEntries: [TimeEntry] = []
+        let timeRange = RichCardContentTimeEntryDraft(
+            startAt: fixture.now.addingTimeInterval(-3_600),
+            endAt: fixture.now.addingTimeInterval(-1_800)
+        )
+        let target = RichCardContentTarget.newTimeEntry(
+            project: project,
+            timeRange: timeRange,
+            initialText: "",
+            save: { startAt, endAt, note in
+                let entry = TimeEntry(
+                    projectId: project.id,
+                    projectNameSnapshot: project.name,
+                    categoryNameSnapshot: project.categoryName,
+                    startAt: startAt,
+                    endAt: endAt,
+                    note: note
+                )
+                fixture.context.insert(entry)
+                try fixture.context.save()
+                createdEntries.append(entry)
+                return entry
+            }
+        )
+        let stagedDraft = try await fixture.draftStore.addCapture(
+            try fixture.cameraCapture(named: "new-entry-media")
+        )
+        let attachment = try #require(stagedDraft.attachments.first)
+        let session = try RichCardContentSession(
+            target: target,
+            mode: .create,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary,
+            mediaPreference: .photosLibrary
+        )
+        session.stageMedia(attachment)
+
+        do {
+            try await session.save()
+            #expect(Bool(false), "第一次媒体保存应失败，保留可恢复草稿")
+        } catch {
+            // Expected: the staged media is not yet saved.
+        }
+
+        try await session.save()
+
+        #expect(createdEntries.count == 1)
+        #expect(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).count == 1)
+        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).count == 1)
+        #expect(try fixture.draftStore.load().hasContent == false)
+    }
+
+    @Test func newThoughtMediaFailureRetryDoesNotCreateDuplicateThought() async throws {
+        let fixture = try UnifiedContentFixture(
+            photoResults: [
+                .failure(UnifiedContentFixtureError.photoWrite),
+                .success("retry-photo")
+            ]
+        )
+        defer { fixture.cleanup() }
+
+        let stagedDraft = try await fixture.draftStore.addCapture(
+            try fixture.cameraCapture(named: "new-thought-media")
+        )
+        let attachment = try #require(stagedDraft.attachments.first)
+        let session = try RichCardContentSession(
+            target: .newThought(entry: nil),
+            mode: .create,
+            modelContext: fixture.context,
+            draftStore: fixture.draftStore,
+            mediaFileStore: fixture.mediaFileStore,
+            photoLibrary: fixture.photoLibrary,
+            mediaPreference: .photosLibrary
+        )
+        session.stageMedia(attachment)
+
+        do {
+            try await session.save()
+            #expect(Bool(false), "第一次媒体保存应失败，保留可恢复草稿")
+        } catch {
+            // Expected: the staged media is not yet saved.
+        }
+
+        try await session.save()
+
+        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtNote>()).count == 1)
+        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).count == 1)
+        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).count == 1)
+        #expect(try fixture.draftStore.load().hasContent == false)
+    }
+}
+
+@MainActor
+private struct UnifiedContentFixture {
+    let context: ModelContext
+    let rootURL: URL
+    let draftStore: ThoughtComposerDraftStore
+    let mediaFileStore: MediaFileStore
+    let photoLibrary: UnifiedContentPhotoLibraryStub
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    init(photoResults: [Result<String, Error>] = [.success("unified-photo")]) throws {
+        rootURL = FileManager.default.temporaryDirectory
+            .appending(path: "UnifiedContentTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let schema = Schema(TimeLedgerModels.all)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        context = ModelContext(try ModelContainer(for: schema, configurations: [configuration]))
+        draftStore = ThoughtComposerDraftStore(rootURL: rootURL.appending(path: "Draft", directoryHint: .isDirectory))
+        mediaFileStore = MediaFileStore(rootURL: rootURL.appending(path: "Media", directoryHint: .isDirectory))
+        photoLibrary = UnifiedContentPhotoLibraryStub(results: photoResults)
+    }
+
+    func entry(
+        note: String,
+        projectID: UUID = UUID(),
+        startAt: Date? = nil,
+        endAt: Date? = nil,
+        status: TimeEntryStatus = .draft
+    ) -> TimeEntry {
+        TimeEntry(
+            projectId: projectID,
+            projectNameSnapshot: "统一内容项目",
+            categoryNameSnapshot: "测试",
+            startAt: startAt ?? now.addingTimeInterval(-3_600),
+            endAt: endAt ?? now.addingTimeInterval(-1_800),
+            note: note,
+            status: status
+        )
+    }
+
+    func moment(linkedTo entry: TimeEntry? = nil) -> MediaMoment {
+        MediaMoment(
+            kind: .photo,
+            capturedAt: now,
+            linkedEntryId: entry?.id,
+            linkSource: entry == nil ? .none : .manual,
+            requestedStorage: .app,
+            storedLocation: .app,
+            appRelativePath: "Originals/unified.jpg",
+            thumbnailData: Data([1]),
+            status: .saved,
+            originalAvailability: .available
+        )
+    }
+
+    func cameraCapture(named name: String) throws -> CameraCapture {
+        let sourceURL = rootURL.appending(path: "\(name).jpg")
+        try Data("original-\(name)".utf8).write(to: sourceURL, options: .atomic)
+        return CameraCapture(
+            sourceURL: sourceURL,
+            kind: .photo,
+            capturedAt: now,
+            thumbnailData: Data("thumbnail-\(name)".utf8),
+            durationSeconds: 0
+        )
+    }
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: rootURL)
+    }
+}
+
+@MainActor
+private final class UnifiedContentPhotoLibraryStub: MediaPhotoLibraryWriting {
+    var results: [Result<String, Error>]
+
+    init(results: [Result<String, Error>]) {
+        self.results = results
+    }
+
+    func saveOriginal(at fileURL: URL, kind: MediaKind) async throws -> String {
+        if results.isEmpty {
+            return "unified-photo"
+        }
+        return try results.removeFirst().get()
+    }
+
+    func assetExists(identifier: String) async -> Bool {
+        false
+    }
+}
+
+private enum UnifiedContentFixtureError: LocalizedError {
+    case photoWrite
+
+    var errorDescription: String? {
+        "统一内容测试照片写入失败"
+    }
+}
+
 // MARK: - ExportService Tests
 
 extension TimeLedgerTests {
@@ -1251,5 +1717,124 @@ extension TimeLedgerTests {
         } catch {
             #expect(error is ValidationError)
         }
+    }
+
+    @Test func updateNoteUpdatesOnlyNoteAndTimestampForDraftAndConfirmed() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let project = Project(name: "备注项目", categoryName: "测试")
+        context.insert(project)
+        let start = Date(timeIntervalSince1970: 1_800_010_000)
+        let end = start.addingTimeInterval(1800)
+        let draft = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: start,
+            endAt: end,
+            note: "旧草稿备注",
+            status: .draft
+        )
+        let confirmed = TimeEntry(
+            projectId: project.id,
+            projectNameSnapshot: project.name,
+            categoryNameSnapshot: project.categoryName,
+            startAt: end.addingTimeInterval(60),
+            endAt: end.addingTimeInterval(1860),
+            note: "旧确认备注",
+            status: .confirmed
+        )
+        context.insert(draft)
+        context.insert(confirmed)
+        try context.save()
+
+        let service = TimeCursorService(modelContext: context)
+        let draftBefore = (
+            draft.projectId,
+            draft.projectNameSnapshot,
+            draft.startAt,
+            draft.endAt,
+            draft.status,
+            draft.createdAt
+        )
+        let confirmedBefore = (
+            confirmed.projectId,
+            confirmed.projectNameSnapshot,
+            confirmed.startAt,
+            confirmed.endAt,
+            confirmed.status,
+            confirmed.createdAt
+        )
+        let stamp = Date(timeIntervalSince1970: 1_800_020_000)
+
+        try service.updateNote(draft, note: "新草稿备注", now: stamp)
+        try service.updateNote(confirmed, note: "新确认备注", now: stamp)
+
+        #expect(draft.note == "新草稿备注")
+        #expect(confirmed.note == "新确认备注")
+        #expect(draft.updatedAt == stamp)
+        #expect(confirmed.updatedAt == stamp)
+        #expect(draft.projectId == draftBefore.0)
+        #expect(draft.projectNameSnapshot == draftBefore.1)
+        #expect(draft.startAt == draftBefore.2)
+        #expect(draft.endAt == draftBefore.3)
+        #expect(draft.status == draftBefore.4)
+        #expect(draft.createdAt == draftBefore.5)
+        #expect(confirmed.projectId == confirmedBefore.0)
+        #expect(confirmed.projectNameSnapshot == confirmedBefore.1)
+        #expect(confirmed.startAt == confirmedBefore.2)
+        #expect(confirmed.endAt == confirmedBefore.3)
+        #expect(confirmed.status == confirmedBefore.4)
+        #expect(confirmed.createdAt == confirmedBefore.5)
+    }
+
+    @Test func failedEntryUpdateLeavesEntryUnchanged() throws {
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let originalProject = Project(name: "原项目", categoryName: "测试")
+        let replacementProject = Project(name: "新项目", categoryName: "测试")
+        context.insert(originalProject)
+        context.insert(replacementProject)
+        let start = Date(timeIntervalSince1970: 1_800_030_000)
+        let entry = TimeEntry(
+            projectId: originalProject.id,
+            projectNameSnapshot: originalProject.name,
+            categoryNameSnapshot: originalProject.categoryName,
+            startAt: start,
+            endAt: start.addingTimeInterval(600),
+            note: "原备注",
+            status: .draft
+        )
+        let next = TimeEntry(
+            projectId: originalProject.id,
+            projectNameSnapshot: originalProject.name,
+            categoryNameSnapshot: originalProject.categoryName,
+            startAt: start.addingTimeInterval(700),
+            endAt: start.addingTimeInterval(1_300),
+            status: .confirmed
+        )
+        context.insert(entry)
+        context.insert(next)
+        try context.save()
+
+        do {
+            try TimeCursorService(modelContext: context).updateEntry(
+                entry,
+                project: replacementProject,
+                note: "不应残留",
+                startAt: start.addingTimeInterval(60),
+                endAt: start.addingTimeInterval(800),
+                now: start.addingTimeInterval(2_000)
+            )
+            #expect(Bool(false), "与后一段重叠时必须拒绝更新")
+        } catch {
+            // Expected.
+        }
+
+        #expect(entry.projectId == originalProject.id)
+        #expect(entry.projectNameSnapshot == originalProject.name)
+        #expect(entry.note == "原备注")
+        #expect(entry.startAt == start)
+        #expect(entry.endAt == start.addingTimeInterval(600))
     }
 }

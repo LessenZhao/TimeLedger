@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct TimeEntryAttachmentServiceTests {
-    @Test func noteAttachmentsExcludeAutomaticAndThoughtMedia() throws {
+    @Test func noteAttachmentsIncludeDirectAutomaticMediaButExcludeThoughtMedia() throws {
         let fixture = try AttachmentFixture()
         let entry = fixture.entry()
         fixture.context.insert(entry)
@@ -48,7 +48,7 @@ struct TimeEntryAttachmentServiceTests {
             photos: EntryAttachmentPhotoLibraryStub()
         ).noteAttachments(for: entry)
 
-        #expect(attachments.map(\.id) == [notePhoto.id])
+        #expect(attachments.map(\.id) == [notePhoto.id, automaticPhoto.id])
         #expect(automaticPhoto.linkSourceEnum == .auto)
         #expect(thoughtPhoto.linkedEntryId == entry.id)
 
@@ -58,9 +58,9 @@ struct TimeEntryAttachmentServiceTests {
 
         let service = fixture.service(photos: EntryAttachmentPhotoLibraryStub())
         try service.removeFromNote(notePhoto, entry: entry)
-        #expect(notePhoto.linkedEntryId == entry.id)
-        #expect(notePhoto.linkSourceEnum == .auto)
-        #expect(try service.noteAttachments(for: entry).isEmpty)
+        #expect(notePhoto.linkedEntryId == nil)
+        #expect(notePhoto.linkSourceEnum == .manual)
+        #expect(try service.noteAttachments(for: entry).map(\.id) == [automaticPhoto.id])
     }
 
     @Test func failedPhotoSaveRemainsRecoverableAndRetryIsIdempotent() async throws {

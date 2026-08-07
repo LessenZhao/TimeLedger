@@ -10,6 +10,7 @@ struct PhotoAttachmentEditor: View {
     let existingMoments: [MediaMoment]
     let isDisabled: Bool
     let removeExisting: (MediaMoment) async throws -> Void
+    var addButtonAccessibilityIdentifier: String = "entry.attachment.add"
 
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var showingSourcePicker = false
@@ -48,7 +49,7 @@ struct PhotoAttachmentEditor: View {
                 Label("添加媒体", systemImage: "plus")
             }
             .disabled(remainingAttachmentCount == 0 || isDisabled || isImporting)
-            .accessibilityIdentifier("entry.attachment.add")
+            .accessibilityIdentifier(addButtonAccessibilityIdentifier)
         }
         .confirmationDialog(
             "添加媒体",

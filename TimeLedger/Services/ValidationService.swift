@@ -31,6 +31,20 @@ struct ValidationService {
         endAt: Date,
         excluding entryId: UUID? = nil
     ) throws {
+        try validateEntry(
+            projectId: projectId,
+            startAt: startAt,
+            endAt: endAt,
+            excludingEntryIds: entryId.map { [$0] } ?? []
+        )
+    }
+
+    func validateEntry(
+        projectId: UUID,
+        startAt: Date,
+        endAt: Date,
+        excludingEntryIds: Set<UUID>
+    ) throws {
         guard endAt > startAt else {
             throw ValidationError.invalidTimeRange
         }
@@ -41,7 +55,7 @@ struct ValidationService {
 
         let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
         let hasOverlap = entries.contains { entry in
-            entry.id != entryId
+            !excludingEntryIds.contains(entry.id)
             && DateRangeService.hasOverlap(
                 entryStart: startAt,
                 entryEnd: endAt,

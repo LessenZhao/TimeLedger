@@ -34,7 +34,7 @@ struct TimeListView: View {
                 } else {
                     ForEach(entries) { entry in
                         NavigationLink {
-                            TimeEntryEditView(entry: entry)
+                            TimeEntryDetailView(entry: entry)
                                 .toolbar(.visible, for: .navigationBar)
                         } label: {
                             entryRow(entry, thoughtCount: thoughtCount(for: entry))

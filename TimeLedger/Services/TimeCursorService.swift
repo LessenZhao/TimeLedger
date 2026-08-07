@@ -174,6 +174,41 @@ struct TimeCursorService {
     ) throws {
         let originalStartAt = entry.startAt
         let originalEndAt = entry.endAt
+        var nextDraftToSnap: TimeEntry?
+        var unknownProject: Project?
+        var cursorToMove: TimeCursor?
+
+        if entry.status == TimeEntryStatus.draft.rawValue {
+            try validateEntryUpdate(
+                entry,
+                project: project,
+                startAt: startAt,
+                endAt: endAt,
+                now: now
+            )
+
+            let next = try nextEntry(after: entry)
+            if let next {
+                let nextIsDraft = next.status == TimeEntryStatus.draft.rawValue
+                if nextIsDraft {
+                    let shouldSnapNextStart =
+                        endAt > next.startAt
+                        || (endAt < originalEndAt && next.startAt == originalEndAt)
+                    if shouldSnapNextStart {
+                        nextDraftToSnap = next
+                    }
+                }
+            }
+
+            if startAt > originalStartAt {
+                unknownProject = try SystemProject.getOrCreateUnknown(modelContext: modelContext)
+            }
+
+            let cursor = try getOrCreateCursor(now: now)
+            if cursor.cursorAt == originalEndAt {
+                cursorToMove = cursor
+            }
+        }
 
         entry.projectId = project.id
         entry.projectNameSnapshot = project.name
@@ -181,70 +216,89 @@ struct TimeCursorService {
         entry.note = note
         entry.updatedAt = now
 
+        var freedEntry: TimeEntry?
         if entry.status == TimeEntryStatus.draft.rawValue {
-            guard endAt > startAt else {
-                throw ValidationError.invalidTimeRange
-            }
-            guard startAt >= originalStartAt else {
-                throw TimeCursorError.startCannotMoveEarlier
-            }
-            guard endAt <= now else {
-                throw TimeCursorError.endAfterNow
+            if let nextDraftToSnap {
+                nextDraftToSnap.startAt = endAt
+                nextDraftToSnap.updatedAt = now
             }
 
-            let next = try nextEntry(after: entry)
-            if let next {
-                let nextIsDraft = next.status == TimeEntryStatus.draft.rawValue
-                if nextIsDraft {
-                    if endAt >= next.endAt {
-                        throw TimeCursorError.squeezesNextDraft
-                    }
-                    let shouldSnapNextStart =
-                        endAt > next.startAt
-                        || (endAt < originalEndAt && next.startAt == originalEndAt)
-                    if shouldSnapNextStart {
-                        next.startAt = endAt
-                        next.updatedAt = now
-                    }
-                } else if endAt > next.startAt {
-                    throw TimeCursorError.endOverlapsNext
-                }
-            }
-
-            try ValidationService(modelContext: modelContext).validateEntry(
-                projectId: project.id,
-                startAt: startAt,
-                endAt: endAt,
-                excluding: entry.id
-            )
-
-            if startAt > originalStartAt {
-                let unknown = try SystemProject.getOrCreateUnknown(modelContext: modelContext)
+            if let unknownProject {
                 let freed = TimeEntry(
-                    projectId: unknown.id,
-                    projectNameSnapshot: unknown.name,
-                    categoryNameSnapshot: unknown.categoryName,
+                    projectId: unknownProject.id,
+                    projectNameSnapshot: unknownProject.name,
+                    categoryNameSnapshot: unknownProject.categoryName,
                     startAt: originalStartAt,
                     endAt: startAt,
                     status: .draft
                 )
                 modelContext.insert(freed)
-                _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: freed)
+                freedEntry = freed
             }
 
             entry.startAt = startAt
             entry.endAt = endAt
 
-            let cursor = try getOrCreateCursor(now: now)
-            if cursor.cursorAt == originalEndAt {
-                cursor.cursorAt = endAt
-                cursor.updatedAt = now
+            if let cursorToMove {
+                cursorToMove.cursorAt = endAt
+                cursorToMove.updatedAt = now
             }
         }
 
         try modelContext.save()
+        if let freedEntry {
+            _ = try? ThoughtLinkingService(modelContext: modelContext)
+                .linkThoughtsForEntry(entry: freedEntry)
+        }
         _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
+    }
+
+    func validateEntryUpdate(
+        _ entry: TimeEntry,
+        project: Project,
+        startAt: Date,
+        endAt: Date,
+        now: Date = Date()
+    ) throws {
+        guard entry.status == TimeEntryStatus.draft.rawValue else { return }
+        guard endAt > startAt else {
+            throw ValidationError.invalidTimeRange
+        }
+        guard startAt >= entry.startAt else {
+            throw TimeCursorError.startCannotMoveEarlier
+        }
+        guard endAt <= now else {
+            throw TimeCursorError.endAfterNow
+        }
+
+        var excludedEntryIds: Set<UUID> = [entry.id]
+        if let next = try nextEntry(after: entry) {
+            if next.status == TimeEntryStatus.draft.rawValue {
+                if endAt >= next.endAt {
+                    throw TimeCursorError.squeezesNextDraft
+                }
+                if endAt > next.startAt {
+                    excludedEntryIds.insert(next.id)
+                }
+            } else if endAt > next.startAt {
+                throw TimeCursorError.endOverlapsNext
+            }
+        }
+
+        try ValidationService(modelContext: modelContext).validateEntry(
+            projectId: project.id,
+            startAt: startAt,
+            endAt: endAt,
+            excludingEntryIds: excludedEntryIds
+        )
+    }
+
+    /// Narrow note-only update for timeline/detail flows. Does not touch time range or project.
+    func updateNote(_ entry: TimeEntry, note: String, now: Date = Date()) throws {
+        entry.note = note
+        entry.updatedAt = now
+        try modelContext.save()
     }
 
     func cancelConfirmation(_ entry: TimeEntry) throws {

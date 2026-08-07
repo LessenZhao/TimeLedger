@@ -9,19 +9,17 @@ struct TimeAdjustmentSheet: View {
     let skipAction: (Date) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
 
     @State private var startAt: Date
     @State private var endAt: Date
-    @State private var note: String
-    @State private var draft = ThoughtComposerDraft.empty
-    @State private var isLoaded = false
-    @State private var isImporting = false
+    @State private var isSkipping = false
     @State private var isSaving = false
-    @State private var committedEntry: TimeEntry?
     @State private var errorMessage: String?
     @State private var showingSkipConfirmation = false
+    @State private var contentSession: RichCardContentSession?
 
+    private let initialNote: String
+    private let timeRangeDraft: RichCardContentTimeEntryDraft
     private let draftStore: ThoughtComposerDraftStore
 
     init(
@@ -40,9 +38,14 @@ struct TimeAdjustmentSheet: View {
         self.draftStore = ComposerDraftStoreFactory.newTimeEntry(projectID: project.id)
         let cappedEnd = min(defaultEndAt, Date())
         let initialStart = min(cursorAt, cappedEnd)
+        let initialEnd = max(cappedEnd, initialStart.addingTimeInterval(60))
         _startAt = State(initialValue: initialStart)
-        _endAt = State(initialValue: max(cappedEnd, initialStart.addingTimeInterval(60)))
-        _note = State(initialValue: note)
+        _endAt = State(initialValue: initialEnd)
+        self.initialNote = note
+        self.timeRangeDraft = RichCardContentTimeEntryDraft(
+            startAt: initialStart,
+            endAt: initialEnd
+        )
     }
 
     private var nowBound: Date { Date() }
@@ -78,46 +81,31 @@ struct TimeAdjustmentSheet: View {
                     noteEditor
 
                     Button("不记录这段时间", role: .destructive) {
-                        if draft.hasContent {
-                            showingSkipConfirmation = true
-                        } else {
-                            performSkip()
-                        }
+                        showingSkipConfirmation = true
                     }
                     .frame(maxWidth: .infinity)
-                    .disabled(isSaving || isImporting || committedEntry != nil)
+                    .disabled(isSkipping)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
             }
             .background(TLTheme.pageBackground.ignoresSafeArea())
-            .navigationTitle("记录详情")
+            .navigationTitle("记录时间")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
-                        dismiss()
+                        cancel()
                     }
-                    .disabled(isSaving)
+                    .accessibilityIdentifier("timeEntry.create.cancel")
+                    .disabled(isSaving || isSkipping)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
-                        ProgressView()
-                    } else {
-                        Button("保存") {
-                            save()
-                        }
-                        .disabled(isImporting)
+                    Button("保存") {
+                        save()
                     }
-                }
-            }
-            .onAppear(perform: loadDraft)
-            .onChange(of: note) { _, newValue in
-                guard isLoaded else { return }
-                do {
-                    draft = try draftStore.updateBody(newValue)
-                } catch {
-                    errorMessage = error.localizedDescription
+                    .accessibilityIdentifier("timeEntry.create.save")
+                    .disabled(isSaving || isSkipping || contentSession?.hasContent != true)
                 }
             }
             .onChange(of: startAt) { _, newStart in
@@ -127,11 +115,13 @@ struct TimeAdjustmentSheet: View {
                 if endAt > nowBound {
                     endAt = nowBound
                 }
+                timeRangeDraft.startAt = newStart
             }
             .onChange(of: endAt) { _, newEnd in
                 if newEnd > nowBound {
                     endAt = nowBound
                 }
+                timeRangeDraft.endAt = newEnd
             }
             .alert("操作失败", isPresented: Binding(
                 get: { errorMessage != nil },
@@ -196,111 +186,41 @@ struct TimeAdjustmentSheet: View {
     }
 
     private var noteEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("备注")
-                .font(.headline)
-
-            TextEditor(text: $note)
-                .frame(minHeight: 92)
-                .scrollContentBackground(.hidden)
-                .accessibilityIdentifier("entry.detail.note")
-                .overlay(alignment: .topLeading) {
-                    if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("写点补充，可留空……")
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                }
-
-            Divider()
-
-            PhotoAttachmentEditor(
-                draft: $draft,
-                isImporting: $isImporting,
-                draftStore: draftStore,
-                existingMoments: [],
-                isDisabled: isSaving,
-                removeExisting: { _ in }
-            )
-        }
-        .padding(14)
-        .background(TLTheme.cardBackground, in: RoundedRectangle(cornerRadius: TLTheme.cardRadius))
-    }
-
-    private func loadDraft() {
-        do {
-            let loaded = try draftStore.load()
-            draft = loaded
-            if loaded.hasContent {
-                note = loaded.body
-            } else {
-                draft = try draftStore.updateBody(note)
+        RichCardContentView(
+            target: .newTimeEntry(
+                project: project,
+                timeRange: timeRangeDraft,
+                initialText: initialNote,
+                save: saveNewEntry
+            ),
+            mode: .create,
+            onSessionReady: { session in
+                contentSession = session
             }
-            isLoaded = true
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        )
     }
 
-    private func save() {
+    private func saveNewEntry(
+        startAt: Date,
+        endAt: Date,
+        note: String
+    ) throws -> TimeEntry {
         let now = Date()
         guard endAt > startAt else {
-            errorMessage = "结束时间必须晚于开始时间。"
-            return
+            throw ValidationError.invalidTimeRange
         }
         guard startAt >= cursorAt else {
-            errorMessage = "开始时间不能早于未记录起点。"
-            return
+            throw TimeCursorError.startBeforeCursor
         }
         guard endAt <= now else {
-            errorMessage = "结束时间不能晚于当前时间。"
-            return
+            throw TimeCursorError.endAfterNow
         }
-        guard !isSaving else { return }
-
-        isSaving = true
-        Task {
-            do {
-                let entry = try committedEntry ?? saveAction(
-                    startAt,
-                    endAt,
-                    note.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                committedEntry = entry
-
-                let attachmentService = TimeEntryAttachmentService(modelContext: modelContext)
-                let preference = try attachmentService.storagePreference()
-                var mediaIssues: [MediaMoment] = []
-                for attachment in draft.attachments {
-                    let moment = try await attachmentService.commit(
-                        attachment,
-                        from: draftStore,
-                        to: entry,
-                        preference: preference
-                    )
-                    if moment.saveStatus != .saved {
-                        mediaIssues.append(moment)
-                    }
-                }
-
-                if mediaIssues.isEmpty {
-                    try await draftStore.discard()
-                    dismiss()
-                } else {
-                    errorMessage = "记录已保存，但有 \(mediaIssues.count) 张照片尚未完全保存。原件已保留，请再次点保存重试。"
-                }
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isSaving = false
-        }
+        return try saveAction(startAt, endAt, note)
     }
 
     private func performSkip(discardDraft: Bool = false) {
-        guard !isSaving else { return }
-        isSaving = true
+        guard !isSkipping else { return }
+        isSkipping = true
         Task {
             do {
                 if discardDraft {
@@ -311,7 +231,32 @@ struct TimeAdjustmentSheet: View {
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
+                isSkipping = false
+            }
+        }
+    }
+
+    private func cancel() {
+        Task {
+            do {
+                try await contentSession?.cancel()
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func save() {
+        guard !isSaving, let contentSession else { return }
+        isSaving = true
+        Task {
+            do {
+                try await contentSession.save()
+                dismiss()
+            } catch {
                 isSaving = false
+                errorMessage = error.localizedDescription
             }
         }
     }

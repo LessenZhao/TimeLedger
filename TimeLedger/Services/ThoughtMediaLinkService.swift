@@ -30,6 +30,15 @@ struct ThoughtMediaLinkService {
         return link
     }
 
+    func hasAttachedMedia(for thought: ThoughtNote) throws -> Bool {
+        let thoughtID = thought.id
+        var descriptor = FetchDescriptor<ThoughtMediaLink>(
+            predicate: #Predicate { $0.thoughtId == thoughtID }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first != nil
+    }
+
     func mediaMoments(
         for thought: ThoughtNote,
         links: [ThoughtMediaLink]? = nil,

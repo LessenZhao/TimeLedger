@@ -5,16 +5,35 @@ struct TimeEntryExpandableCard: View {
     let entry: TimeEntry
     let thoughts: [ThoughtNote]
     let mediaMoments: [MediaMoment]
-    let actionCount: Int
+    let thoughtMediaLinks: [ThoughtMediaLink]
+    let actionTitles: [String]
+    let onEditThought: (ThoughtNote) -> Void
     let onEdit: () -> Void
 
     @State private var isExpanded = false
-    @State private var expandedThoughtIDs: Set<UUID> = []
     @State private var selectedMedia: MediaMoment?
+
+    init(
+        entry: TimeEntry,
+        thoughts: [ThoughtNote],
+        mediaMoments: [MediaMoment],
+        thoughtMediaLinks: [ThoughtMediaLink] = [],
+        actionTitles: [String] = [],
+        onEditThought: @escaping (ThoughtNote) -> Void = { _ in },
+        onEdit: @escaping () -> Void
+    ) {
+        self.entry = entry
+        self.thoughts = thoughts
+        self.mediaMoments = mediaMoments
+        self.thoughtMediaLinks = thoughtMediaLinks
+        self.actionTitles = actionTitles
+        self.onEditThought = onEditThought
+        self.onEdit = onEdit
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: TimelineCardActionMetrics.spacing) {
                 Button {
                     toggleExpansion()
                 } label: {
@@ -28,7 +47,7 @@ struct TimeEntryExpandableCard: View {
                                         : Color.primary
                                 )
                                 .lineLimit(1)
-                            Text(timeAndNote)
+                            Text(timeRangeText)
                                 .font(.system(size: 14))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -44,13 +63,13 @@ struct TimeEntryExpandableCard: View {
                             }
                         }
 
-                        if SystemProject.isUnknownEntry(entry) || actionCount > 0 {
+                        if SystemProject.isUnknownEntry(entry) || !actionTitles.isEmpty {
                             HStack(spacing: 6) {
                                 if SystemProject.isUnknownEntry(entry) {
                                     badge("待选项目", color: .orange)
                                 }
-                                if actionCount > 0 {
-                                    Text("事项 \(actionCount)")
+                                if !actionTitles.isEmpty {
+                                    Text("事项 \(actionTitles.count)")
                                         .font(TLTheme.metaFont)
                                         .foregroundStyle(.blue)
                                 }
@@ -62,36 +81,52 @@ struct TimeEntryExpandableCard: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(
-                    "\(isExpanded ? "收起" : "展开") \(entry.projectNameSnapshot)"
+                    "展开内容 \(entry.projectNameSnapshot)"
                 )
-                .accessibilityIdentifier("timeEntry.expand.\(entry.id.uuidString)")
+                .accessibilityIdentifier("timeEntry.body.\(entry.id.uuidString)")
 
-                HStack(spacing: 0) {
+                HStack(spacing: TimelineCardActionMetrics.spacing) {
                     Button {
                         toggleExpansion()
                     } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 36, height: 36)
+                            .frame(
+                                minWidth: TimelineCardActionMetrics.minTouch,
+                                minHeight: TimelineCardActionMetrics.minTouch
+                            )
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .fixedSize()
+                    .layoutPriority(1)
                     .accessibilityLabel(
                         "\(isExpanded ? "收起详情" : "展开详情") \(entry.projectNameSnapshot)"
                     )
 
-                    Button {
-                        onEdit()
-                    } label: {
-                        Image(systemName: "pencil")
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 36, height: 36)
-                    .accessibilityLabel("编辑 \(entry.projectNameSnapshot)")
-                    .accessibilityIdentifier("timeEntry.edit.\(entry.id.uuidString)")
+                    VisibleEditButton(
+                        accessibilityLabel: "编辑 \(entry.projectNameSnapshot)",
+                        accessibilityIdentifier: "timeEntry.edit.\(entry.id.uuidString)",
+                        action: onEdit
+                    )
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            if !trimmedNote.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("备注", systemImage: "text.alignleft")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("timeEntry.note.label")
+
+                    TimelineExpandableText(
+                        text: trimmedNote,
+                        collapsedLineLimit: 2,
+                        accessibilityPrefix: "timeEntry.note",
+                        style: .note
+                    )
                 }
             }
 
@@ -116,40 +151,66 @@ struct TimeEntryExpandableCard: View {
 
     @ViewBuilder
     private var expandedContents: some View {
-        if thoughts.isEmpty && mediaMoments.isEmpty {
+        if thoughts.isEmpty && entryOnlyMedia.isEmpty && actionTitles.isEmpty && trimmedNote.isEmpty {
             Text("没有关联的思考、照片或视频")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            ForEach(thoughts) { thought in
-                Button {
-                    if expandedThoughtIDs.contains(thought.id) {
-                        expandedThoughtIDs.remove(thought.id)
-                    } else {
-                        expandedThoughtIDs.insert(thought.id)
+            if !actionTitles.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("完成事项")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(actionTitles.enumerated()), id: \.offset) { _, title in
+                        Text(title)
+                            .font(.subheadline)
                     }
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "lightbulb")
-                            .foregroundStyle(.orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(thought.body)
-                                .font(.subheadline)
-                                .lineLimit(expandedThoughtIDs.contains(thought.id) ? nil : 3)
-                                .multilineTextAlignment(.leading)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 3)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("timeEntry.thought.\(thought.id.uuidString)")
+                .accessibilityIdentifier("entry.actions")
             }
 
-            ForEach(mediaMoments) { moment in
+            ForEach(thoughts) { thought in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .center, spacing: TimelineCardActionMetrics.spacing) {
+                        Image(systemName: "lightbulb")
+                            .foregroundStyle(.orange)
+                        Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        VisibleEditButton(
+                            accessibilityLabel: "编辑关联思考",
+                            accessibilityIdentifier: "timeEntry.thought.edit",
+                            action: { onEditThought(thought) }
+                        )
+                    }
+
+                    if !thought.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        TimelineExpandableText(
+                            text: thought.body,
+                            collapsedLineLimit: 6,
+                            accessibilityPrefix: "timeEntry.thought.body",
+                            style: .thought
+                        )
+                    } else {
+                        Text("暂无文字内容")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    let moments = media(for: thought)
+                    if !moments.isEmpty {
+                        TimelineMediaGrid(moments: moments) { moment in
+                            selectedMedia = moment
+                        }
+                    }
+                }
+                .padding(.vertical, 3)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("timeEntry.thought.card")
+            }
+
+            ForEach(entryOnlyMedia) { moment in
                 Button {
                     selectedMedia = moment
                 } label: {
@@ -174,13 +235,11 @@ struct TimeEntryExpandableCard: View {
                             }
                         }
                         Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
                     }
                     .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(moment.kind == .photo ? "查看照片" : "查看视频")
                 .accessibilityIdentifier("timeEntry.media.\(moment.id.uuidString)")
             }
         }
@@ -204,13 +263,33 @@ struct TimeEntryExpandableCard: View {
         return thoughtItems + mediaItems
     }
 
-    private var timeAndNote: String {
+    private var timeRangeText: String {
         let start = DateFormatterFactory.timeOnly.string(from: entry.startAt)
         let end = DateFormatterFactory.timeOnly.string(from: entry.endAt)
         let duration = DurationFormatter.compact(entry.durationSeconds)
-        let trimmed = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = "\(start) – \(end) · \(duration)"
-        return trimmed.isEmpty ? base : "\(base) · \(trimmed)"
+        return "\(start) – \(end) · \(duration)"
+    }
+
+    private var trimmedNote: String {
+        entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func media(for thought: ThoughtNote) -> [MediaMoment] {
+        let order = Dictionary(
+            uniqueKeysWithValues: thoughtMediaLinks
+                .filter { $0.thoughtId == thought.id }
+                .map { ($0.mediaMomentId, $0.sortOrder) }
+        )
+        return mediaMoments
+            .filter { order[$0.id] != nil }
+            .sorted { order[$0.id, default: 0] < order[$1.id, default: 0] }
+    }
+
+    private var entryOnlyMedia: [MediaMoment] {
+        let linkedIDs = Set(thoughtMediaLinks.map(\.mediaMomentId))
+        return mediaMoments
+            .filter { !linkedIDs.contains($0.id) }
+            .sorted { $0.capturedAt < $1.capturedAt }
     }
 
     private func toggleExpansion() {

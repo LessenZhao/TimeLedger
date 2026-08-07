@@ -11,6 +11,9 @@ struct UITestFixtureService {
             if FileManager.default.fileExists(atPath: draftRoot.path) {
                 try FileManager.default.removeItem(at: draftRoot)
             }
+            if !arguments.contains("-ui-keep-timeline-type-mode") {
+                UserDefaults.standard.removeObject(forKey: "timeline.typeMode")
+            }
         }
         if arguments.contains("-ui-draft-scroll-fixture") {
             try seedDraftScrollFixture(now: now)
@@ -20,14 +23,20 @@ struct UITestFixtureService {
             try seedReviewFixture(now: now)
             return
         }
-        guard arguments.contains("-ui-media-fixture") else { return }
+        guard arguments.contains("-ui-media-fixture")
+            || arguments.contains("-ui-unified-content-fixture") else { return }
         guard try modelContext.fetch(FetchDescriptor<MediaMoment>()).isEmpty else { return }
 
-        let dayStart = Calendar.current.startOfDay(for: now)
-        let confirmedStart = dayStart.addingTimeInterval(60 * 60)
-        let confirmedEnd = dayStart.addingTimeInterval(90 * 60)
-        let draftStart = dayStart.addingTimeInterval(2 * 60 * 60)
-        let draftEnd = dayStart.addingTimeInterval(150 * 60)
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: now)
+        let elapsedToday = max(60, now.timeIntervalSince(dayStart))
+        let fixtureUnit = min(30 * 60, elapsedToday / 8)
+        let confirmedStart = dayStart.addingTimeInterval(fixtureUnit)
+        let confirmedEnd = dayStart.addingTimeInterval(fixtureUnit * 2)
+        let draftStart = dayStart.addingTimeInterval(fixtureUnit * 3)
+        let draftEnd = dayStart.addingTimeInterval(fixtureUnit * 4)
+        let confirmedContentAt = confirmedStart.addingTimeInterval(fixtureUnit / 2)
+        let draftContentAt = draftStart.addingTimeInterval(fixtureUnit / 2)
 
         let draftProject = Project(name: "Fixture 草稿项目", categoryName: "测试")
         let confirmedProject = Project(name: "Fixture 已确认项目", categoryName: "测试")
@@ -37,6 +46,7 @@ struct UITestFixtureService {
             categoryNameSnapshot: draftProject.categoryName,
             startAt: draftStart,
             endAt: draftEnd,
+            note: "Fixture 草稿备注",
             status: .draft
         )
         let confirmed = TimeEntry(
@@ -45,23 +55,38 @@ struct UITestFixtureService {
             categoryNameSnapshot: confirmedProject.categoryName,
             startAt: confirmedStart,
             endAt: confirmedEnd,
+            note: "Fixture 已确认备注",
             status: .confirmed
         )
+        let longBody = Array(
+            repeating: "Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。加长段落确保超过六行收起限制。",
+            count: 12
+        ).joined(separator: "\n\n")
         let draftThought = ThoughtNote(
-            body: "Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。",
-            capturedAt: draftStart.addingTimeInterval(15 * 60),
+            body: longBody,
+            capturedAt: draftContentAt,
             linkedEntryId: draft.id,
             linkSource: .manual
         )
         let confirmedThought = ThoughtNote(
             body: "Fixture 已确认思考全文",
-            capturedAt: confirmedStart.addingTimeInterval(15 * 60),
+            capturedAt: confirmedContentAt,
             linkedEntryId: confirmed.id,
             linkSource: .manual
         )
+        let photoOnlyThought = ThoughtNote(
+            body: "",
+            capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 6),
+            linkedEntryId: nil,
+            linkSource: .manual
+        )
+        let shortStandaloneThought = ThoughtNote(
+            body: "短文无展开",
+            capturedAt: now.addingTimeInterval(90)
+        )
         let photo = MediaMoment(
             kind: .photo,
-            capturedAt: draftStart.addingTimeInterval(20 * 60),
+            capturedAt: draftContentAt,
             linkedEntryId: draft.id,
             linkSource: .manual,
             requestedStorage: .app,
@@ -72,7 +97,7 @@ struct UITestFixtureService {
         )
         let video = MediaMoment(
             kind: .video,
-            capturedAt: confirmedStart.addingTimeInterval(20 * 60),
+            capturedAt: confirmedContentAt,
             linkedEntryId: confirmed.id,
             linkSource: .manual,
             requestedStorage: .photosLibrary,
@@ -85,7 +110,7 @@ struct UITestFixtureService {
         )
         let standalonePhoto = MediaMoment(
             kind: .photo,
-            capturedAt: draftStart.addingTimeInterval(25 * 60),
+            capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 8),
             linkedEntryId: draft.id,
             linkSource: .manual,
             requestedStorage: .app,
@@ -96,7 +121,7 @@ struct UITestFixtureService {
         )
         let standaloneVideo = MediaMoment(
             kind: .video,
-            capturedAt: confirmedStart.addingTimeInterval(25 * 60),
+            capturedAt: confirmedContentAt.addingTimeInterval(fixtureUnit / 8),
             linkedEntryId: confirmed.id,
             linkSource: .manual,
             requestedStorage: .photosLibrary,
@@ -104,6 +129,26 @@ struct UITestFixtureService {
             photosAssetIdentifier: "ui-fixture-standalone-video",
             thumbnailData: Data(),
             durationSeconds: 12,
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let automaticStandalonePhoto = MediaMoment(
+            kind: .photo,
+            capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 10),
+            linkedEntryId: draft.id,
+            linkSource: .auto,
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let photoOnlyMedia = MediaMoment(
+            kind: .photo,
+            capturedAt: photoOnlyThought.capturedAt,
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
             status: .saved,
             originalAvailability: .unavailable
         )
@@ -117,19 +162,96 @@ struct UITestFixtureService {
             mediaMomentId: video.id,
             sortOrder: 0
         )
+        let photoOnlyLink = ThoughtMediaLink(
+            thoughtId: photoOnlyThought.id,
+            mediaMomentId: photoOnlyMedia.id,
+            sortOrder: 0
+        )
+
+        // 7 月 20 日条目：备注照片与条目内思考的真实录入在“今天”，语义时间落在 7 月 20 日
+        var julyComponents = calendar.dateComponents([.year], from: now)
+        julyComponents.month = 7
+        julyComponents.day = 20
+        julyComponents.hour = 10
+        julyComponents.minute = 0
+        let july20Start = calendar.date(from: julyComponents) ?? dayStart.addingTimeInterval(-17 * 24 * 3600)
+        let july20End = july20Start.addingTimeInterval(2 * 3600)
+        let julyProject = Project(name: "Fixture 七月项目", categoryName: "测试")
+        let julyEntry = TimeEntry(
+            projectId: julyProject.id,
+            projectNameSnapshot: julyProject.name,
+            categoryNameSnapshot: julyProject.categoryName,
+            startAt: july20Start,
+            endAt: july20End,
+            note: "Fixture 七月备注",
+            status: .confirmed
+        )
+        let julyNotePhoto = MediaMoment(
+            kind: .photo,
+            capturedAt: now,
+            linkedEntryId: julyEntry.id,
+            linkSource: .manual,
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let julyThought = ThoughtNote(
+            body: "Fixture 七月条目思考",
+            capturedAt: now,
+            linkedEntryId: julyEntry.id,
+            linkSource: .manual
+        )
+        let homeThought = ThoughtNote(
+            body: "Fixture 首页独立思考",
+            capturedAt: now.addingTimeInterval(60)
+        )
+        let homePhoto = MediaMoment(
+            kind: .photo,
+            capturedAt: now.addingTimeInterval(120),
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
+            status: .saved,
+            originalAvailability: .unavailable
+        )
+        let homeVideo = MediaMoment(
+            kind: .video,
+            capturedAt: now.addingTimeInterval(180),
+            requestedStorage: .photosLibrary,
+            storedLocation: .photosLibrary,
+            photosAssetIdentifier: "ui-fixture-home-video",
+            thumbnailData: Data(),
+            durationSeconds: 8,
+            status: .saved,
+            originalAvailability: .unavailable
+        )
 
         modelContext.insert(draftProject)
         modelContext.insert(confirmedProject)
+        modelContext.insert(julyProject)
         modelContext.insert(draft)
         modelContext.insert(confirmed)
+        modelContext.insert(julyEntry)
         modelContext.insert(draftThought)
         modelContext.insert(confirmedThought)
+        modelContext.insert(photoOnlyThought)
+        modelContext.insert(shortStandaloneThought)
+        modelContext.insert(julyThought)
+        modelContext.insert(homeThought)
         modelContext.insert(photo)
         modelContext.insert(video)
         modelContext.insert(standalonePhoto)
         modelContext.insert(standaloneVideo)
+        modelContext.insert(automaticStandalonePhoto)
+        modelContext.insert(photoOnlyMedia)
+        modelContext.insert(julyNotePhoto)
+        modelContext.insert(homePhoto)
+        modelContext.insert(homeVideo)
         modelContext.insert(photoLink)
         modelContext.insert(videoLink)
+        modelContext.insert(photoOnlyLink)
         try modelContext.save()
     }
 

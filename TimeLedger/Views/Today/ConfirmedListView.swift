@@ -6,11 +6,12 @@ struct ConfirmedListView: View {
     @Query private var allEntries: [TimeEntry]
     @Query private var allThoughts: [ThoughtNote]
     @Query private var allMediaMoments: [MediaMoment]
+    @Query private var allThoughtMediaLinks: [ThoughtMediaLink]
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var selectedDate = Date()
     @State private var editingEntry: TimeEntry?
-    @State private var showingEditor = false
+    @State private var editingThought: ThoughtNote?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,10 +74,13 @@ struct ConfirmedListView: View {
                                 entry: entry,
                                 thoughts: thoughts(for: entry),
                                 mediaMoments: mediaMoments(for: entry),
-                                actionCount: actionCount(for: entry),
+                                thoughtMediaLinks: allThoughtMediaLinks,
+                                actionTitles: actionTitles(for: entry),
+                                onEditThought: { thought in
+                                    editingThought = thought
+                                },
                                 onEdit: {
                                     editingEntry = entry
-                                    showingEditor = true
                                 }
                             )
                         }
@@ -86,16 +90,13 @@ struct ConfirmedListView: View {
                 }
             }
         }
-        .background {
-            NavigationLink(isActive: $showingEditor) {
-                if let editingEntry {
-                    TimeEntryEditView(entry: editingEntry)
-                        .toolbar(.visible, for: .navigationBar)
-                }
-            } label: {
-                EmptyView()
+        .sheet(item: $editingEntry) { entry in
+            NavigationStack {
+                TimeEntryEditView(entry: entry)
             }
-            .hidden()
+        }
+        .sheet(item: $editingThought) { thought in
+            RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
         }
     }
 
@@ -138,8 +139,11 @@ struct ConfirmedListView: View {
             .sorted { $0.capturedAt < $1.capturedAt }
     }
 
-    private func actionCount(for entry: TimeEntry) -> Int {
-        allActionCompletions.filter { $0.linkedEntryId == entry.id }.count
+    private func actionTitles(for entry: TimeEntry) -> [String] {
+        allActionCompletions
+            .filter { $0.linkedEntryId == entry.id }
+            .sorted { $0.completedAt < $1.completedAt }
+            .map(\.actionTitleSnapshot)
     }
 
     private func shiftDay(_ value: Int) {
