@@ -4,14 +4,16 @@ import SwiftUI
 struct ConfirmedListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allEntries: [TimeEntry]
-    @Query private var allThoughts: [ThoughtNote]
+    @Query private var allJournals: [JournalEntry]
+    @Query private var allDocuments: [ContentDocument]
+    @Query private var allContentAttachments: [ContentAttachment]
+    @Query private var allJournalLinks: [JournalTimeLink]
     @Query private var allMediaMoments: [MediaMoment]
-    @Query private var allThoughtMediaLinks: [ThoughtMediaLink]
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var selectedDate = Date()
     @State private var editingEntry: TimeEntry?
-    @State private var editingThought: ThoughtNote?
+    @State private var editingJournal: JournalEntry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,7 +64,7 @@ struct ConfirmedListView: View {
                 ContentUnavailableView(
                     "这天没有已确认记录",
                     systemImage: "checkmark.circle",
-                    description: Text("确认草稿后会出现在这里。")
+                    description: Text("确认待确认记录后会出现在这里。")
                 )
                 .padding(.top, 24)
                 Spacer(minLength: 0)
@@ -72,12 +74,13 @@ struct ConfirmedListView: View {
                         ForEach(dayEntries) { entry in
                             TimeEntryExpandableCard(
                                 entry: entry,
-                                thoughts: thoughts(for: entry),
-                                mediaMoments: mediaMoments(for: entry),
-                                thoughtMediaLinks: allThoughtMediaLinks,
+                                documents: allDocuments,
+                                journals: journals(for: entry),
+                                mediaMoments: allMediaMoments,
+                                contentAttachments: allContentAttachments,
                                 actionTitles: actionTitles(for: entry),
-                                onEditThought: { thought in
-                                    editingThought = thought
+                                onEditJournal: { journal in
+                                    editingJournal = journal
                                 },
                                 onEdit: {
                                     editingEntry = entry
@@ -95,8 +98,8 @@ struct ConfirmedListView: View {
                 TimeEntryEditView(entry: entry)
             }
         }
-        .sheet(item: $editingThought) { thought in
-            RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
+        .sheet(item: $editingJournal) { journal in
+            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
     }
 
@@ -127,15 +130,10 @@ struct ConfirmedListView: View {
         }
     }
 
-    private func thoughts(for entry: TimeEntry) -> [ThoughtNote] {
-        allThoughts
-            .filter { $0.linkedEntryId == entry.id }
-            .sorted { $0.capturedAt < $1.capturedAt }
-    }
-
-    private func mediaMoments(for entry: TimeEntry) -> [MediaMoment] {
-        allMediaMoments
-            .filter { $0.linkedEntryId == entry.id }
+    private func journals(for entry: TimeEntry) -> [JournalEntry] {
+        let ids = Set(allJournalLinks.filter { $0.timeEntryID == entry.id }.map(\.journalEntryID))
+        return allJournals
+            .filter { ids.contains($0.id) }
             .sorted { $0.capturedAt < $1.capturedAt }
     }
 

@@ -76,11 +76,11 @@ struct TimeCursorService {
         )
 
         modelContext.insert(entry)
+        modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
         cursor.cursorAt = now
         cursor.updatedAt = now
         try modelContext.save()
-        _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
-        _ = try? MediaLinkingService(modelContext: modelContext).linkMediaForEntry(entry)
+        _ = try? JournalContentService(modelContext: modelContext).linkUnlinkedJournals(to: entry)
         _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
@@ -115,15 +115,15 @@ struct TimeCursorService {
             categoryNameSnapshot: project.categoryName,
             startAt: startAt,
             endAt: endAt,
-            note: note
+            note: ""
         )
 
         modelContext.insert(entry)
+        modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: note))
         cursor.cursorAt = endAt
         cursor.updatedAt = now
         try modelContext.save()
-        _ = try? ThoughtLinkingService(modelContext: modelContext).linkThoughtsForEntry(entry: entry)
-        _ = try? MediaLinkingService(modelContext: modelContext).linkMediaForEntry(entry)
+        _ = try? JournalContentService(modelContext: modelContext).linkUnlinkedJournals(to: entry)
         _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
         return entry
     }
@@ -158,16 +158,17 @@ struct TimeCursorService {
 
         cursor.cursorAt = last.startAt
         cursor.updatedAt = Date()
+        try deleteContent(for: last)
         modelContext.delete(last)
         try modelContext.save()
-        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
+        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 
     func updateEntry(
         _ entry: TimeEntry,
         project: Project,
-        note: String,
+        note: String?,
         startAt: Date,
         endAt: Date,
         now: Date = Date()
@@ -213,7 +214,7 @@ struct TimeCursorService {
         entry.projectId = project.id
         entry.projectNameSnapshot = project.name
         entry.categoryNameSnapshot = project.categoryName
-        entry.note = note
+        _ = note // Legacy parameter retained for source compatibility; content is saved by SaveContent.
         entry.updatedAt = now
 
         var freedEntry: TimeEntry?
@@ -233,6 +234,7 @@ struct TimeCursorService {
                     status: .draft
                 )
                 modelContext.insert(freed)
+                modelContext.insert(ContentDocument(ownerID: freed.id, ownerKind: .timeEntry))
                 freedEntry = freed
             }
 
@@ -247,10 +249,10 @@ struct TimeCursorService {
 
         try modelContext.save()
         if let freedEntry {
-            _ = try? ThoughtLinkingService(modelContext: modelContext)
-                .linkThoughtsForEntry(entry: freedEntry)
+            _ = try? JournalContentService(modelContext: modelContext)
+                .linkUnlinkedJournals(to: freedEntry)
         }
-        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
+        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 
@@ -294,9 +296,19 @@ struct TimeCursorService {
         )
     }
 
-    /// Narrow note-only update for timeline/detail flows. Does not touch time range or project.
+    /// Compatibility entry point for tests and older callers; the new content document is the only fact written.
     func updateNote(_ entry: TimeEntry, note: String, now: Date = Date()) throws {
-        entry.note = note
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+        let document: ContentDocument
+        if let existing = documents.first(where: { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }) {
+            document = existing
+        } else {
+            document = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry)
+            modelContext.insert(document)
+        }
+        document.body = note
+        document.revision += 1
+        document.updatedAt = now
         entry.updatedAt = now
         try modelContext.save()
     }
@@ -319,9 +331,10 @@ struct TimeCursorService {
         if cursor.cursorAt == deletedEnd {
             cursor.cursorAt = deletedStart
             cursor.updatedAt = Date()
+            try deleteContent(for: entry)
             modelContext.delete(entry)
             try modelContext.save()
-            _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
+            _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
             reconcileActionLinks()
             return
         }
@@ -332,9 +345,10 @@ struct TimeCursorService {
             next.updatedAt = Date()
         }
 
+        try deleteContent(for: entry)
         modelContext.delete(entry)
         try modelContext.save()
-        _ = try? MediaLinkingService(modelContext: modelContext).reconcileAutoLinks()
+        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
     }
 
@@ -357,5 +371,18 @@ struct TimeCursorService {
 
     private func reconcileActionLinks() {
         _ = try? ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
+    }
+
+    private func deleteContent(for entry: TimeEntry) throws {
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+            .filter { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }
+        let documentIDs = Set(documents.map(\.id))
+        let attachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
+            .filter { documentIDs.contains($0.contentDocumentID) }
+        let links = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
+            .filter { $0.timeEntryID == entry.id }
+        for attachment in attachments { modelContext.delete(attachment) }
+        for document in documents { modelContext.delete(document) }
+        for link in links { modelContext.delete(link) }
     }
 }

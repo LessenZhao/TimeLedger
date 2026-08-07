@@ -2,27 +2,37 @@ import Foundation
 import SwiftData
 
 nonisolated enum ComposerDraftStoreFactory {
-    static func newTimeEntry(projectID: UUID) -> ThoughtComposerDraftStore {
-        store(in: "TimeEntry-New-\(projectID.uuidString)")
+    static func newTimeEntry(
+        projectID: UUID,
+        draftsRootURL: URL? = nil
+    ) -> ThoughtComposerDraftStore {
+        store(in: "TimeEntry-New-\(projectID.uuidString)", draftsRootURL: draftsRootURL)
     }
 
-    static func timeEntry(_ entryID: UUID) -> ThoughtComposerDraftStore {
-        store(in: "TimeEntry-\(entryID.uuidString)")
+    static func timeEntry(
+        _ entryID: UUID,
+        draftsRootURL: URL? = nil
+    ) -> ThoughtComposerDraftStore {
+        store(in: "TimeEntry-\(entryID.uuidString)", draftsRootURL: draftsRootURL)
     }
 
-    static func thoughtForEntry(_ entryID: UUID) -> ThoughtComposerDraftStore {
-        store(in: "Thought-Entry-\(entryID.uuidString)")
+    static func thoughtForEntry(
+        _ entryID: UUID,
+        draftsRootURL: URL? = nil
+    ) -> ThoughtComposerDraftStore {
+        store(in: "Thought-Entry-\(entryID.uuidString)", draftsRootURL: draftsRootURL)
     }
 
-    private static func store(in directoryName: String) -> ThoughtComposerDraftStore {
-        let applicationSupport = FileManager.default.urls(
+    private static func store(
+        in directoryName: String,
+        draftsRootURL: URL?
+    ) -> ThoughtComposerDraftStore {
+        let root = draftsRootURL ?? FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0]
+        )[0].appending(path: "ComposerDrafts", directoryHint: .isDirectory)
         return ThoughtComposerDraftStore(
-            rootURL: applicationSupport
-                .appending(path: "ComposerDrafts", directoryHint: .isDirectory)
-                .appending(path: directoryName, directoryHint: .isDirectory)
+            rootURL: root.appending(path: directoryName, directoryHint: .isDirectory)
         )
     }
 }

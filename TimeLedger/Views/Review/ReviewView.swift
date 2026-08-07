@@ -145,9 +145,9 @@ struct ReviewView: View {
             Image(systemName: "clock.badge.questionmark")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("有 \(summary.pendingCount) 条草稿待确认")
+                Text("有 \(summary.pendingCount) 条记录待确认")
                     .font(.subheadline.weight(.semibold))
-                Text("草稿已计入趋势（浅色），精确值单独标明。草稿时长 \(DurationFormatter.compact(summary.pendingDuration))。")
+                Text("待确认记录已计入趋势（浅色），精确值单独标明。待确认时长 \(DurationFormatter.compact(summary.pendingDuration))。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -307,12 +307,12 @@ struct ReviewView: View {
                     x: .value("时间", bucket.start, unit: chartUnit),
                     y: .value("小时", bucket.draftDuration / 3_600)
                 )
-                .foregroundStyle(by: .value("类型", "草稿"))
+                .foregroundStyle(by: .value("类型", "待确认"))
             }
         }
         .chartForegroundStyleScale([
             "已确认": Color.accentColor,
-            "草稿": Color.accentColor.opacity(0.35)
+            "待确认": Color.accentColor.opacity(0.35)
         ])
         .chartLegend(position: .top, alignment: .leading)
         .chartYScale(domain: chartMaximum(project.buckets))
@@ -474,7 +474,7 @@ struct ReviewView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text(entry.status == .confirmed ? "已确认" : "草稿")
+                            Text(entry.status == .confirmed ? "已确认" : "待确认")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(entry.status == .confirmed ? Color.accentColor : Color.orange)
                         }
@@ -567,7 +567,7 @@ struct ReviewView: View {
                     .foregroundStyle(Color.accentColor)
                     BarMark(
                         x: .value("时间", bucket.start, unit: unit),
-                        y: .value("草稿", bucket.draftDuration / 3_600)
+                        y: .value("待确认", bucket.draftDuration / 3_600)
                     )
                     .foregroundStyle(Color.accentColor.opacity(0.35))
                 }
@@ -641,15 +641,15 @@ struct ReviewView: View {
         var parts = ["\(project.entryCount) 次"]
         parts.append("确认 \(DurationFormatter.compact(project.confirmedDuration))")
         if project.draftCount > 0 {
-            parts.append("草稿 \(project.draftCount) 条 · \(DurationFormatter.compact(project.draftDuration))")
+            parts.append("待确认 \(project.draftCount) 条 · \(DurationFormatter.compact(project.draftDuration))")
         } else {
-            parts.append("草稿 0")
+            parts.append("待确认 0")
         }
         return parts.joined(separator: " · ")
     }
 
     private func bucketDetailText(_ bucket: ReviewTimeBucket) -> String {
-        "确认 \(DurationFormatter.compact(bucket.confirmedDuration)) · 草稿 \(DurationFormatter.compact(bucket.draftDuration)) · 合计 \(DurationFormatter.compact(bucket.totalDuration)) · \(bucket.entryCount) 次"
+        "确认 \(DurationFormatter.compact(bucket.confirmedDuration)) · 待确认 \(DurationFormatter.compact(bucket.draftDuration)) · 合计 \(DurationFormatter.compact(bucket.totalDuration)) · \(bucket.entryCount) 次"
     }
 
     private func bucketAccessibilityValue(_ bucket: ReviewTimeBucket) -> String {

@@ -200,7 +200,9 @@ final class MirrorNetworkPhoneClient: ObservableObject {
     private func buildSnapshotJSON(modelContext: ModelContext) throws -> [String: Any] {
         let projects = try modelContext.fetch(FetchDescriptor<Project>())
         let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
-        let thoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+        let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>())
+        let journalLinks = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
         let cursor = try modelContext.fetch(FetchDescriptor<TimeCursor>()).first
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -232,32 +234,39 @@ final class MirrorNetworkPhoneClient: ObservableObject {
                 ]
             },
             "timeEntries": entries.map { e -> [String: Any] in
-                [
+                let body = documents.first {
+                    $0.ownerID == e.id && $0.ownerKind == ContentOwnerKind.timeEntry.rawValue
+                }?.body ?? ""
+                return [
                     "id": e.id.uuidString,
                     "projectId": e.projectId.uuidString,
                     "projectNameSnapshot": e.projectNameSnapshot,
                     "categoryNameSnapshot": e.categoryNameSnapshot,
                     "startAt": d(e.startAt),
                     "endAt": d(e.endAt),
-                    "note": e.note,
+                    "note": body,
                     "status": e.status,
                     "revision": 1,
                     "createdAt": d(e.createdAt),
                     "updatedAt": d(e.updatedAt)
                 ]
             },
-            "thoughts": thoughts.map { t -> [String: Any] in
+            "thoughts": journals.map { journal -> [String: Any] in
+                let document = documents.first {
+                    $0.ownerID == journal.id && $0.ownerKind == ContentOwnerKind.journalEntry.rawValue
+                }
+                let link = journalLinks.first { $0.journalEntryID == journal.id }
                 var row: [String: Any] = [
-                    "id": t.id.uuidString,
-                    "body": t.body,
-                    "capturedAt": d(t.capturedAt),
-                    "anchorAt": d(t.anchorAt),
-                    "linkSource": t.linkSource,
-                    "revision": 1,
-                    "createdAt": d(t.createdAt),
-                    "updatedAt": d(t.updatedAt)
+                    "id": journal.id.uuidString,
+                    "body": document?.body ?? "",
+                    "capturedAt": d(journal.capturedAt),
+                    "anchorAt": d(journal.anchorAt),
+                    "linkSource": link?.linkSource ?? ThoughtLinkSource.none.rawValue,
+                    "revision": document?.revision ?? 0,
+                    "createdAt": d(journal.createdAt),
+                    "updatedAt": d(document?.updatedAt ?? journal.updatedAt)
                 ]
-                if let linked = t.linkedEntryId?.uuidString {
+                if let linked = link?.timeEntryID.uuidString {
                     row["linkedEntryId"] = linked
                 }
                 return row

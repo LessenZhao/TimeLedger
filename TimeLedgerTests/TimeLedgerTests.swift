@@ -278,7 +278,9 @@ struct TimeLedgerTests {
         #expect(entry.projectId == project.id)
         #expect(entry.startAt == adjustedStart)
         #expect(entry.endAt == adjustedEnd)
-        #expect(entry.note == "会议后整理")
+        let document = try #require(context.fetch(FetchDescriptor<ContentDocument>()).first { $0.ownerID == entry.id })
+        #expect(document.body == "会议后整理")
+        #expect(entry.note.isEmpty)
         #expect(entry.status == TimeEntryStatus.draft.rawValue)
         #expect(try service.getOrCreateCursor().cursorAt == adjustedEnd)
     }
@@ -345,7 +347,7 @@ struct TimeLedgerTests {
         try service.updateEntry(
             entry,
             project: project,
-            note: "补充说明",
+            note: nil,
             startAt: editedStart,
             endAt: editedEnd,
             now: now
@@ -353,7 +355,7 @@ struct TimeLedgerTests {
 
         #expect(entry.startAt == editedStart)
         #expect(entry.endAt == editedEnd)
-        #expect(entry.note == "补充说明")
+        #expect(entry.note.isEmpty)
         #expect(try service.getOrCreateCursor().cursorAt == editedEnd)
     }
 
@@ -532,13 +534,13 @@ struct TimeLedgerTests {
         try service.updateEntry(
             entry,
             project: project,
-            note: "会议纪要",
+            note: nil,
             startAt: Date(timeIntervalSince1970: 3_100),
             endAt: Date(timeIntervalSince1970: 3_900)
         )
 
         #expect(entry.projectId == project.id)
-        #expect(entry.note == "会议纪要")
+        #expect(entry.note.isEmpty)
         #expect(entry.startAt == originalStart)
         #expect(entry.endAt == originalEnd)
     }
@@ -1081,370 +1083,102 @@ struct TimeLedgerTests {
     }
 }
 
-// MARK: - Unified rich content contract tests
+// MARK: - Unified content contract tests
 
 @MainActor
 extension TimeLedgerTests {
     @Test func unifiedContentReadOnlyModeLoadsTextAndMediaWithoutEditingState() throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "已有备注")
-        let moment = fixture.moment(linkedTo: entry)
-        fixture.context.insert(entry)
-        fixture.context.insert(moment)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .readOnly,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-
-        #expect(session.mode == .readOnly)
-        #expect(session.textDraft == "已有备注")
-        #expect(session.existingMedia.map(\.id) == [moment.id])
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: "冻结")
+        let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: "已有内容")
+        let media = f.moment(); f.context.insert(entry); f.context.insert(doc); f.context.insert(media)
+        f.context.insert(ContentAttachment(contentDocumentID: doc.id, mediaMomentID: media.id)); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context)
+        #expect(session.textDraft == "已有内容")
+        #expect(session.workingAttachments.map(\.mediaMomentID) == [media.id])
     }
 
-    @Test func unifiedContentCancelDoesNotPersistTextOrPendingRemoval() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "取消前备注")
-        let moment = fixture.moment(linkedTo: entry)
-        fixture.context.insert(entry)
-        fixture.context.insert(moment)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.updateText("取消不应写入")
-        session.stageRemoval(moment)
-        try await session.cancel()
-
-        let storedEntry = try #require(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).first)
-        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
-        #expect(storedEntry.note == "取消前备注")
-        #expect(storedMoment.id == moment.id)
-        #expect(storedMoment.linkedEntryId == entry.id)
+    @Test func unifiedContentCancelDoesNotPersistTextOrPendingRemoval() throws {
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: "冻结")
+        let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: "正式")
+        let media = f.moment(); f.context.insert(entry); f.context.insert(doc); f.context.insert(media)
+        f.context.insert(ContentAttachment(contentDocumentID: doc.id, mediaMomentID: media.id)); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context)
+        session.updateText("取消"); session.apply(.removeMedia(media.id))
+        #expect(doc.body == "正式")
+        #expect(try f.context.fetchCount(FetchDescriptor<ContentAttachment>()) == 1)
+        #expect(entry.note == "冻结")
     }
 
-    @Test func unifiedContentSaveCommitsTextAndNewMediaTogether() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "保存前备注")
-        fixture.context.insert(entry)
-        try fixture.context.save()
-        let stagedDraft = try await fixture.draftStore.addPhotoData(
-            Data("new-media".utf8),
-            thumbnailData: Data("thumbnail".utf8),
-            fileExtension: "jpg",
-            capturedAt: fixture.now
-        )
-        let attachment = try #require(stagedDraft.attachments.first)
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.updateText("保存后的备注")
-        session.stageMedia(attachment)
-        try await session.save()
-
-        let storedEntry = try #require(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).first)
-        let storedMedia = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
-        #expect(storedEntry.note == "保存后的备注")
-        #expect(storedMedia.id == attachment.id)
-        #expect(storedMedia.linkedEntryId == entry.id)
-        #expect(storedMedia.linkSourceEnum == .manual)
+    @Test func unifiedContentSaveCommitsTextAndNewMediaTogether() throws {
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: "冻结")
+        let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: "旧")
+        let media = f.moment(); f.context.insert(entry); f.context.insert(doc); f.context.insert(media); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context)
+        session.updateText("新正文"); session.apply(.addMedia(media.id)); try SaveContent(modelContext: f.context).save(session)
+        #expect(doc.body == "新正文")
+        #expect(try f.context.fetch(FetchDescriptor<ContentAttachment>()).map(\.mediaMomentID) == [media.id])
+        #expect(entry.note == "冻结")
     }
 
-    @Test func unifiedContentDefersDraftCleanupUntilOuterSaveFinishes() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "保存前备注")
-        fixture.context.insert(entry)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.updateText("等待外层提交")
-
-        try await session.save(discardDraft: false)
-        #expect(try fixture.draftStore.load().body == "等待外层提交")
-
-        try await session.finishSuccessfulSave()
-        #expect(try fixture.draftStore.load().hasContent == false)
+    @Test func unifiedContentDefersDraftCleanupUntilOuterSaveFinishes() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "UnifiedDraft-\(UUID().uuidString)")
+        let store = ContentEditorDraftStore(rootURL: root)
+        let session = ContentEditorSession(ownerID: UUID(), contentID: UUID(), baseRevision: 1, workingBody: "工作副本", workingAttachments: [])
+        try store.save(session); #expect(try store.load(ownerID: session.ownerID)?.workingBody == "工作副本")
+        try store.discard(ownerID: session.ownerID); #expect(try store.load(ownerID: session.ownerID) == nil)
     }
 
-    @Test func unifiedContentConfirmedEntrySaveChangesOnlyContent() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let projectID = UUID()
-        let startAt = fixture.now.addingTimeInterval(-3_600)
-        let endAt = fixture.now.addingTimeInterval(-1_800)
-        let entry = fixture.entry(
-            note: "已确认备注",
-            projectID: projectID,
-            startAt: startAt,
-            endAt: endAt,
-            status: .confirmed
-        )
-        fixture.context.insert(entry)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.updateText("已确认只改内容")
-        try await session.save()
-
-        #expect(entry.note == "已确认只改内容")
-        #expect(entry.projectId == projectID)
-        #expect(entry.startAt == startAt)
-        #expect(entry.endAt == endAt)
-        #expect(entry.status == TimeEntryStatus.confirmed.rawValue)
+    @Test func unifiedContentConfirmedEntrySaveChangesOnlyContent() throws {
+        let f = try UnifiedContentFixture(); let projectID = UUID(); let start = f.now.addingTimeInterval(-3_600); let end = f.now.addingTimeInterval(-1_800)
+        let entry = f.entry(note: "冻结", projectID: projectID, startAt: start, endAt: end, status: .confirmed)
+        let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: "之前"); f.context.insert(entry); f.context.insert(doc); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context); session.updateText("只改内容"); try SaveContent(modelContext: f.context).save(session)
+        #expect(doc.body == "只改内容"); #expect(entry.projectId == projectID); #expect(entry.startAt == start); #expect(entry.endAt == end); #expect(entry.status == TimeEntryStatus.confirmed.rawValue)
     }
 
-    @Test func unifiedContentThoughtCancelPreservesBodyAndMediaLink() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let thought = ThoughtNote(body: "原思考", capturedAt: fixture.now)
-        let moment = fixture.moment()
-        let link = ThoughtMediaLink(thoughtId: thought.id, mediaMomentId: moment.id, sortOrder: 0)
-        fixture.context.insert(thought)
-        fixture.context.insert(moment)
-        fixture.context.insert(link)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .thought(thought),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.updateText("取消不应改思考")
-        session.stageRemoval(moment)
-        try await session.cancel()
-
-        #expect(thought.body == "原思考")
-        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).count == 1)
-        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first?.id == moment.id)
+    @Test func unifiedContentJournalCancelPreservesBodyAndMediaLink() throws {
+        let f = try UnifiedContentFixture(); let journal = JournalEntry(capturedAt: f.now)
+        let doc = ContentDocument(ownerID: journal.id, ownerKind: .journalEntry, body: "原随记"); let media = f.moment()
+        f.context.insert(journal); f.context.insert(doc); f.context.insert(media); f.context.insert(ContentAttachment(contentDocumentID: doc.id, mediaMomentID: media.id)); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context); session.updateText("取消"); session.apply(.removeMedia(media.id))
+        #expect(doc.body == "原随记"); #expect(try f.context.fetchCount(FetchDescriptor<ContentAttachment>()) == 1); #expect(try f.context.fetchCount(FetchDescriptor<MediaMoment>()) == 1)
     }
 
-    @Test func unifiedContentSaveFailureKeepsOriginalAndRecoverableDraft() async throws {
-        let fixture = try UnifiedContentFixture(photoResults: [.failure(UnifiedContentFixtureError.photoWrite)])
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "保存失败前的原备注")
-        fixture.context.insert(entry)
-        try fixture.context.save()
-        let stagedDraft = try await fixture.draftStore.addCapture(
-            try fixture.cameraCapture(named: "failure-media")
-        )
-        let attachment = try #require(stagedDraft.attachments.first)
-
-        let session = try RichCardContentSession(
-            target: .timeEntry(entry),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary,
-            mediaPreference: .photosLibrary
-        )
-        session.updateText("失败后仍可恢复")
-        session.stageMedia(attachment)
-
-        do {
-            try await session.save()
-            #expect(Bool(false), "媒体保存失败时共享内容模块必须保留原内容并返回失败")
-        } catch {
-            // Expected: the editor must not partially commit the text.
-        }
-
-        #expect(entry.note == "保存失败前的原备注")
-        #expect(try fixture.draftStore.load().body == "失败后仍可恢复")
-        #expect(try fixture.draftStore.load().attachments.map(\.id) == [attachment.id])
+    @Test func unifiedContentSaveFailureKeepsOriginalAndRecoverableDraft() throws {
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: "冻结")
+        let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: "正式"); f.context.insert(entry); f.context.insert(doc); try f.context.save()
+        let stale = try ContentEditorSession.load(document: doc, modelContext: f.context); stale.updateText("工作副本"); doc.revision += 1; doc.body = "更新版本"; try f.context.save()
+        #expect(throws: SaveContentError.revisionConflict) { try SaveContent(modelContext: f.context).save(stale) }
+        #expect(stale.workingBody == "工作副本"); #expect(doc.body == "更新版本")
     }
 
     @Test func removingEntryMediaDetachesCardButKeepsMediaMoment() throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let entry = fixture.entry(note: "有媒体")
-        let moment = fixture.moment(linkedTo: entry)
-        fixture.context.insert(entry)
-        fixture.context.insert(moment)
-        try fixture.context.save()
-
-        try TimeEntryAttachmentService(modelContext: fixture.context).removeFromNote(moment, entry: entry)
-
-        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
-        #expect(storedMoment.id == moment.id)
-        #expect(storedMoment.linkedEntryId == nil)
-        #expect(storedMoment.linkSourceEnum == .manual)
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: ""); let doc = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry); let media = f.moment()
+        f.context.insert(entry); f.context.insert(doc); f.context.insert(media); f.context.insert(ContentAttachment(contentDocumentID: doc.id, mediaMomentID: media.id)); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context); session.apply(.removeMedia(media.id)); try SaveContent(modelContext: f.context).save(session)
+        #expect(try f.context.fetchCount(FetchDescriptor<ContentAttachment>()) == 0); #expect(try f.context.fetchCount(FetchDescriptor<MediaMoment>()) == 1)
     }
 
-    @Test func removingThoughtMediaDetachesLinkButKeepsMediaMoment() async throws {
-        let fixture = try UnifiedContentFixture()
-        defer { fixture.cleanup() }
-        let thought = ThoughtNote(body: "有思考媒体", capturedAt: fixture.now)
-        let moment = fixture.moment()
-        let link = ThoughtMediaLink(
-            thoughtId: thought.id,
-            mediaMomentId: moment.id,
-            sortOrder: 0
-        )
-        fixture.context.insert(thought)
-        fixture.context.insert(moment)
-        fixture.context.insert(link)
-        try fixture.context.save()
-
-        let session = try RichCardContentSession(
-            target: .thought(thought),
-            mode: .edit,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary
-        )
-        session.stageRemoval(moment)
-        try await session.save()
-
-        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).isEmpty)
-        let storedMoment = try #require(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).first)
-        #expect(storedMoment.id == moment.id)
-        #expect(storedMoment.linkedEntryId == nil)
-        #expect(storedMoment.linkSourceEnum == .manual)
+    @Test func removingJournalMediaDetachesLinkButKeepsMediaMoment() throws {
+        let f = try UnifiedContentFixture(); let journal = JournalEntry(capturedAt: f.now); let doc = ContentDocument(ownerID: journal.id, ownerKind: .journalEntry); let media = f.moment()
+        f.context.insert(journal); f.context.insert(doc); f.context.insert(media); f.context.insert(ContentAttachment(contentDocumentID: doc.id, mediaMomentID: media.id)); try f.context.save()
+        let session = try ContentEditorSession.load(document: doc, modelContext: f.context); session.apply(.removeMedia(media.id)); try SaveContent(modelContext: f.context).save(session)
+        #expect(try f.context.fetchCount(FetchDescriptor<ContentAttachment>()) == 0); #expect(try f.context.fetchCount(FetchDescriptor<MediaMoment>()) == 1)
     }
 
-    @Test func newTimeEntryMediaFailureRetryDoesNotCreateDuplicateEntry() async throws {
-        let fixture = try UnifiedContentFixture(
-            photoResults: [
-                .failure(UnifiedContentFixtureError.photoWrite),
-                .success("retry-photo")
-            ]
-        )
-        defer { fixture.cleanup() }
-
-        let project = Project(name: "新建时间项目", categoryName: "测试")
-        fixture.context.insert(project)
-        try fixture.context.save()
-
-        var createdEntries: [TimeEntry] = []
-        let timeRange = RichCardContentTimeEntryDraft(
-            startAt: fixture.now.addingTimeInterval(-3_600),
-            endAt: fixture.now.addingTimeInterval(-1_800)
-        )
-        let target = RichCardContentTarget.newTimeEntry(
-            project: project,
-            timeRange: timeRange,
-            initialText: "",
-            save: { startAt, endAt, note in
-                let entry = TimeEntry(
-                    projectId: project.id,
-                    projectNameSnapshot: project.name,
-                    categoryNameSnapshot: project.categoryName,
-                    startAt: startAt,
-                    endAt: endAt,
-                    note: note
-                )
-                fixture.context.insert(entry)
-                try fixture.context.save()
-                createdEntries.append(entry)
-                return entry
-            }
-        )
-        let stagedDraft = try await fixture.draftStore.addCapture(
-            try fixture.cameraCapture(named: "new-entry-media")
-        )
-        let attachment = try #require(stagedDraft.attachments.first)
-        let session = try RichCardContentSession(
-            target: target,
-            mode: .create,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary,
-            mediaPreference: .photosLibrary
-        )
-        session.stageMedia(attachment)
-
-        do {
-            try await session.save()
-            #expect(Bool(false), "第一次媒体保存应失败，保留可恢复草稿")
-        } catch {
-            // Expected: the staged media is not yet saved.
-        }
-
-        try await session.save()
-
-        #expect(createdEntries.count == 1)
-        #expect(try fixture.context.fetch(FetchDescriptor<TimeEntry>()).count == 1)
-        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).count == 1)
-        #expect(try fixture.draftStore.load().hasContent == false)
+    @Test func newTimeEntryRetryDoesNotCreateDuplicateDocument() throws {
+        let f = try UnifiedContentFixture(); let entry = f.entry(note: ""); f.context.insert(entry); try f.context.save()
+        let first = ContentEditorSession(ownerID: entry.id, contentID: entry.id, baseRevision: 0, workingBody: "新记录", workingAttachments: [])
+        try SaveContent(modelContext: f.context).createTimeEntryDocumentAndSave(first, entry: entry)
+        let doc = try #require(try f.context.fetch(FetchDescriptor<ContentDocument>()).first); let retry = try ContentEditorSession.load(document: doc, modelContext: f.context); try SaveContent(modelContext: f.context).save(retry)
+        #expect(try f.context.fetchCount(FetchDescriptor<TimeEntry>()) == 1); #expect(try f.context.fetchCount(FetchDescriptor<ContentDocument>()) == 1)
     }
 
-    @Test func newThoughtMediaFailureRetryDoesNotCreateDuplicateThought() async throws {
-        let fixture = try UnifiedContentFixture(
-            photoResults: [
-                .failure(UnifiedContentFixtureError.photoWrite),
-                .success("retry-photo")
-            ]
-        )
-        defer { fixture.cleanup() }
-
-        let stagedDraft = try await fixture.draftStore.addCapture(
-            try fixture.cameraCapture(named: "new-thought-media")
-        )
-        let attachment = try #require(stagedDraft.attachments.first)
-        let session = try RichCardContentSession(
-            target: .newThought(entry: nil),
-            mode: .create,
-            modelContext: fixture.context,
-            draftStore: fixture.draftStore,
-            mediaFileStore: fixture.mediaFileStore,
-            photoLibrary: fixture.photoLibrary,
-            mediaPreference: .photosLibrary
-        )
-        session.stageMedia(attachment)
-
-        do {
-            try await session.save()
-            #expect(Bool(false), "第一次媒体保存应失败，保留可恢复草稿")
-        } catch {
-            // Expected: the staged media is not yet saved.
-        }
-
-        try await session.save()
-
-        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtNote>()).count == 1)
-        #expect(try fixture.context.fetch(FetchDescriptor<MediaMoment>()).count == 1)
-        #expect(try fixture.context.fetch(FetchDescriptor<ThoughtMediaLink>()).count == 1)
-        #expect(try fixture.draftStore.load().hasContent == false)
+    @Test func newJournalRetryDoesNotCreateDuplicateJournal() throws {
+        let f = try UnifiedContentFixture(); let id = UUID(); let first = ContentEditorSession(ownerID: id, contentID: id, baseRevision: 0, workingBody: "新随记", workingAttachments: [])
+        let save = SaveContent(modelContext: f.context); try save.createJournalAndSave(first, capturedAt: f.now, anchorAt: f.now, linkedEntryID: nil, linkSource: .none)
+        let doc = try #require(try f.context.fetch(FetchDescriptor<ContentDocument>()).first); let retry = try ContentEditorSession.load(document: doc, modelContext: f.context); try save.save(retry)
+        #expect(try f.context.fetchCount(FetchDescriptor<JournalEntry>()) == 1); #expect(try f.context.fetchCount(FetchDescriptor<ContentDocument>()) == 1)
     }
 }
 
@@ -1770,8 +1504,11 @@ extension TimeLedgerTests {
         try service.updateNote(draft, note: "新草稿备注", now: stamp)
         try service.updateNote(confirmed, note: "新确认备注", now: stamp)
 
-        #expect(draft.note == "新草稿备注")
-        #expect(confirmed.note == "新确认备注")
+        let documents = try context.fetch(FetchDescriptor<ContentDocument>())
+        #expect(documents.first { $0.ownerID == draft.id }?.body == "新草稿备注")
+        #expect(documents.first { $0.ownerID == confirmed.id }?.body == "新确认备注")
+        #expect(draft.note == "旧草稿备注")
+        #expect(confirmed.note == "旧确认备注")
         #expect(draft.updatedAt == stamp)
         #expect(confirmed.updatedAt == stamp)
         #expect(draft.projectId == draftBefore.0)

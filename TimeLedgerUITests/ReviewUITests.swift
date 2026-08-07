@@ -65,7 +65,7 @@ final class ReviewUITests: XCTestCase {
         let banner = app.descendants(matching: .any)["review.pending.banner"]
         XCTAssertTrue(
             banner.waitForExistence(timeout: 5)
-                || app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "草稿待确认")).firstMatch.waitForExistence(timeout: 3),
+                || app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "记录待确认")).firstMatch.waitForExistence(timeout: 3),
             "Draft pending banner should show"
         )
 
@@ -89,7 +89,7 @@ final class ReviewUITests: XCTestCase {
         )
         let detail = app.descendants(matching: .any)["review.project.selected.detail"]
         let detailByText = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@", "确认", "草稿", "次")
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@", "确认", "待确认", "次")
         ).firstMatch
         XCTAssertTrue(
             detail.waitForExistence(timeout: 3) || detailByText.waitForExistence(timeout: 3),
@@ -97,7 +97,7 @@ final class ReviewUITests: XCTestCase {
         )
         let selectedText = detail.exists ? detail.label : detailByText.label
         XCTAssertTrue(
-            selectedText.contains("确认") && selectedText.contains("草稿") && selectedText.contains("次"),
+            selectedText.contains("确认") && selectedText.contains("待确认") && selectedText.contains("次"),
             "Selected detail should show confirmed/draft/count: \(selectedText)"
         )
 
@@ -112,7 +112,7 @@ final class ReviewUITests: XCTestCase {
         let detailBeforeChartTap = detail.exists ? detail.label : detailByText.label
         chartBuckets.firstMatch.tap()
         let detailAfterChartTap = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@", "确认", "草稿", "次")
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@", "确认", "待确认", "次")
         ).firstMatch
         XCTAssertTrue(detailAfterChartTap.waitForExistence(timeout: 3), "Chart tap must keep exact detail visible")
         XCTAssertNotEqual(
@@ -130,7 +130,7 @@ final class ReviewUITests: XCTestCase {
             }
             let detailAfter = app.descendants(matching: .any)["review.project.selected.detail"]
             let detailAfterText = app.staticTexts.matching(
-                NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "确认", "草稿")
+                NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "确认", "待确认")
             ).firstMatch
             XCTAssertTrue(
                 detailAfter.waitForExistence(timeout: 3) || detailAfterText.waitForExistence(timeout: 3),

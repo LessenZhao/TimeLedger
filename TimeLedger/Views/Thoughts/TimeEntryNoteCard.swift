@@ -24,7 +24,7 @@ struct TimeEntryNoteCard: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 TimelineKindBadge(
-                    title: "备注",
+                    title: "时间记录",
                     tint: Color.blue.opacity(0.14),
                     foreground: Color.blue.opacity(0.9)
                 )
@@ -52,7 +52,7 @@ struct TimeEntryNoteCard: View {
             }
 
             if record.relatedThoughtCount > 0 {
-                Text("关联思考 \(record.relatedThoughtCount) 条")
+                Text("关联随记 \(record.relatedThoughtCount) 条")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.accentColor)
                     .accessibilityIdentifier("timeline.note.relatedThoughts")

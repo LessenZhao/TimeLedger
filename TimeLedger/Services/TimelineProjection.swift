@@ -1,11 +1,5 @@
 import Foundation
 
-extension ThoughtNote {
-    var hasTextContent: Bool {
-        !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-}
-
 enum TimelineRecordKind: String, Hashable {
     case note
     case thought
@@ -17,10 +11,11 @@ struct TimelineRecord: Identifiable {
     /// Semantic start used for sorting and day grouping (entry startAt or own time).
     let capturedAt: Date
     let displayEndAt: Date?
-    let thought: ThoughtNote?
+    let journal: JournalEntry?
     let mediaMoments: [MediaMoment]
     let linkedEntry: TimeEntry?
     let noteText: String
+    let journalText: String
     let relatedThoughtCount: Int
     let isRelatedToNote: Bool
 
@@ -29,7 +24,7 @@ struct TimelineRecord: Identifiable {
         case .note:
             !noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .thought:
-            thought?.hasTextContent == true
+            !journalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -46,10 +41,11 @@ struct TimelineRecord: Identifiable {
         kind: TimelineRecordKind,
         capturedAt: Date,
         displayEndAt: Date? = nil,
-        thought: ThoughtNote? = nil,
+        journal: JournalEntry? = nil,
         mediaMoments: [MediaMoment],
         linkedEntry: TimeEntry? = nil,
         noteText: String = "",
+        journalText: String = "",
         relatedThoughtCount: Int = 0,
         isRelatedToNote: Bool = false
     ) {
@@ -57,10 +53,11 @@ struct TimelineRecord: Identifiable {
         self.kind = kind
         self.capturedAt = capturedAt
         self.displayEndAt = displayEndAt
-        self.thought = thought
+        self.journal = journal
         self.mediaMoments = mediaMoments
         self.linkedEntry = linkedEntry
         self.noteText = noteText
+        self.journalText = journalText
         self.relatedThoughtCount = relatedThoughtCount
         self.isRelatedToNote = isRelatedToNote
     }
@@ -113,62 +110,42 @@ enum TimelineTypeMode: String, CaseIterable, Hashable, Identifiable {
 
 enum TimelineProjection {
     static func records(
-        thoughts: [ThoughtNote],
+        journals: [JournalEntry],
+        documents: [ContentDocument],
+        contentAttachments: [ContentAttachment],
+        journalLinks: [JournalTimeLink],
         mediaMoments: [MediaMoment],
-        mediaLinks: [ThoughtMediaLink],
         entries: [TimeEntry] = []
     ) -> [TimelineRecord] {
-        let thoughtByID = Dictionary(uniqueKeysWithValues: thoughts.map { ($0.id, $0) })
         let mediaByID = Dictionary(uniqueKeysWithValues: mediaMoments.map { ($0.id, $0) })
         let entryByID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
 
-        var attachedMediaByThoughtID: [UUID: [(sortOrder: Int, mediaID: UUID)]] = [:]
-        var thoughtMediaIDs: Set<UUID> = []
+        let documentsByOwnerKey = Dictionary(uniqueKeysWithValues: documents.map { ($0.ownerKey, $0) })
+        let attachmentsByDocumentID = Dictionary(grouping: contentAttachments, by: \.contentDocumentID)
+        let linksByJournalID = Dictionary(uniqueKeysWithValues: journalLinks.map { ($0.journalEntryID, $0) })
+        let journalCountByEntryID = Dictionary(
+            grouping: journalLinks.filter { entryByID[$0.timeEntryID] != nil },
+            by: \.timeEntryID
+        ).mapValues(\.count)
 
-        for link in mediaLinks {
-            guard let thought = thoughtByID[link.thoughtId],
-                  mediaByID[link.mediaMomentId] != nil,
-                  thoughtMediaIDs.insert(link.mediaMomentId).inserted else {
-                continue
-            }
-            attachedMediaByThoughtID[thought.id, default: []].append(
-                (sortOrder: link.sortOrder, mediaID: link.mediaMomentId)
-            )
+        func document(ownerID: UUID, kind: ContentOwnerKind) -> ContentDocument? {
+            documentsByOwnerKey[ContentDocument.key(ownerID: ownerID, ownerKind: kind)]
         }
 
-        var noteMediaByEntryID: [UUID: [MediaMoment]] = [:]
-        var consumedMediaIDs = thoughtMediaIDs
-
-        for moment in mediaMoments {
-            guard !thoughtMediaIDs.contains(moment.id) else { continue }
-            guard moment.linkSourceEnum == .manual,
-                  let entryID = moment.linkedEntryId,
-                  entryByID[entryID] != nil else {
-                continue
-            }
-            noteMediaByEntryID[entryID, default: []].append(moment)
-            consumedMediaIDs.insert(moment.id)
-        }
-
-        var thoughtCountByEntryID: [UUID: Int] = [:]
-        for thought in thoughts {
-            guard let entryID = thought.linkedEntryId, entryByID[entryID] != nil else { continue }
-            thoughtCountByEntryID[entryID, default: 0] += 1
+        func media(documentID: UUID) -> [MediaMoment] {
+            (attachmentsByDocumentID[documentID] ?? [])
+                .sorted { $0.sortOrder < $1.sortOrder }
+                .compactMap { mediaByID[$0.mediaMomentID] }
         }
 
         var noteEntryIDs: Set<UUID> = []
         var projected: [TimelineRecord] = []
 
         for entry in entries {
-            let trimmedNote = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
-            let attachments = (noteMediaByEntryID[entry.id] ?? [])
-                .sorted {
-                    if $0.capturedAt == $1.capturedAt {
-                        return $0.id.uuidString < $1.id.uuidString
-                    }
-                    return $0.capturedAt < $1.capturedAt
-                }
-            guard !trimmedNote.isEmpty || !attachments.isEmpty else { continue }
+            guard let content = document(ownerID: entry.id, kind: .timeEntry) else { continue }
+            let attachments = media(documentID: content.id)
+            guard !content.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !attachments.isEmpty else { continue }
             noteEntryIDs.insert(entry.id)
             projected.append(
                 TimelineRecord(
@@ -176,56 +153,33 @@ enum TimelineProjection {
                     kind: .note,
                     capturedAt: entry.startAt,
                     displayEndAt: entry.endAt,
-                    thought: nil,
+                    journal: nil,
                     mediaMoments: attachments,
                     linkedEntry: entry,
-                    noteText: entry.note,
-                    relatedThoughtCount: thoughtCountByEntryID[entry.id] ?? 0,
+                    noteText: content.body,
+                    relatedThoughtCount: journalCountByEntryID[entry.id] ?? 0,
                     isRelatedToNote: false
                 )
             )
         }
 
-        for thought in thoughts {
-            let attachedMedia = (attachedMediaByThoughtID[thought.id] ?? [])
-                .sorted {
-                    if $0.sortOrder == $1.sortOrder {
-                        return $0.mediaID.uuidString < $1.mediaID.uuidString
-                    }
-                    return $0.sortOrder < $1.sortOrder
-                }
-                .compactMap { mediaByID[$0.mediaID] }
-            let linked = thought.linkedEntryId.flatMap { entryByID[$0] }
-            let useEntryTime = thought.linkSourceEnum == .manual && linked != nil
+        for journal in journals {
+            guard let content = document(ownerID: journal.id, kind: .journalEntry) else { continue }
+            let attachedMedia = media(documentID: content.id)
+            let journalLink = linksByJournalID[journal.id]
+            let linked = journalLink.flatMap { entryByID[$0.timeEntryID] }
+            let useEntryTime = journalLink?.linkSource == ThoughtLinkSource.manual.rawValue && linked != nil
             projected.append(
                 TimelineRecord(
-                    id: "thought-\(thought.id.uuidString)",
+                    id: "journal-\(journal.id.uuidString)",
                     kind: .thought,
-                    capturedAt: useEntryTime ? linked!.startAt : thought.anchorAt,
+                    capturedAt: useEntryTime ? linked!.startAt : journal.anchorAt,
                     displayEndAt: useEntryTime ? linked!.endAt : nil,
-                    thought: thought,
+                    journal: journal,
                     mediaMoments: attachedMedia,
                     linkedEntry: linked,
                     noteText: "",
-                    relatedThoughtCount: 0,
-                    isRelatedToNote: linked.map { noteEntryIDs.contains($0.id) } ?? false
-                )
-            )
-        }
-
-        for moment in mediaMoments where !consumedMediaIDs.contains(moment.id) {
-            let linked = moment.linkedEntryId.flatMap { entryByID[$0] }
-            let useEntryTime = moment.linkSourceEnum == .manual && linked != nil
-            projected.append(
-                TimelineRecord(
-                    id: "media-\(moment.id.uuidString)",
-                    kind: .thought,
-                    capturedAt: useEntryTime ? linked!.startAt : moment.anchorAt,
-                    displayEndAt: useEntryTime ? linked!.endAt : nil,
-                    thought: nil,
-                    mediaMoments: [moment],
-                    linkedEntry: linked,
-                    noteText: "",
+                    journalText: content.body,
                     relatedThoughtCount: 0,
                     isRelatedToNote: linked.map { noteEntryIDs.contains($0.id) } ?? false
                 )

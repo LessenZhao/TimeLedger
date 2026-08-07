@@ -44,7 +44,11 @@ struct MirrorSyncImportService {
                     applied += 1
                 }
             case "thoughtNote":
-                try upsertThought(payload)
+                if operation == "delete", let uuid = UUID(uuidString: entityId) {
+                    try deleteJournal(id: uuid)
+                } else {
+                    try upsertJournal(payload)
+                }
                 applied += 1
             case "timeCursor":
                 try upsertCursor(payload)
@@ -87,9 +91,15 @@ struct MirrorSyncImportService {
             existing.categoryNameSnapshot = cat
             existing.startAt = startAt
             existing.endAt = endAt
-            existing.note = note
             existing.status = status
             existing.updatedAt = updatedAt
+            try upsertDocument(
+                ownerID: existing.id,
+                ownerKind: .timeEntry,
+                body: note,
+                createdAt: existing.createdAt,
+                updatedAt: updatedAt
+            )
         } else {
             let entry = TimeEntry(
                 id: id,
@@ -98,12 +108,19 @@ struct MirrorSyncImportService {
                 categoryNameSnapshot: cat,
                 startAt: startAt,
                 endAt: endAt,
-                note: note,
+                note: "",
                 status: TimeEntryStatus(rawValue: status) ?? .draft,
                 createdAt: createdAt,
                 updatedAt: updatedAt
             )
             modelContext.insert(entry)
+            try upsertDocument(
+                ownerID: entry.id,
+                ownerKind: .timeEntry,
+                body: note,
+                createdAt: createdAt,
+                updatedAt: updatedAt
+            )
         }
     }
 
@@ -111,11 +128,21 @@ struct MirrorSyncImportService {
         var descriptor = FetchDescriptor<TimeEntry>(predicate: #Predicate { $0.id == id })
         descriptor.fetchLimit = 1
         if let existing = try modelContext.fetch(descriptor).first {
+            let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+            for document in documents where document.ownerID == existing.id && document.ownerKindEnum == .timeEntry {
+                let attachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
+                    .filter { $0.contentDocumentID == document.id }
+                for attachment in attachments { modelContext.delete(attachment) }
+                modelContext.delete(document)
+            }
+            let links = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
+                .filter { $0.timeEntryID == existing.id }
+            for link in links { modelContext.delete(link) }
             modelContext.delete(existing)
         }
     }
 
-    private func upsertThought(_ p: [String: Any]) throws {
+    private func upsertJournal(_ p: [String: Any]) throws {
         guard let idStr = p["id"] as? String, let id = UUID(uuidString: idStr) else { return }
         let body = p["body"] as? String ?? ""
         let capturedAt = try date(p["capturedAt"])
@@ -126,23 +153,78 @@ struct MirrorSyncImportService {
         let linkedRaw = p["linkedEntryId"] as? String ?? ""
         let linked = linkedRaw.isEmpty ? nil : UUID(uuidString: linkedRaw)
 
-        var descriptor = FetchDescriptor<ThoughtNote>(predicate: #Predicate { $0.id == id })
-        descriptor.fetchLimit = 1
-        if let existing = try modelContext.fetch(descriptor).first {
-            existing.body = body
+        let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>())
+        if let existing = journals.first(where: { $0.id == id }) {
             existing.capturedAt = capturedAt
             existing.anchorAt = anchorAt
-            existing.linkedEntryId = linked
-            existing.linkSource = linkSource
             existing.updatedAt = updatedAt
         } else {
-            modelContext.insert(ThoughtNote(
+            modelContext.insert(JournalEntry(
                 id: id,
-                body: body,
                 capturedAt: capturedAt,
                 anchorAt: anchorAt,
-                linkedEntryId: linked,
-                linkSource: ThoughtLinkSource(rawValue: linkSource) ?? .none,
+                createdAt: createdAt,
+                updatedAt: updatedAt
+            ))
+        }
+        try upsertDocument(
+            ownerID: id,
+            ownerKind: .journalEntry,
+            body: body,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+        let links = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
+        if let linked {
+            if let existing = links.first(where: { $0.journalEntryID == id }) {
+                existing.timeEntryID = linked
+                existing.linkSource = linkSource
+                existing.updatedAt = updatedAt
+            } else {
+                modelContext.insert(JournalTimeLink(
+                    id: id,
+                    journalEntryID: id,
+                    timeEntryID: linked,
+                    linkSource: ThoughtLinkSource(rawValue: linkSource) ?? .none,
+                    createdAt: createdAt,
+                    updatedAt: updatedAt
+                ))
+            }
+        } else {
+            for existing in links where existing.journalEntryID == id {
+                modelContext.delete(existing)
+            }
+        }
+    }
+
+    private func deleteJournal(id: UUID) throws {
+        guard let journal = try modelContext.fetch(FetchDescriptor<JournalEntry>())
+            .first(where: { $0.id == id }) else { return }
+        try JournalContentService(modelContext: modelContext).delete(journal)
+    }
+
+    private func upsertDocument(
+        ownerID: UUID,
+        ownerKind: ContentOwnerKind,
+        body: String,
+        createdAt: Date,
+        updatedAt: Date
+    ) throws {
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+        if let document = documents.first(where: {
+            $0.ownerID == ownerID && $0.ownerKindEnum == ownerKind
+        }) {
+            if document.body != body {
+                document.body = body
+                document.revision += 1
+            }
+            document.updatedAt = updatedAt
+        } else {
+            modelContext.insert(ContentDocument(
+                id: ownerID,
+                ownerID: ownerID,
+                ownerKind: ownerKind,
+                body: body,
                 createdAt: createdAt,
                 updatedAt: updatedAt
             ))

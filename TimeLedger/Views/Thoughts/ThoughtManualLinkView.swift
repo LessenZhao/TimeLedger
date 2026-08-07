@@ -5,7 +5,7 @@ struct ThoughtManualLinkView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    let thought: ThoughtNote
+    let journal: JournalEntry
     let date: Date
 
     @State private var errorMessage: String?
@@ -69,7 +69,7 @@ struct ThoughtManualLinkView: View {
 
     private func link(to entry: TimeEntry) {
         do {
-            try ThoughtLinkingService(modelContext: modelContext).manuallyLinkThought(thought, to: entry)
+            try JournalContentService(modelContext: modelContext).link(journal, to: entry)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

@@ -272,7 +272,7 @@ struct MediaMomentTests {
         #expect(moment.linkedEntryId == second.id)
     }
 
-    @Test func timeCursorNewEntryAbsorbsPendingMedia() throws {
+    @Test func timeCursorNewEntryNeverReassignsIndependentMedia() throws {
         let fixture = try Fixture()
         let project = Project(name: "拍摄项目", categoryName: "生活")
         fixture.context.insert(project)
@@ -295,8 +295,10 @@ struct MediaMomentTests {
             now: fixture.now
         )
 
-        #expect(moment.linkedEntryId == entry.id)
-        #expect(moment.linkSourceEnum == .auto)
+        #expect(moment.linkedEntryId == nil)
+        #expect(moment.linkSourceEnum == .none)
+        let documents = try fixture.context.fetch(FetchDescriptor<ContentDocument>())
+        #expect(documents.contains { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry })
     }
 
     @Test func deletingRecordRemovesOnlyAppFilesAndNeverTouchesPhotosAsset() async throws {

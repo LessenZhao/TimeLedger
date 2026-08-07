@@ -4,7 +4,8 @@ import SwiftUI
 struct TimeListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allEntries: [TimeEntry]
-    @Query private var allThoughts: [ThoughtNote]
+    @Query private var documents: [ContentDocument]
+    @Query private var journalLinks: [JournalTimeLink]
 
     let date: Date
     let now: Date
@@ -37,7 +38,7 @@ struct TimeListView: View {
                             TimeEntryDetailView(entry: entry)
                                 .toolbar(.visible, for: .navigationBar)
                         } label: {
-                            entryRow(entry, thoughtCount: thoughtCount(for: entry))
+                            entryRow(entry, journalCount: journalCount(for: entry))
                         }
                         .buttonStyle(.plain)
                     }
@@ -51,7 +52,7 @@ struct TimeListView: View {
         allEntries
     }
 
-    private func entryRow(_ entry: TimeEntry, thoughtCount: Int) -> some View {
+    private func entryRow(_ entry: TimeEntry, journalCount: Int) -> some View {
         let isDraft = entry.status == TimeEntryStatus.draft.rawValue
 
         return VStack(alignment: .leading, spacing: 3) {
@@ -73,7 +74,7 @@ struct TimeListView: View {
                 .lineLimit(1)
 
             HStack(spacing: 6) {
-                Text(isDraft ? "草稿" : "已确认")
+                Text(isDraft ? "待确认" : "已确认")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(isDraft ? Color.secondary : Color.accentColor)
                     .padding(.horizontal, 6)
@@ -86,8 +87,8 @@ struct TimeListView: View {
                         )
                     )
 
-                if thoughtCount > 0 {
-                    Text("思考 \(thoughtCount)")
+                if journalCount > 0 {
+                    Text("随记 \(journalCount)")
                         .font(TLTheme.metaFont)
                         .foregroundStyle(.orange)
                 }
@@ -106,14 +107,17 @@ struct TimeListView: View {
     private func timeRangeText(_ entry: TimeEntry) -> String {
         let start = DateFormatterFactory.timeOnly.string(from: entry.startAt)
         let end = DateFormatterFactory.timeOnly.string(from: entry.endAt)
-        if entry.note.isEmpty {
+        let body = documents.first {
+            $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry
+        }?.body ?? ""
+        if body.isEmpty {
             return "\(start) – \(end)"
         }
-        return "\(start) – \(end) · \(entry.note)"
+        return "\(start) – \(end) · \(body)"
     }
 
-    private func thoughtCount(for entry: TimeEntry) -> Int {
-        allThoughts.filter { $0.linkedEntryId == entry.id }.count
+    private func journalCount(for entry: TimeEntry) -> Int {
+        journalLinks.filter { $0.timeEntryID == entry.id }.count
     }
 }
 

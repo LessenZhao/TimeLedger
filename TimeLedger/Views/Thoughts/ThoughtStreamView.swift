@@ -2,9 +2,11 @@ import SwiftData
 import SwiftUI
 
 struct ThoughtStreamView: View {
-    @Query(sort: \ThoughtNote.capturedAt, order: .reverse) private var thoughts: [ThoughtNote]
+    @Query(sort: \JournalEntry.capturedAt, order: .reverse) private var journals: [JournalEntry]
+    @Query private var documents: [ContentDocument]
+    @Query private var contentAttachments: [ContentAttachment]
+    @Query private var journalLinks: [JournalTimeLink]
     @Query(sort: \MediaMoment.capturedAt, order: .reverse) private var mediaMoments: [MediaMoment]
-    @Query private var thoughtMediaLinks: [ThoughtMediaLink]
     @Query private var entries: [TimeEntry]
 
     @AppStorage("timeline.typeMode") private var typeModeRaw: String = TimelineTypeMode.merged.rawValue
@@ -12,7 +14,7 @@ struct ThoughtStreamView: View {
     @State private var showingFilter = false
     @State private var selectedFilters: Set<TimelineContentFilter> = []
     @State private var editingEntry: TimeEntry?
-    @State private var editingThought: ThoughtNote?
+    @State private var editingJournal: JournalEntry?
 
     private var typeMode: TimelineTypeMode {
         TimelineTypeMode(rawValue: typeModeRaw) ?? .merged
@@ -20,9 +22,11 @@ struct ThoughtStreamView: View {
 
     var body: some View {
         let records = TimelineProjection.records(
-            thoughts: thoughts,
+            journals: journals,
+            documents: documents,
+            contentAttachments: contentAttachments,
+            journalLinks: journalLinks,
             mediaMoments: mediaMoments,
-            mediaLinks: thoughtMediaLinks,
             entries: entries
         )
         .filter { typeMode.matches($0) }
@@ -83,16 +87,16 @@ struct ThoughtStreamView: View {
                     TimeEntryEditView(entry: entry)
                 }
             }
-            .sheet(item: $editingThought) { thought in
-                RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
+            .sheet(item: $editingJournal) { journal in
+                RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
             }
         }
     }
 
     private var typeModePicker: some View {
         Picker("类型", selection: typeModeBinding) {
-            Text("备注").tag(TimelineTypeMode.notes.rawValue)
-            Text("思考").tag(TimelineTypeMode.thoughts.rawValue)
+            Text("时间记录").tag(TimelineTypeMode.notes.rawValue)
+            Text("随记").tag(TimelineTypeMode.thoughts.rawValue)
             Text("合并").tag(TimelineTypeMode.merged.rawValue)
         }
         .pickerStyle(.segmented)
@@ -173,30 +177,17 @@ struct ThoughtStreamView: View {
                 }
             )
         case .thought:
-            if let thought = record.thought {
+            if let journal = record.journal {
                 ThoughtCardView(
-                    thought: thought,
-                    linkedEntry: record.linkedEntry
-                        ?? linkedEntry(for: thought.linkedEntryId, entriesByID: entriesByID),
+                    journal: journal,
+                    body: record.journalText,
+                    linkedEntry: record.linkedEntry,
                     mediaMoments: record.mediaMoments,
                     displayStartAt: record.capturedAt,
                     displayEndAt: record.displayEndAt,
                     isRelatedToNote: record.isRelatedToNote,
                     onEdit: {
-                        editingThought = thought
-                    }
-                )
-            } else if let moment = record.mediaMoments.first {
-                let targetEntry = record.linkedEntry
-                    ?? linkedEntry(for: moment.linkedEntryId, entriesByID: entriesByID)
-                MediaMomentCard(
-                    moment: moment,
-                    linkedEntry: targetEntry,
-                    displayStartAt: record.capturedAt,
-                    displayEndAt: record.displayEndAt,
-                    isRelatedToNote: record.isRelatedToNote,
-                    onEdit: targetEntry.map { entry in
-                        { editingEntry = entry }
+                        editingJournal = journal
                     }
                 )
             }

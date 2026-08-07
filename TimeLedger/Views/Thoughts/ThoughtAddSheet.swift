@@ -17,7 +17,7 @@ struct ThoughtAddSheet: View {
                         .scrollContentBackground(.hidden)
                         .overlay(alignment: .topLeading) {
                             if thoughtBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text("思考内容")
+                                Text("随记内容")
                                     .font(.body)
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 8)
@@ -28,12 +28,12 @@ struct ThoughtAddSheet: View {
                 } header: {
                     Text("事后补充")
                 } footer: {
-                    Text("这条思考会关联到当前时间段，关联方式为手动关联。")
+                    Text("这条随记会关联到当前时间段，关联方式为手动关联。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("添加思考")
+            .navigationTitle("添加随记")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

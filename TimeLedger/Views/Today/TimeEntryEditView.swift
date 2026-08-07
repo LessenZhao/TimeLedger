@@ -5,10 +5,12 @@ struct TimeEntryEditView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
-    @Query private var allThoughts: [ThoughtNote]
+    @Query private var allJournals: [JournalEntry]
+    @Query private var allDocuments: [ContentDocument]
+    @Query private var allContentAttachments: [ContentAttachment]
+    @Query private var allJournalLinks: [JournalTimeLink]
     @Query private var allEntries: [TimeEntry]
     @Query private var allMediaMoments: [MediaMoment]
-    @Query private var allThoughtMediaLinks: [ThoughtMediaLink]
     @Query private var allActionCompletions: [ActionCompletion]
 
     let entry: TimeEntry
@@ -17,10 +19,10 @@ struct TimeEntryEditView: View {
     @State private var startAt: Date
     @State private var endAt: Date
     @State private var minimumStartAt: Date
-    @State private var contentSession: RichCardContentSession?
-    @State private var editingThought: ThoughtNote?
+    @State private var contentSession: ContentEditorSession?
+    @State private var editingJournal: JournalEntry?
     @State private var showingAddThought = false
-    @State private var pendingUnlinkedThoughtIDs: Set<UUID> = []
+    @State private var pendingUnlinkedJournalIDs: Set<UUID> = []
     @State private var selectedThoughtMedia: MediaMoment?
     @State private var errorMessage: String?
     @State private var showingDeleteAlert = false
@@ -69,28 +71,28 @@ struct TimeEntryEditView: View {
         } message: {
             Text(errorMessage ?? "")
         }
-        .alert("删除这条草稿？", isPresented: $showingDeleteAlert) {
+        .alert("删除这条待确认记录？", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive, action: deleteDraft)
         } message: {
-            Text("若后面是草稿会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
+            Text("若后面是待确认记录会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
         }
         .alert("取消确认？", isPresented: $showingCancelConfirmationAlert) {
             Button("保留确认", role: .cancel) {}
             Button("取消确认", role: .destructive, action: cancelConfirmation)
         } message: {
-            Text("这条记录会变回草稿，时间位置不会改变。")
+            Text("这条记录会变回待确认，时间位置不会改变。")
         }
         .sheet(isPresented: $showingAddThought) {
             ThoughtComposerSheet(targetEntry: entry)
         }
-        .sheet(item: $editingThought) { thought in
-            RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
+        .sheet(item: $editingJournal) { journal in
+            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
     }
 
     private var projectSection: some View {
-        Section("项目") {
+        Section("项目与时间") {
             if isDraft {
                 Picker("项目", selection: $selectedProjectId) {
                     ForEach(selectableProjects) { project in
@@ -133,44 +135,36 @@ struct TimeEntryEditView: View {
     }
 
     private var contentSection: some View {
-        Section("备注与媒体") {
-            if contentSession != nil {
-                RichCardContentView(
-                    target: .timeEntry(entry),
-                    mode: .edit,
-                    onSessionReady: { session in
-                        contentSession = session
-                    }
-                )
-            } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                    .task {
-                        loadContentSessionIfNeeded()
-                    }
-            }
+        Section("记录内容") {
+            RichCardContentView(
+                target: .timeEntry(entry),
+                mode: .edit,
+                onSessionReady: { session in
+                    if contentSession == nil { contentSession = session }
+                }
+            )
         }
     }
 
     private var thoughtSection: some View {
-        Section("思考关联") {
+        Section("关联随记") {
             Button {
                 showingAddThought = true
             } label: {
-                Label("添加思考", systemImage: "plus")
+                Label("添加随记", systemImage: "plus")
             }
             .accessibilityIdentifier("timeEntry.edit.addThought")
 
-            let visibleThoughts = linkedThoughts.filter {
-                !pendingUnlinkedThoughtIDs.contains($0.id)
+            let visibleJournals = linkedJournals.filter {
+                !pendingUnlinkedJournalIDs.contains($0.id)
             }
-            if visibleThoughts.isEmpty {
-                Text("暂无关联思考")
+            if visibleJournals.isEmpty {
+                Text("暂无关联随记")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(visibleThoughts) { thought in
-                    linkedThoughtCard(thought)
+                ForEach(visibleJournals) { journal in
+                    linkedJournalCard(journal)
                 }
             }
         }
@@ -183,7 +177,7 @@ struct TimeEntryEditView: View {
     private var actionsSection: some View {
         if isDraft {
             Section {
-                Button("删除草稿", role: .destructive) {
+                Button("删除待确认记录", role: .destructive) {
                     showingDeleteAlert = true
                 }
             }
@@ -193,7 +187,7 @@ struct TimeEntryEditView: View {
                     showingCancelConfirmationAlert = true
                 }
             } footer: {
-                Text("取消确认后回到草稿，未记录光标位置不变。")
+                Text("取消确认后回到待确认，未记录光标位置不变。")
             }
         }
     }
@@ -253,9 +247,10 @@ struct TimeEntryEditView: View {
         return lower...max(lower, endUpperBound)
     }
 
-    private var linkedThoughts: [ThoughtNote] {
-        allThoughts
-            .filter { $0.linkedEntryId == entry.id }
+    private var linkedJournals: [JournalEntry] {
+        let ids = Set(allJournalLinks.filter { $0.timeEntryID == entry.id }.map(\.journalEntryID))
+        return allJournals
+            .filter { ids.contains($0.id) }
             .sorted { $0.capturedAt < $1.capturedAt }
     }
 
@@ -271,22 +266,25 @@ struct TimeEntryEditView: View {
         return endAt > startAt
     }
 
-    private func linkedThoughtCard(_ thought: ThoughtNote) -> some View {
-        let moments = mediaMoments(for: thought)
+    private func linkedJournalCard(_ journal: JournalEntry) -> some View {
+        let moments = mediaMoments(for: journal)
+        let body = allDocuments.first {
+            $0.ownerID == journal.id && $0.ownerKindEnum == .journalEntry
+        }?.body ?? ""
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: TimelineCardActionMetrics.spacing) {
-                Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
+                Text(DateFormatterFactory.timeOnly.string(from: journal.capturedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 VisibleEditButton(
-                    accessibilityLabel: "编辑关联思考",
+                    accessibilityLabel: "编辑关联随记",
                     accessibilityIdentifier: "timeEntry.edit.thought.edit",
-                    action: { editingThought = thought }
+                    action: { editingJournal = journal }
                 )
                 Menu {
                     Button("取消关联", role: .destructive) {
-                        pendingUnlinkedThoughtIDs.insert(thought.id)
+                        pendingUnlinkedJournalIDs.insert(journal.id)
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -301,13 +299,13 @@ struct TimeEntryEditView: View {
                 .accessibilityIdentifier("timeEntry.edit.thought.menu")
             }
 
-            if thought.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("暂无文字内容")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 TimelineExpandableText(
-                    text: thought.body,
+                    text: body,
                     collapsedLineLimit: 6,
                     accessibilityPrefix: "timeEntry.edit.thought.body",
                     style: .thought
@@ -330,28 +328,15 @@ struct TimeEntryEditView: View {
         .accessibilityIdentifier("timeEntry.edit.thought.card")
     }
 
-    private func mediaMoments(for thought: ThoughtNote) -> [MediaMoment] {
-        let order = Dictionary(
-            uniqueKeysWithValues: allThoughtMediaLinks
-                .filter { $0.thoughtId == thought.id }
-                .map { ($0.mediaMomentId, $0.sortOrder) }
-        )
-        return allMediaMoments
-            .filter { order[$0.id] != nil }
+    private func mediaMoments(for journal: JournalEntry) -> [MediaMoment] {
+        guard let documentID = allDocuments.first(where: {
+            $0.ownerID == journal.id && $0.ownerKindEnum == .journalEntry
+        })?.id else { return [] }
+        let order = Dictionary(uniqueKeysWithValues: allContentAttachments
+            .filter { $0.contentDocumentID == documentID }
+            .map { ($0.mediaMomentID, $0.sortOrder) })
+        return allMediaMoments.filter { order[$0.id] != nil }
             .sorted { order[$0.id, default: 0] < order[$1.id, default: 0] }
-    }
-
-    private func loadContentSessionIfNeeded() {
-        guard contentSession == nil else { return }
-        do {
-            contentSession = try RichCardContentSession(
-                target: .timeEntry(entry),
-                mode: .edit,
-                modelContext: modelContext
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 
     private func cancel() {
@@ -367,7 +352,6 @@ struct TimeEntryEditView: View {
 
     private func save() {
         guard !isSaving, canSave, let contentSession else { return }
-        let note = contentSession.textDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let now = Date()
         if endAt > now {
             errorMessage = "结束时间不能晚于当前时间。"
@@ -375,7 +359,7 @@ struct TimeEntryEditView: View {
         }
         if let next = nextEntry {
             if next.status == TimeEntryStatus.draft.rawValue, endAt >= next.endAt {
-                errorMessage = "结束时间会挤掉下一段草稿。"
+                errorMessage = "结束时间会挤掉下一段待确认记录。"
                 return
             }
             if next.status != TimeEntryStatus.draft.rawValue, endAt > next.startAt {
@@ -409,14 +393,14 @@ struct TimeEntryEditView: View {
                     try cursorService.updateEntry(
                         entry,
                         project: selectedProject,
-                        note: note,
+                        note: nil,
                         startAt: startAt,
                         endAt: endAt,
                         now: now
                     )
                 }
-                for thought in linkedThoughts where pendingUnlinkedThoughtIDs.contains(thought.id) {
-                    try ThoughtLinkingService(modelContext: modelContext).unlinkThought(thought)
+                for journal in linkedJournals where pendingUnlinkedJournalIDs.contains(journal.id) {
+                    try JournalContentService(modelContext: modelContext).unlink(journal)
                 }
                 try await contentSession.finishSuccessfulSave()
                 dismiss()

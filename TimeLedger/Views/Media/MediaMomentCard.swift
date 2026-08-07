@@ -12,9 +12,7 @@ struct MediaMomentCard: View {
     let onEdit: (() -> Void)?
 
     @State private var showingViewer = false
-    @State private var showingManualLink = false
     @State private var showingDeleteAlert = false
-    @State private var showingUnlinkConfirm = false
     @State private var errorMessage: String?
 
     init(
@@ -41,7 +39,7 @@ struct MediaMomentCard: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 TimelineKindBadge(
-                    title: "思考",
+                    title: "随记",
                     tint: Color.purple.opacity(0.16),
                     foreground: Color.purple
                 )
@@ -75,7 +73,7 @@ struct MediaMomentCard: View {
                 .foregroundStyle(linkedEntry == nil ? Color.orange : Color.secondary)
 
             if isRelatedToNote {
-                Text("关联备注")
+                Text("关联时间记录")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.accentColor)
                     .accessibilityIdentifier("timeline.media.relatedNote")
@@ -93,9 +91,6 @@ struct MediaMomentCard: View {
         .fullScreenCover(isPresented: $showingViewer) {
             MediaViewer(moment: moment)
         }
-        .sheet(isPresented: $showingManualLink) {
-            MediaManualLinkView(moment: moment)
-        }
         .alert("删除这条媒体记录？", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
@@ -105,12 +100,6 @@ struct MediaMomentCard: View {
             }
         } message: {
             Text("只删除 TimeLedger 中的 App 文件、缩略图和记录，绝不会删除系统相册原件。")
-        }
-        .alert("取消关联？", isPresented: $showingUnlinkConfirm) {
-            Button("保留关联", role: .cancel) {}
-            Button("确认取消关联", role: .destructive, action: unlink)
-        } message: {
-            Text(unlinkMessage)
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },
@@ -128,15 +117,6 @@ struct MediaMomentCard: View {
 
     private var menuButton: some View {
         Menu {
-            if moment.linkedEntryId == nil {
-                Button("手动关联") { showingManualLink = true }
-            } else {
-                Button("取消关联", role: .destructive) {
-                    showingUnlinkConfirm = true
-                }
-                .accessibilityIdentifier("timeline.media.unlink")
-            }
-
             if moment.saveStatus == .partial || moment.saveStatus == .failed {
                 Button("重试") {
                     Task {
@@ -177,15 +157,6 @@ struct MediaMomentCard: View {
         return DateFormatterFactory.dateTime.string(from: start)
     }
 
-    private var unlinkMessage: String {
-        if let linkedEntry {
-            let start = DateFormatterFactory.timeOnly.string(from: linkedEntry.startAt)
-            let end = DateFormatterFactory.timeOnly.string(from: linkedEntry.endAt)
-            return "将解除与「\(linkedEntry.projectNameSnapshot)」\(start)–\(end) 的关联。"
-        }
-        return "将解除与当前时间条目的关联。"
-    }
-
     @ViewBuilder
     private var statusLine: some View {
         if moment.availability == .unavailable {
@@ -207,11 +178,4 @@ struct MediaMomentCard: View {
         }
     }
 
-    private func unlink() {
-        do {
-            try MediaLinkingService(modelContext: modelContext).unlink(moment)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
 }

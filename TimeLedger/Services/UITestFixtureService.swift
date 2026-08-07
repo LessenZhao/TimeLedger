@@ -46,7 +46,6 @@ struct UITestFixtureService {
             categoryNameSnapshot: draftProject.categoryName,
             startAt: draftStart,
             endAt: draftEnd,
-            note: "Fixture 草稿备注",
             status: .draft
         )
         let confirmed = TimeEntry(
@@ -55,40 +54,22 @@ struct UITestFixtureService {
             categoryNameSnapshot: confirmedProject.categoryName,
             startAt: confirmedStart,
             endAt: confirmedEnd,
-            note: "Fixture 已确认备注",
             status: .confirmed
         )
         let longBody = Array(
             repeating: "Fixture 草稿思考全文，用于证明第一层只显示三行并可继续展开。加长段落确保超过六行收起限制。",
             count: 12
         ).joined(separator: "\n\n")
-        let draftThought = ThoughtNote(
-            body: longBody,
-            capturedAt: draftContentAt,
-            linkedEntryId: draft.id,
-            linkSource: .manual
-        )
-        let confirmedThought = ThoughtNote(
-            body: "Fixture 已确认思考全文",
-            capturedAt: confirmedContentAt,
-            linkedEntryId: confirmed.id,
-            linkSource: .manual
-        )
-        let photoOnlyThought = ThoughtNote(
-            body: "",
+        let draftJournal = JournalEntry(capturedAt: draftContentAt, anchorAt: draftContentAt)
+        let confirmedJournal = JournalEntry(capturedAt: confirmedContentAt, anchorAt: confirmedContentAt)
+        let photoOnlyJournal = JournalEntry(
             capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 6),
-            linkedEntryId: nil,
-            linkSource: .manual
+            anchorAt: draftContentAt.addingTimeInterval(fixtureUnit / 6)
         )
-        let shortStandaloneThought = ThoughtNote(
-            body: "短文无展开",
-            capturedAt: now.addingTimeInterval(90)
-        )
+        let shortStandaloneJournal = JournalEntry(capturedAt: now.addingTimeInterval(90), anchorAt: now.addingTimeInterval(90))
         let photo = MediaMoment(
             kind: .photo,
             capturedAt: draftContentAt,
-            linkedEntryId: draft.id,
-            linkSource: .manual,
             requestedStorage: .app,
             storedLocation: .app,
             thumbnailData: Data(),
@@ -98,8 +79,6 @@ struct UITestFixtureService {
         let video = MediaMoment(
             kind: .video,
             capturedAt: confirmedContentAt,
-            linkedEntryId: confirmed.id,
-            linkSource: .manual,
             requestedStorage: .photosLibrary,
             storedLocation: .photosLibrary,
             photosAssetIdentifier: "ui-fixture-video",
@@ -111,8 +90,6 @@ struct UITestFixtureService {
         let standalonePhoto = MediaMoment(
             kind: .photo,
             capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 8),
-            linkedEntryId: draft.id,
-            linkSource: .manual,
             requestedStorage: .app,
             storedLocation: .app,
             thumbnailData: Data(),
@@ -122,8 +99,6 @@ struct UITestFixtureService {
         let standaloneVideo = MediaMoment(
             kind: .video,
             capturedAt: confirmedContentAt.addingTimeInterval(fixtureUnit / 8),
-            linkedEntryId: confirmed.id,
-            linkSource: .manual,
             requestedStorage: .photosLibrary,
             storedLocation: .photosLibrary,
             photosAssetIdentifier: "ui-fixture-standalone-video",
@@ -135,8 +110,6 @@ struct UITestFixtureService {
         let automaticStandalonePhoto = MediaMoment(
             kind: .photo,
             capturedAt: draftContentAt.addingTimeInterval(fixtureUnit / 10),
-            linkedEntryId: draft.id,
-            linkSource: .auto,
             requestedStorage: .app,
             storedLocation: .app,
             thumbnailData: Data(),
@@ -145,27 +118,12 @@ struct UITestFixtureService {
         )
         let photoOnlyMedia = MediaMoment(
             kind: .photo,
-            capturedAt: photoOnlyThought.capturedAt,
+            capturedAt: photoOnlyJournal.capturedAt,
             requestedStorage: .app,
             storedLocation: .app,
             thumbnailData: Data(),
             status: .saved,
             originalAvailability: .unavailable
-        )
-        let photoLink = ThoughtMediaLink(
-            thoughtId: draftThought.id,
-            mediaMomentId: photo.id,
-            sortOrder: 0
-        )
-        let videoLink = ThoughtMediaLink(
-            thoughtId: confirmedThought.id,
-            mediaMomentId: video.id,
-            sortOrder: 0
-        )
-        let photoOnlyLink = ThoughtMediaLink(
-            thoughtId: photoOnlyThought.id,
-            mediaMomentId: photoOnlyMedia.id,
-            sortOrder: 0
         )
 
         // 7 月 20 日条目：备注照片与条目内思考的真实录入在“今天”，语义时间落在 7 月 20 日
@@ -183,30 +141,19 @@ struct UITestFixtureService {
             categoryNameSnapshot: julyProject.categoryName,
             startAt: july20Start,
             endAt: july20End,
-            note: "Fixture 七月备注",
             status: .confirmed
         )
         let julyNotePhoto = MediaMoment(
             kind: .photo,
             capturedAt: now,
-            linkedEntryId: julyEntry.id,
-            linkSource: .manual,
             requestedStorage: .app,
             storedLocation: .app,
             thumbnailData: Data(),
             status: .saved,
             originalAvailability: .unavailable
         )
-        let julyThought = ThoughtNote(
-            body: "Fixture 七月条目思考",
-            capturedAt: now,
-            linkedEntryId: julyEntry.id,
-            linkSource: .manual
-        )
-        let homeThought = ThoughtNote(
-            body: "Fixture 首页独立思考",
-            capturedAt: now.addingTimeInterval(60)
-        )
+        let julyJournal = JournalEntry(capturedAt: now, anchorAt: now)
+        let homeJournal = JournalEntry(capturedAt: now.addingTimeInterval(60), anchorAt: now.addingTimeInterval(60))
         let homePhoto = MediaMoment(
             kind: .photo,
             capturedAt: now.addingTimeInterval(120),
@@ -231,15 +178,15 @@ struct UITestFixtureService {
         modelContext.insert(draftProject)
         modelContext.insert(confirmedProject)
         modelContext.insert(julyProject)
-        modelContext.insert(draft)
-        modelContext.insert(confirmed)
-        modelContext.insert(julyEntry)
-        modelContext.insert(draftThought)
-        modelContext.insert(confirmedThought)
-        modelContext.insert(photoOnlyThought)
-        modelContext.insert(shortStandaloneThought)
-        modelContext.insert(julyThought)
-        modelContext.insert(homeThought)
+        insertEntry(draft, body: "Fixture 草稿备注")
+        insertEntry(confirmed, body: "Fixture 已确认备注")
+        insertEntry(julyEntry, body: "Fixture 七月备注")
+        insertJournal(draftJournal, body: longBody, linkedEntryID: draft.id)
+        insertJournal(confirmedJournal, body: "Fixture 已确认思考全文", linkedEntryID: confirmed.id)
+        insertJournal(photoOnlyJournal, body: "")
+        insertJournal(shortStandaloneJournal, body: "短文无展开")
+        insertJournal(julyJournal, body: "Fixture 七月条目思考", linkedEntryID: julyEntry.id)
+        insertJournal(homeJournal, body: "Fixture 首页独立思考")
         modelContext.insert(photo)
         modelContext.insert(video)
         modelContext.insert(standalonePhoto)
@@ -249,9 +196,22 @@ struct UITestFixtureService {
         modelContext.insert(julyNotePhoto)
         modelContext.insert(homePhoto)
         modelContext.insert(homeVideo)
-        modelContext.insert(photoLink)
-        modelContext.insert(videoLink)
-        modelContext.insert(photoOnlyLink)
+        attach(photo, to: draftJournal.id)
+        attach(video, to: confirmedJournal.id)
+        attach(photoOnlyMedia, to: photoOnlyJournal.id)
+        attach(standalonePhoto, toOwner: draft.id, kind: .timeEntry)
+        attach(standaloneVideo, toOwner: confirmed.id, kind: .timeEntry)
+        let automaticMediaJournal = JournalEntry(capturedAt: automaticStandalonePhoto.capturedAt, anchorAt: automaticStandalonePhoto.capturedAt)
+        insertJournal(automaticMediaJournal, body: "")
+        attach(automaticStandalonePhoto, to: automaticMediaJournal.id)
+        attach(julyNotePhoto, toOwner: julyEntry.id, kind: .timeEntry)
+        let homePhotoJournal = JournalEntry(capturedAt: homePhoto.capturedAt, anchorAt: homePhoto.capturedAt)
+        let homeVideoJournal = JournalEntry(capturedAt: homeVideo.capturedAt, anchorAt: homeVideo.capturedAt)
+        insertJournal(homePhotoJournal, body: "")
+        insertJournal(homeVideoJournal, body: "")
+        attach(homePhoto, to: homePhotoJournal.id)
+        attach(homeVideo, to: homeVideoJournal.id)
+        try ensureEntryDocuments()
         try modelContext.save()
     }
 
@@ -273,6 +233,7 @@ struct UITestFixtureService {
             )
         }
 
+        try ensureEntryDocuments()
         try modelContext.save()
     }
 
@@ -375,6 +336,7 @@ struct UITestFixtureService {
 
         // Cross-midnight into today (counts toward today morning)
         guard let yesterday = calendar.date(byAdding: .day, value: -1, to: dayStart) else {
+            try ensureEntryDocuments()
             try modelContext.save()
             return
         }
@@ -403,6 +365,47 @@ struct UITestFixtureService {
             )
         }
 
+        try ensureEntryDocuments()
         try modelContext.save()
+    }
+
+    private func insertEntry(_ entry: TimeEntry, body: String) {
+        modelContext.insert(entry)
+        modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: body))
+    }
+
+    private func insertJournal(_ journal: JournalEntry, body: String, linkedEntryID: UUID? = nil) {
+        modelContext.insert(journal)
+        modelContext.insert(ContentDocument(ownerID: journal.id, ownerKind: .journalEntry, body: body))
+        if let linkedEntryID {
+            modelContext.insert(
+                JournalTimeLink(
+                    journalEntryID: journal.id,
+                    timeEntryID: linkedEntryID,
+                    linkSource: .manual
+                )
+            )
+        }
+    }
+
+    private func attach(_ media: MediaMoment, to journalID: UUID) {
+        attach(media, toOwner: journalID, kind: .journalEntry)
+    }
+
+    private func attach(_ media: MediaMoment, toOwner ownerID: UUID, kind: ContentOwnerKind) {
+        let documents = (try? modelContext.fetch(FetchDescriptor<ContentDocument>())) ?? []
+        guard let document = documents.first(where: { $0.ownerID == ownerID && $0.ownerKind == kind.rawValue }) else {
+            return
+        }
+        modelContext.insert(ContentAttachment(contentDocumentID: document.id, mediaMomentID: media.id, state: .ready))
+    }
+
+    private func ensureEntryDocuments() throws {
+        let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+        let existingOwnerIDs = Set(documents.filter { $0.ownerKind == ContentOwnerKind.timeEntry.rawValue }.map(\.ownerID))
+        for entry in entries where !existingOwnerIDs.contains(entry.id) {
+            modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
+        }
     }
 }

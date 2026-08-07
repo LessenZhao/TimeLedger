@@ -16,7 +16,7 @@ struct TimeAdjustmentSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showingSkipConfirmation = false
-    @State private var contentSession: RichCardContentSession?
+    @State private var contentSession: ContentEditorSession?
 
     private let initialNote: String
     private let timeRangeDraft: RichCardContentTimeEntryDraft
@@ -141,7 +141,7 @@ struct TimeAdjustmentSheet: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("会丢弃这次尚未保存的备注和照片草稿。")
+                Text("会丢弃这次尚未保存的文字和媒体工作副本。")
             }
         }
     }

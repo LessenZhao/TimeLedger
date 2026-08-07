@@ -24,6 +24,25 @@ struct ThoughtExportTests {
         return try ModelContainer(for: schema, configurations: [configuration])
     }
 
+    private func insertJournal(
+        body: String,
+        capturedAt: Date,
+        linkedEntryID: UUID? = nil,
+        linkSource: ThoughtLinkSource = .none,
+        into context: ModelContext
+    ) {
+        let journal = JournalEntry(capturedAt: capturedAt, anchorAt: capturedAt)
+        context.insert(journal)
+        context.insert(ContentDocument(ownerID: journal.id, ownerKind: .journalEntry, body: body))
+        if let linkedEntryID {
+            context.insert(JournalTimeLink(
+                journalEntryID: journal.id,
+                timeEntryID: linkedEntryID,
+                linkSource: linkSource
+            ))
+        }
+    }
+
     // 1. JSON export includes thoughtNotes
     @Test func jsonExportIncludesThoughtNotes() throws {
         let calendar = fixedCalendar
@@ -40,14 +59,14 @@ struct ThoughtExportTests {
             status: .confirmed
         )
         context.insert(entry)
-        let thought = ThoughtNote(
+        context.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
+        insertJournal(
             body: "这家店不好吃",
             capturedAt: date("2026-07-08 09:35", calendar: calendar),
-            anchorAt: date("2026-07-08 09:35", calendar: calendar),
-            linkedEntryId: entry.id,
-            linkSource: .auto
+            linkedEntryID: entry.id,
+            linkSource: .auto,
+            into: context
         )
-        context.insert(thought)
         try context.save()
 
         let service = JSONExportService(modelContext: context)
@@ -86,21 +105,21 @@ struct ThoughtExportTests {
             status: .confirmed
         )
         context.insert(entry)
-        let thought = ThoughtNote(
+        context.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
+        insertJournal(
             body: "这家店不好吃",
             capturedAt: thoughtTime,
-            anchorAt: thoughtTime,
-            linkedEntryId: entry.id,
-            linkSource: .auto
+            linkedEntryID: entry.id,
+            linkSource: .auto,
+            into: context
         )
-        context.insert(thought)
         try context.save()
 
         let service = ExportService(modelContext: context, calendar: calendar)
         let md = try service.exportMarkdownDailyReport(date: date("2026-07-08 12:00", calendar: calendar), onlyConfirmed: true)
 
         let expectedTime = DateFormatterFactory.timeOnly.string(from: thoughtTime)
-        #expect(md.contains("关联思考"))
+        #expect(md.contains("关联随记"))
         #expect(md.contains(expectedTime))
         #expect(md.contains("当时想法"))
         #expect(md.contains("这家店不好吃"))
@@ -122,20 +141,20 @@ struct ThoughtExportTests {
             status: .confirmed
         )
         context.insert(entry)
-        let thought = ThoughtNote(
+        context.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
+        insertJournal(
             body: "handoff 的本质是状态交接",
             capturedAt: date("2026-07-08 10:22", calendar: calendar),
-            anchorAt: date("2026-07-08 10:22", calendar: calendar),
-            linkedEntryId: entry.id,
-            linkSource: .auto
+            linkedEntryID: entry.id,
+            linkSource: .auto,
+            into: context
         )
-        context.insert(thought)
         try context.save()
 
         let service = ExportService(modelContext: context, calendar: calendar)
         let md = try service.exportMarkdownDailyReport(date: date("2026-07-08 12:00", calendar: calendar), onlyConfirmed: true)
 
-        #expect(md.contains("今日捕获的思考"))
+        #expect(md.contains("今日捕获的随记"))
         #expect(md.contains("handoff 的本质是状态交接"))
     }
 
@@ -144,18 +163,17 @@ struct ThoughtExportTests {
         let calendar = fixedCalendar
         let container = try makeContainer()
         let context = ModelContext(container)
-        let thought = ThoughtNote(
+        insertJournal(
             body: "重新设计时间线笔记结构",
             capturedAt: date("2026-07-08 23:20", calendar: calendar),
-            anchorAt: date("2026-07-08 23:20", calendar: calendar)
+            into: context
         )
-        context.insert(thought)
         try context.save()
 
         let service = ExportService(modelContext: context, calendar: calendar)
         let md = try service.exportMarkdownDailyReport(date: date("2026-07-08 12:00", calendar: calendar), onlyConfirmed: true)
 
-        #expect(md.contains("未匹配思考"))
+        #expect(md.contains("未匹配随记"))
         #expect(md.contains("重新设计时间线笔记结构"))
     }
 
@@ -175,22 +193,22 @@ struct ThoughtExportTests {
             status: .confirmed
         )
         context.insert(yesterdayEntry)
+        context.insert(ContentDocument(ownerID: yesterdayEntry.id, ownerKind: .timeEntry))
         // Thought captured today (07-08 22:10) but manually linked to yesterday's entry
-        let thought = ThoughtNote(
+        insertJournal(
             body: "今天吃饭说明选择成本太高",
             capturedAt: date("2026-07-08 22:10", calendar: calendar),
-            anchorAt: date("2026-07-08 22:10", calendar: calendar),
-            linkedEntryId: yesterdayEntry.id,
-            linkSource: .manual
+            linkedEntryID: yesterdayEntry.id,
+            linkSource: .manual,
+            into: context
         )
-        context.insert(thought)
         try context.save()
 
         let service = ExportService(modelContext: context, calendar: calendar)
         let md = try service.exportMarkdownDailyReport(date: date("2026-07-08 12:00", calendar: calendar), onlyConfirmed: true)
 
         // Should appear in "今日捕获的思考"
-        #expect(md.contains("今日捕获的思考"))
+        #expect(md.contains("今日捕获的随记"))
         #expect(md.contains("今天吃饭说明选择成本太高"))
         // Should show linked to "在外面吃饭"
         #expect(md.contains("关联：在外面吃饭"))

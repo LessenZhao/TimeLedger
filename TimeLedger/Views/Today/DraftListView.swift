@@ -10,21 +10,23 @@ struct DraftListView: View {
         },
         sort: \TimeEntry.startAt
     ) private var drafts: [TimeEntry]
-    @Query private var allThoughts: [ThoughtNote]
+    @Query private var allJournals: [JournalEntry]
+    @Query private var allDocuments: [ContentDocument]
+    @Query private var allContentAttachments: [ContentAttachment]
+    @Query private var allJournalLinks: [JournalTimeLink]
     @Query private var allMediaMoments: [MediaMoment]
-    @Query private var allThoughtMediaLinks: [ThoughtMediaLink]
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var errorMessage: String?
     @State private var deleteTarget: TimeEntry?
     @State private var editingEntry: TimeEntry?
-    @State private var editingThought: ThoughtNote?
+    @State private var editingJournal: JournalEntry?
 
     var body: some View {
         Group {
             if drafts.isEmpty {
                 ContentUnavailableView(
-                    "没有草稿",
+                    "没有待确认记录",
                     systemImage: "tray",
                     description: Text("从项目页归档时间后，未确认的记录会出现在这里。")
                 )
@@ -39,12 +41,13 @@ struct DraftListView: View {
                                         DraftSwipeRow {
                                             TimeEntryExpandableCard(
                                                 entry: entry,
-                                                thoughts: thoughts(for: entry),
-                                                mediaMoments: mediaMoments(for: entry),
-                                                thoughtMediaLinks: allThoughtMediaLinks,
+                                                documents: allDocuments,
+                                                journals: journals(for: entry),
+                                                mediaMoments: allMediaMoments,
+                                                contentAttachments: allContentAttachments,
                                                 actionTitles: actionTitles(for: entry),
-                                                onEditThought: { thought in
-                                                    editingThought = thought
+                                                onEditJournal: { journal in
+                                                    editingJournal = journal
                                                 },
                                                 onEdit: {
                                                     editingEntry = entry
@@ -84,10 +87,10 @@ struct DraftListView: View {
                 TimeEntryEditView(entry: entry)
             }
         }
-        .sheet(item: $editingThought) { thought in
-            RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
+        .sheet(item: $editingJournal) { journal in
+            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
-        .alert("删除这条草稿？", isPresented: Binding(
+        .alert("删除这条待确认记录？", isPresented: Binding(
             get: { deleteTarget != nil },
             set: { if !$0 { deleteTarget = nil } }
         )) {
@@ -98,7 +101,7 @@ struct DraftListView: View {
                 }
             }
         } message: {
-            Text("若后面是草稿会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
+            Text("若后面是待确认记录会向前贴紧；后面是已确认则留空档；最后一条会退回未记录光标。")
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },
@@ -152,15 +155,10 @@ struct DraftListView: View {
         return formatter.string(from: date)
     }
 
-    private func thoughts(for entry: TimeEntry) -> [ThoughtNote] {
-        allThoughts
-            .filter { $0.linkedEntryId == entry.id }
-            .sorted { $0.capturedAt < $1.capturedAt }
-    }
-
-    private func mediaMoments(for entry: TimeEntry) -> [MediaMoment] {
-        allMediaMoments
-            .filter { $0.linkedEntryId == entry.id }
+    private func journals(for entry: TimeEntry) -> [JournalEntry] {
+        let ids = Set(allJournalLinks.filter { $0.timeEntryID == entry.id }.map(\.journalEntryID))
+        return allJournals
+            .filter { ids.contains($0.id) }
             .sorted { $0.capturedAt < $1.capturedAt }
     }
 

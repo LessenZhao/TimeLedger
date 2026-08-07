@@ -4,7 +4,8 @@ import SwiftUI
 struct ThoughtCardView: View {
     @Environment(\.modelContext) private var modelContext
 
-    let thought: ThoughtNote
+    let journal: JournalEntry
+    let bodyText: String
     let linkedEntry: TimeEntry?
     let mediaMoments: [MediaMoment]
     let displayStartAt: Date?
@@ -19,7 +20,8 @@ struct ThoughtCardView: View {
     @State private var selectedMedia: MediaMoment?
 
     init(
-        thought: ThoughtNote,
+        journal: JournalEntry,
+        body: String,
         linkedEntry: TimeEntry?,
         mediaMoments: [MediaMoment] = [],
         displayStartAt: Date? = nil,
@@ -27,7 +29,8 @@ struct ThoughtCardView: View {
         isRelatedToNote: Bool = false,
         onEdit: @escaping () -> Void = {}
     ) {
-        self.thought = thought
+        self.journal = journal
+        self.bodyText = body
         self.linkedEntry = linkedEntry
         self.mediaMoments = mediaMoments
         self.displayStartAt = displayStartAt
@@ -44,7 +47,7 @@ struct ThoughtCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                TimelineKindBadge(title: "思考", tint: Color.purple.opacity(0.16), foreground: Color.purple)
+                TimelineKindBadge(title: "随记", tint: Color.purple.opacity(0.16), foreground: Color.purple)
                 VisibleEditButton(
                     accessibilityLabel: "编辑",
                     accessibilityIdentifier: "timeline.thought.edit",
@@ -56,13 +59,28 @@ struct ThoughtCardView: View {
             }
             .zIndex(1)
 
-            if !thought.body.isEmpty {
-                TimelineExpandableText(text: thought.body, style: .thought)
+            if !bodyText.isEmpty {
+                TimelineExpandableText(text: bodyText, style: .thought)
             }
 
             if !mediaMoments.isEmpty {
                 TimelineMediaGrid(moments: mediaMoments) { moment in
                     selectedMedia = moment
+                }
+                if bodyText.isEmpty {
+                    HStack(spacing: 8) {
+                        if mediaMoments.contains(where: { $0.kind == .photo }) {
+                            Label("照片", systemImage: "photo")
+                        }
+                        if mediaMoments.contains(where: { $0.kind == .video }) {
+                            Label("视频", systemImage: "video")
+                            if let video = mediaMoments.first(where: { $0.kind == .video }) {
+                                Text("· \(DurationFormatter.compact(video.durationSeconds))")
+                            }
+                        }
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -77,12 +95,12 @@ struct ThoughtCardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeline.card.thought")
         .sheet(isPresented: $showingManualLink) {
-            ThoughtManualLinkView(thought: thought, date: thought.capturedAt)
+            ThoughtManualLinkView(journal: journal, date: journal.capturedAt)
         }
         .fullScreenCover(item: $selectedMedia) { moment in
             MediaViewer(moment: moment)
         }
-        .alert("删除这条思考？", isPresented: $showingDeleteAlert) {
+        .alert("删除这条随记？", isPresented: $showingDeleteAlert) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive, action: deleteThought)
         } message: {
@@ -106,7 +124,7 @@ struct ThoughtCardView: View {
 
     private var menuButton: some View {
         Menu {
-            if thought.linkedEntryId != nil {
+            if linkedEntry != nil {
                 Button("取消关联", role: .destructive) {
                     showingUnlinkConfirm = true
                 }
@@ -132,7 +150,7 @@ struct ThoughtCardView: View {
         }
         .accessibilityLabel("更多操作")
         .accessibilityIdentifier(
-            thought.linkedEntryId == nil
+            linkedEntry == nil
                 ? "timeline.thought.menu.unlinked"
                 : "timeline.thought.menu.linked"
         )
@@ -142,7 +160,7 @@ struct ThoughtCardView: View {
     private var secondaryMeta: some View {
         VStack(alignment: .leading, spacing: 4) {
             if isRelatedToNote {
-                Text("关联备注")
+                Text("关联时间记录")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.accentColor)
                     .accessibilityIdentifier("timeline.thought.relatedNote")
@@ -152,10 +170,6 @@ struct ThoughtCardView: View {
                 Text("\(linkedEntry.projectNameSnapshot) · \(lifecycleTitle)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if thought.linkedEntryId != nil {
-                Text("关联失效")
-                    .font(.caption)
-                    .foregroundStyle(.red)
             } else {
                 Text("未关联")
                     .font(.caption)
@@ -165,7 +179,7 @@ struct ThoughtCardView: View {
     }
 
     private var timeText: String {
-        let start = displayStartAt ?? thought.capturedAt
+        let start = displayStartAt ?? journal.capturedAt
         if let end = displayEndAt {
             let startText = DateFormatterFactory.timeOnly.string(from: start)
             let endText = DateFormatterFactory.timeOnly.string(from: end)
@@ -185,7 +199,7 @@ struct ThoughtCardView: View {
 
     private var lifecycleTitle: String {
         switch linkedEntry?.entryStatus {
-        case .draft: "草稿"
+        case .draft: "待确认"
         case .confirmed: "已确认"
         case nil: "未关联"
         }
@@ -193,7 +207,7 @@ struct ThoughtCardView: View {
 
     private func unlink() {
         do {
-            try ThoughtLinkingService(modelContext: modelContext).unlinkThought(thought)
+            try JournalContentService(modelContext: modelContext).unlink(journal)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -201,7 +215,7 @@ struct ThoughtCardView: View {
 
     private func deleteThought() {
         do {
-            try ThoughtLinkingService(modelContext: modelContext).deleteThought(thought)
+            try JournalContentService(modelContext: modelContext).delete(journal)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -265,7 +279,7 @@ struct TimelineKindBadge: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(tint))
-            .accessibilityIdentifier(title == "备注" ? "timeline.badge.note" : "timeline.badge.thought")
+            .accessibilityIdentifier(title == "时间记录" ? "timeline.badge.note" : "timeline.badge.thought")
     }
 }
 

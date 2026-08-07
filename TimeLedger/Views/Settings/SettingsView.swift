@@ -23,7 +23,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Toggle("今日汇总含草稿", isOn: Binding(
+                    Toggle("今日汇总含待确认", isOn: Binding(
                         get: { settings?.includeDraftInTodaySummary ?? true },
                         set: { newValue in
                             settings?.includeDraftInTodaySummary = newValue

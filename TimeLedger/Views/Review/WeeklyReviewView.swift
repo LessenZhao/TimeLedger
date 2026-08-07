@@ -29,7 +29,7 @@ struct WeeklyReviewView: View {
                 .labelsHidden()
                 .datePickerStyle(.compact)
             Spacer()
-            Toggle("含草稿", isOn: $includeDraft)
+            Toggle("含待确认", isOn: $includeDraft)
                 .toggleStyle(.switch)
                 .controlSize(.small)
         }

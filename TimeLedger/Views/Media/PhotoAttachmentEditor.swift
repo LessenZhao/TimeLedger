@@ -41,6 +41,9 @@ struct PhotoAttachmentEditor: View {
         VStack(alignment: .leading, spacing: 10) {
             if visibleAttachmentCount > 0 {
                 attachmentStrip
+                Text("\(visibleAttachmentCount) 个附件")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Button {

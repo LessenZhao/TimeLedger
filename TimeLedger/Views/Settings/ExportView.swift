@@ -194,7 +194,7 @@ struct ExportView: View {
 
                 guard !Task.isCancelled else { return }
                 artifact = result
-                statusMessage = "已生成 \(result.entryCount) 条记录、\(result.thoughtCount) 条思考，文件 \(ByteCountFormatter.string(fromByteCount: Int64(result.byteCount), countStyle: .file))"
+                statusMessage = "已生成 \(result.entryCount) 条记录、\(result.thoughtCount) 条随记，文件 \(ByteCountFormatter.string(fromByteCount: Int64(result.byteCount), countStyle: .file))"
                 showingShareSheet = true
             } catch is CancellationError {
                 // Leaving the screen cancels the pending export without showing an error.

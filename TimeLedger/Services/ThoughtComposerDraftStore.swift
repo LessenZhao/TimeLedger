@@ -37,6 +37,9 @@ nonisolated struct ThoughtComposerDraft: Codable, Equatable, Sendable {
     var body: String
     var anchorAt: Date?
     var attachments: [ThoughtComposerDraftAttachment]
+    var ownerID: UUID? = nil
+    var contentID: UUID? = nil
+    var baseRevision: Int? = nil
 
     static var empty: ThoughtComposerDraft {
         ThoughtComposerDraft(
@@ -85,6 +88,28 @@ nonisolated struct ThoughtComposerDraftStore: Sendable {
         }
         let data = try Data(contentsOf: manifestURL)
         return try JSONDecoder().decode(ThoughtComposerDraft.self, from: data)
+    }
+
+    /// Binds a recoverable media draft to one canonical content revision.
+    /// A stale draft may keep staged originals, but never its old body.
+    func prepareExisting(
+        ownerID: UUID,
+        contentID: UUID,
+        baseRevision: Int,
+        canonicalBody: String
+    ) throws -> ThoughtComposerDraft {
+        var draft = try load()
+        let matchesCurrentRevision = draft.ownerID == ownerID
+            && draft.contentID == contentID
+            && draft.baseRevision == baseRevision
+        if !matchesCurrentRevision {
+            draft.body = canonicalBody
+            draft.ownerID = ownerID
+            draft.contentID = contentID
+            draft.baseRevision = baseRevision
+            try save(draft)
+        }
+        return draft
     }
 
     @discardableResult

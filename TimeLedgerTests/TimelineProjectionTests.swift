@@ -5,442 +5,289 @@ import Testing
 @MainActor
 struct TimelineProjectionTests {
     @Test func textPhotoAndVideoFormOneRecordThatMatchesAllRelevantFilters() {
-        let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let thought = ThoughtNote(body: "记录当下的想法", capturedAt: capturedAt)
-        let photo = mediaMoment(kind: .photo, capturedAt: capturedAt.addingTimeInterval(10))
-        let video = mediaMoment(kind: .video, capturedAt: capturedAt.addingTimeInterval(20))
+        var fixture = Fixture()
+        let journal = fixture.addJournal(body: "记录当下的想法")
+        let photo = fixture.addMedia(kind: .photo, ownerID: journal.id, ownerKind: .journalEntry, sortOrder: 1)
+        let video = fixture.addMedia(kind: .video, ownerID: journal.id, ownerKind: .journalEntry, sortOrder: 0)
 
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [photo, video],
-            mediaLinks: [
-                ThoughtMediaLink(thoughtId: thought.id, mediaMomentId: photo.id, sortOrder: 1),
-                ThoughtMediaLink(thoughtId: thought.id, mediaMomentId: video.id, sortOrder: 0),
-            ]
-        )
-
+        let records = fixture.records()
         #expect(records.count == 1)
-        let record = records[0]
-        #expect(record.id == "thought-\(thought.id.uuidString)")
-        #expect(record.mediaMoments.map(\.id) == [video.id, photo.id])
-        #expect(TimelineContentFilter.matches(record, selectedFilters: []))
-        #expect(TimelineContentFilter.text.matches(record))
-        #expect(TimelineContentFilter.photos.matches(record))
-        #expect(TimelineContentFilter.videos.matches(record))
-    }
-
-    @Test func standalonePhotoAndVideoDoNotMatchThoughtFilter() {
-        let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let photo = mediaMoment(kind: .photo, capturedAt: capturedAt)
-        let video = mediaMoment(kind: .video, capturedAt: capturedAt.addingTimeInterval(10))
-
-        let records = TimelineProjection.records(
-            thoughts: [],
-            mediaMoments: [photo, video],
-            mediaLinks: []
-        )
-
-        #expect(records.map(\.id) == ["media-\(video.id.uuidString)", "media-\(photo.id.uuidString)"])
-        #expect(records.allSatisfy { !TimelineContentFilter.text.matches($0) })
-        #expect(TimelineContentFilter.photos.matches(records[1]))
-        #expect(!TimelineContentFilter.videos.matches(records[1]))
-        #expect(TimelineContentFilter.videos.matches(records[0]))
-        #expect(!TimelineContentFilter.photos.matches(records[0]))
-        #expect(!TimelineContentFilter.matches(records[0], selectedFilters: [.text, .photos]))
-        #expect(TimelineContentFilter.matches(records[1], selectedFilters: [.text, .photos]))
-    }
-
-    @Test func emptyThoughtWithManualPhotoRetainsThoughtIdentityAndOwnsMedia() {
-        let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let entryID = UUID()
-        let emptyThought = ThoughtNote(
-            body: " \n ",
-            capturedAt: capturedAt,
-            linkedEntryId: entryID,
-            linkSource: .manual
-        )
-        let photo = mediaMoment(
-            kind: .photo,
-            capturedAt: capturedAt,
-            linkedEntryId: entryID,
-            linkSource: .manual
-        )
-
-        let records = TimelineProjection.records(
-            thoughts: [emptyThought],
-            mediaMoments: [photo],
-            mediaLinks: [
-                ThoughtMediaLink(thoughtId: emptyThought.id, mediaMomentId: photo.id, sortOrder: 0)
-            ]
-        )
-
-        #expect(records.count == 1)
-        let record = records[0]
-        #expect(record.id == "thought-\(emptyThought.id.uuidString)")
-        #expect(record.thought?.id == emptyThought.id)
-        #expect(record.mediaMoments.map(\.id) == [photo.id])
-        #expect(!TimelineContentFilter.text.matches(record))
-        #expect(TimelineContentFilter.photos.matches(record))
-        #expect(photo.linkedEntryId == entryID)
-        #expect(photo.linkSourceEnum == .manual)
-    }
-
-    @Test func emptyThoughtWithAutoVideoRetainsThoughtIdentityAndOwnsMedia() {
-        let capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let entryID = UUID()
-        let emptyThought = ThoughtNote(body: "", capturedAt: capturedAt)
-        let video = mediaMoment(
-            kind: .video,
-            capturedAt: capturedAt,
-            linkedEntryId: entryID,
-            linkSource: .auto
-        )
-
-        let records = TimelineProjection.records(
-            thoughts: [emptyThought],
-            mediaMoments: [video],
-            mediaLinks: [
-                ThoughtMediaLink(thoughtId: emptyThought.id, mediaMomentId: video.id, sortOrder: 0)
-            ]
-        )
-
-        #expect(records.count == 1)
-        #expect(records[0].id == "thought-\(emptyThought.id.uuidString)")
-        #expect(records[0].thought?.id == emptyThought.id)
-        #expect(records[0].mediaMoments.map(\.id) == [video.id])
-        #expect(!TimelineContentFilter.text.matches(records[0]))
-        #expect(TimelineContentFilter.videos.matches(records[0]))
-        #expect(video.linkedEntryId == entryID)
-        #expect(video.linkSourceEnum == .auto)
-    }
-
-    // MARK: - Semantic time projection
-
-    @Test func notePhotoCapturedInAugustProjectsOntoJulyEntryDay() {
-        let july20 = date(2026, 7, 20, 10, 0)
-        let july20End = date(2026, 7, 20, 12, 0)
-        let august6 = date(2026, 8, 6, 15, 30)
-        let entry = timeEntry(startAt: july20, endAt: july20End, note: "")
-        let notePhoto = mediaMoment(
-            kind: .photo,
-            capturedAt: august6,
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
-
-        let records = TimelineProjection.records(
-            thoughts: [],
-            mediaMoments: [notePhoto],
-            mediaLinks: [],
-            entries: [entry]
-        )
-
-        #expect(records.count == 1)
-        let record = records[0]
-        #expect(record.kind == .note)
-        #expect(record.id == "note-\(entry.id.uuidString)")
-        #expect(record.capturedAt == july20)
-        #expect(record.displayEndAt == july20End)
-        #expect(record.mediaMoments.map(\.id) == [notePhoto.id])
-        #expect(notePhoto.capturedAt == august6)
-        #expect(Calendar.current.isDate(record.capturedAt, inSameDayAs: july20))
-        #expect(!Calendar.current.isDate(record.capturedAt, inSameDayAs: august6))
-    }
-
-    @Test func manualThoughtInsideEntryUsesEntryTimeRange() {
-        let entryStart = date(2026, 7, 20, 9, 0)
-        let entryEnd = date(2026, 7, 20, 11, 0)
-        let capturedLater = date(2026, 8, 6, 18, 0)
-        let entry = timeEntry(startAt: entryStart, endAt: entryEnd, note: "当日备注")
-        let thought = ThoughtNote(
-            body: "条目内事后思考",
-            capturedAt: capturedLater,
-            anchorAt: capturedLater,
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
-
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [],
-            mediaLinks: [],
-            entries: [entry]
-        )
-
-        let thoughtRecord = records.first { $0.kind == .thought }
-        #expect(thoughtRecord != nil)
-        #expect(thoughtRecord?.capturedAt == entryStart)
-        #expect(thoughtRecord?.displayEndAt == entryEnd)
-        #expect(thoughtRecord?.linkedEntry?.id == entry.id)
-        #expect(thought.capturedAt == capturedLater)
-        #expect(thought.anchorAt == capturedLater)
-    }
-
-    @Test func standaloneHomeThoughtKeepsOwnCaptureTime() {
-        let august6 = date(2026, 8, 6, 14, 0)
-        let thought = ThoughtNote(body: "首页独立思考", capturedAt: august6, anchorAt: august6)
-
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [],
-            mediaLinks: [],
-            entries: []
-        )
-
-        #expect(records.count == 1)
-        #expect(records[0].kind == .thought)
-        #expect(records[0].capturedAt == august6)
-        #expect(records[0].displayEndAt == nil)
-        #expect(records[0].linkedEntry == nil)
-        #expect(Calendar.current.isDate(records[0].capturedAt, inSameDayAs: august6))
-    }
-
-    @Test func standaloneHomeMediaProjectsAsThoughtAtOwnTime() {
-        let august6 = date(2026, 8, 6, 16, 0)
-        let photo = mediaMoment(kind: .photo, capturedAt: august6)
-
-        let records = TimelineProjection.records(
-            thoughts: [],
-            mediaMoments: [photo],
-            mediaLinks: [],
-            entries: []
-        )
-
-        #expect(records.count == 1)
-        #expect(records[0].kind == .thought)
-        #expect(records[0].id == "media-\(photo.id.uuidString)")
-        #expect(records[0].capturedAt == august6)
-        #expect(records[0].thought == nil)
+        #expect(records[0].id == "journal-\(journal.id.uuidString)")
+        #expect(records[0].mediaMoments.map(\.id) == [video.id, photo.id])
+        #expect(TimelineContentFilter.text.matches(records[0]))
         #expect(TimelineContentFilter.photos.matches(records[0]))
-        #expect(!TimelineContentFilter.text.matches(records[0]))
+        #expect(TimelineContentFilter.videos.matches(records[0]))
     }
 
-    @Test func sameEntryNoteAndThoughtShowAssociationMarkersAndSortByEntryStart() {
-        let entryStart = date(2026, 7, 20, 8, 0)
-        let entryEnd = date(2026, 7, 20, 10, 0)
-        let entry = timeEntry(startAt: entryStart, endAt: entryEnd, note: "项目备注正文")
-        let thought = ThoughtNote(
-            body: "同条目思考",
-            capturedAt: date(2026, 8, 6, 12, 0),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
-        let notePhoto = mediaMoment(
-            kind: .photo,
-            capturedAt: date(2026, 8, 6, 12, 5),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
+    @Test func standalonePhotoAndVideoRemainSeparateMediaOnlyJournals() {
+        var fixture = Fixture()
+        let first = fixture.addJournal(body: "")
+        let second = fixture.addJournal(body: "", capturedAt: fixture.now.addingTimeInterval(10))
+        _ = fixture.addMedia(kind: .photo, ownerID: first.id, ownerKind: .journalEntry)
+        _ = fixture.addMedia(kind: .video, ownerID: second.id, ownerKind: .journalEntry)
 
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [notePhoto],
-            mediaLinks: [],
-            entries: [entry]
-        )
-
+        let records = fixture.records()
         #expect(records.count == 2)
-        let noteRecord = records.first { $0.kind == .note }
-        let thoughtRecord = records.first { $0.kind == .thought }
-        #expect(noteRecord != nil)
-        #expect(thoughtRecord != nil)
-        #expect(noteRecord?.relatedThoughtCount == 1)
-        #expect(thoughtRecord?.isRelatedToNote == true)
-        #expect(noteRecord?.noteText == "项目备注正文")
-        #expect(noteRecord?.mediaMoments.map(\.id) == [notePhoto.id])
-        #expect(noteRecord?.capturedAt == entryStart)
-        #expect(thoughtRecord?.capturedAt == entryStart)
-        #expect(records.allSatisfy { $0.linkedEntry?.id == entry.id })
+        #expect(records.allSatisfy { !$0.hasText })
+        #expect(records.contains(where: { $0.hasPhoto && !$0.hasVideo }))
+        #expect(records.contains(where: { $0.hasVideo && !$0.hasPhoto }))
+    }
+
+    @Test func emptyJournalWithManualPhotoRetainsIdentityAndOwnsMedia() {
+        var fixture = Fixture()
+        let entry = fixture.addEntry()
+        let journal = fixture.addJournal(body: " \n ", linkedEntry: entry, source: .manual)
+        let photo = fixture.addMedia(kind: .photo, ownerID: journal.id, ownerKind: .journalEntry)
+
+        let record = fixture.records().first
+        #expect(record?.journal?.id == journal.id)
+        #expect(record?.mediaMoments.map(\.id) == [photo.id])
+        #expect(record?.hasText == false)
+        #expect(record?.linkedEntry?.id == entry.id)
+    }
+
+    @Test func emptyJournalWithAutoVideoRetainsIdentityAndOwnsMedia() {
+        var fixture = Fixture()
+        let entry = fixture.addEntry()
+        let journal = fixture.addJournal(body: "", linkedEntry: entry, source: .auto)
+        let video = fixture.addMedia(kind: .video, ownerID: journal.id, ownerKind: .journalEntry)
+
+        let record = fixture.records().first
+        #expect(record?.journal?.id == journal.id)
+        #expect(record?.mediaMoments.map(\.id) == [video.id])
+        #expect(record?.capturedAt == journal.anchorAt)
+        #expect(record?.hasVideo == true)
+    }
+
+    @Test func entryPhotoCapturedInAugustProjectsOntoJulyEntryDay() {
+        var fixture = Fixture()
+        let start = fixture.date(2026, 7, 20, 10, 0)
+        let end = fixture.date(2026, 7, 20, 12, 0)
+        let entry = fixture.addEntry(startAt: start, endAt: end, body: "")
+        let photo = fixture.addMedia(kind: .photo, ownerID: entry.id, ownerKind: .timeEntry, capturedAt: fixture.date(2026, 8, 6, 15, 30))
+
+        let record = fixture.records().first
+        #expect(record?.kind == .note)
+        #expect(record?.capturedAt == start)
+        #expect(record?.displayEndAt == end)
+        #expect(record?.mediaMoments.map(\.id) == [photo.id])
+    }
+
+    @Test func manualJournalInsideEntryUsesEntryTimeRange() {
+        var fixture = Fixture()
+        let start = fixture.date(2026, 7, 20, 9, 0)
+        let end = fixture.date(2026, 7, 20, 11, 0)
+        let entry = fixture.addEntry(startAt: start, endAt: end)
+        _ = fixture.addJournal(body: "条目内事后随记", capturedAt: fixture.date(2026, 8, 6, 18, 0), linkedEntry: entry, source: .manual)
+
+        let record = fixture.records().first { $0.kind == .thought }
+        #expect(record?.capturedAt == start)
+        #expect(record?.displayEndAt == end)
+        #expect(record?.linkedEntry?.id == entry.id)
+    }
+
+    @Test func standaloneHomeJournalKeepsOwnCaptureTime() {
+        var fixture = Fixture()
+        let captured = fixture.date(2026, 8, 6, 14, 0)
+        _ = fixture.addJournal(body: "首页独立随记", capturedAt: captured)
+
+        let record = fixture.records().first
+        #expect(record?.kind == .thought)
+        #expect(record?.capturedAt == captured)
+        #expect(record?.displayEndAt == nil)
+        #expect(record?.linkedEntry == nil)
+    }
+
+    @Test func standaloneHomeMediaJournalProjectsAtOwnTime() {
+        var fixture = Fixture()
+        let captured = fixture.date(2026, 8, 6, 16, 0)
+        let journal = fixture.addJournal(body: "", capturedAt: captured)
+        _ = fixture.addMedia(kind: .photo, ownerID: journal.id, ownerKind: .journalEntry, capturedAt: captured)
+
+        let record = fixture.records().first
+        #expect(record?.kind == .thought)
+        #expect(record?.capturedAt == captured)
+        #expect(record?.journal?.id == journal.id)
+        #expect(record?.hasPhoto == true)
+        #expect(record?.hasText == false)
+    }
+
+    @Test func sameEntryContentAndJournalShowAssociationMarkersAndSortByEntryStart() {
+        var fixture = Fixture()
+        let start = fixture.date(2026, 7, 20, 8, 0)
+        let entry = fixture.addEntry(startAt: start, endAt: fixture.date(2026, 7, 20, 10, 0), body: "项目记录正文")
+        _ = fixture.addJournal(body: "同条目随记", linkedEntry: entry, source: .manual)
+        _ = fixture.addMedia(kind: .photo, ownerID: entry.id, ownerKind: .timeEntry)
+
+        let records = fixture.records()
+        let entryRecord = records.first { $0.kind == .note }
+        let journalRecord = records.first { $0.kind == .thought }
+        #expect(records.count == 2)
+        #expect(entryRecord?.relatedThoughtCount == 1)
+        #expect(journalRecord?.isRelatedToNote == true)
+        #expect(entryRecord?.noteText == "项目记录正文")
+        #expect(records.allSatisfy { $0.capturedAt == start })
     }
 
     @Test func movingDraftEntryTimeMovesManualProjectionAutomatically() {
-        let originalStart = date(2026, 7, 20, 9, 0)
-        let originalEnd = date(2026, 7, 20, 10, 0)
-        let movedStart = date(2026, 7, 21, 14, 0)
-        let movedEnd = date(2026, 7, 21, 15, 0)
-        let entry = timeEntry(startAt: originalStart, endAt: originalEnd, note: "可移动草稿")
-        let thought = ThoughtNote(
-            body: "跟着条目走",
-            capturedAt: date(2026, 8, 6, 9, 0),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
-        let notePhoto = mediaMoment(
-            kind: .photo,
-            capturedAt: date(2026, 8, 6, 9, 30),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
+        var fixture = Fixture()
+        let original = fixture.date(2026, 7, 20, 9, 0)
+        let moved = fixture.date(2026, 7, 21, 14, 0)
+        let movedEnd = fixture.date(2026, 7, 21, 15, 0)
+        let entry = fixture.addEntry(startAt: original, endAt: original.addingTimeInterval(3_600), body: "可移动")
+        _ = fixture.addJournal(body: "跟着走", linkedEntry: entry, source: .manual)
 
-        let before = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [notePhoto],
-            mediaLinks: [],
-            entries: [entry]
-        )
-        #expect(before.map(\.capturedAt).allSatisfy { $0 == originalStart })
-
-        entry.startAt = movedStart
+        #expect(fixture.records().allSatisfy { $0.capturedAt == original })
+        entry.startAt = moved
         entry.endAt = movedEnd
-
-        let after = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [notePhoto],
-            mediaLinks: [],
-            entries: [entry]
-        )
-        #expect(after.count == 2)
-        #expect(after.map(\.capturedAt).allSatisfy { $0 == movedStart })
-        #expect(after.map(\.displayEndAt).allSatisfy { $0 == movedEnd })
-        #expect(thought.capturedAt == date(2026, 8, 6, 9, 0))
-        #expect(notePhoto.capturedAt == date(2026, 8, 6, 9, 30))
+        let after = fixture.records()
+        #expect(after.allSatisfy { $0.capturedAt == moved })
+        #expect(after.allSatisfy { $0.displayEndAt == movedEnd })
     }
 
-    @Test func orphanManualLinkFallsBackToOwnTime() {
-        let missingEntryID = UUID()
-        let ownTime = date(2026, 8, 6, 11, 0)
-        let thought = ThoughtNote(
-            body: "孤儿思考",
-            capturedAt: ownTime,
-            linkedEntryId: missingEntryID,
-            linkSource: .manual
-        )
-        let photo = mediaMoment(
-            kind: .photo,
-            capturedAt: ownTime.addingTimeInterval(60),
-            linkedEntryId: missingEntryID,
-            linkSource: .manual
-        )
+    @Test func orphanManualJournalLinkFallsBackToOwnTime() {
+        var fixture = Fixture()
+        let captured = fixture.date(2026, 8, 6, 11, 0)
+        let journal = fixture.addJournal(body: "孤儿随记", capturedAt: captured)
+        fixture.journalLinks.append(JournalTimeLink(journalEntryID: journal.id, timeEntryID: UUID(), linkSource: .manual))
 
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [photo],
-            mediaLinks: [],
-            entries: []
-        )
-
-        let thoughtRecord = records.first { $0.thought?.id == thought.id }
-        let mediaRecord = records.first { $0.id == "media-\(photo.id.uuidString)" }
-        #expect(thoughtRecord?.capturedAt == ownTime)
-        #expect(thoughtRecord?.displayEndAt == nil)
-        #expect(mediaRecord?.capturedAt == photo.capturedAt)
-        #expect(mediaRecord?.kind == .thought)
+        let record = fixture.records().first
+        #expect(record?.capturedAt == captured)
+        #expect(record?.displayEndAt == nil)
+        #expect(record?.linkedEntry == nil)
     }
 
-    @Test func autoLinkedThoughtKeepsOwnTimeEvenWhenEntryExists() {
-        let entryStart = date(2026, 7, 20, 9, 0)
-        let entryEnd = date(2026, 7, 20, 11, 0)
-        let capture = date(2026, 7, 20, 9, 30)
-        let entry = timeEntry(startAt: entryStart, endAt: entryEnd, note: "")
-        let thought = ThoughtNote(
-            body: "自动关联仍用自身时间",
-            capturedAt: capture,
-            anchorAt: capture,
-            linkedEntryId: entry.id,
-            linkSource: .auto
-        )
+    @Test func autoLinkedJournalKeepsOwnTimeEvenWhenEntryExists() {
+        var fixture = Fixture()
+        let start = fixture.date(2026, 7, 20, 9, 0)
+        let capture = fixture.date(2026, 7, 20, 9, 30)
+        let entry = fixture.addEntry(startAt: start, endAt: start.addingTimeInterval(7_200), body: "")
+        _ = fixture.addJournal(body: "自动关联", capturedAt: capture, linkedEntry: entry, source: .auto)
 
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [],
-            mediaLinks: [],
-            entries: [entry]
-        )
-
-        #expect(records.count == 1)
-        #expect(records[0].kind == .thought)
-        #expect(records[0].capturedAt == capture)
-        #expect(records[0].displayEndAt == nil)
-        #expect(records[0].linkedEntry?.id == entry.id)
+        let record = fixture.records().first
+        #expect(record?.kind == .thought)
+        #expect(record?.capturedAt == capture)
+        #expect(record?.displayEndAt == nil)
+        #expect(record?.linkedEntry?.id == entry.id)
     }
 
-    @Test func noteOnlyAttachmentsAppearWithoutNoteText() {
-        let entry = timeEntry(
-            startAt: date(2026, 7, 20, 13, 0),
-            endAt: date(2026, 7, 20, 14, 0),
-            note: "   "
-        )
-        let photo = mediaMoment(
-            kind: .photo,
-            capturedAt: date(2026, 8, 6, 10, 0),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
+    @Test func entryOnlyAttachmentsAppearWithoutText() {
+        var fixture = Fixture()
+        let entry = fixture.addEntry(body: "   ")
+        _ = fixture.addMedia(kind: .photo, ownerID: entry.id, ownerKind: .timeEntry)
 
-        let records = TimelineProjection.records(
-            thoughts: [],
-            mediaMoments: [photo],
-            mediaLinks: [],
-            entries: [entry]
-        )
-
-        #expect(records.count == 1)
-        #expect(records[0].kind == .note)
-        #expect(!records[0].hasText)
-        #expect(records[0].hasPhoto)
-        #expect(TimelineContentFilter.photos.matches(records[0]))
+        let record = fixture.records().first
+        #expect(record?.kind == .note)
+        #expect(record?.hasText == false)
+        #expect(record?.hasPhoto == true)
     }
 
-    @Test func typeModeFiltersNotesAndThoughts() {
-        let entry = timeEntry(
-            startAt: date(2026, 7, 20, 8, 0),
-            endAt: date(2026, 7, 20, 9, 0),
-            note: "备注"
-        )
-        let thought = ThoughtNote(
-            body: "思考",
-            capturedAt: date(2026, 8, 6, 8, 0),
-            linkedEntryId: entry.id,
-            linkSource: .manual
-        )
-
-        let records = TimelineProjection.records(
-            thoughts: [thought],
-            mediaMoments: [],
-            mediaLinks: [],
-            entries: [entry]
-        )
+    @Test func typeModeFiltersTimeEntriesAndJournals() {
+        var fixture = Fixture()
+        let entry = fixture.addEntry(body: "记录")
+        _ = fixture.addJournal(body: "随记", linkedEntry: entry, source: .manual)
+        let records = fixture.records()
 
         #expect(records.filter { TimelineTypeMode.notes.matches($0) }.map(\.kind) == [.note])
         #expect(records.filter { TimelineTypeMode.thoughts.matches($0) }.map(\.kind) == [.thought])
         #expect(records.filter { TimelineTypeMode.merged.matches($0) }.count == 2)
     }
+}
 
-    private func timeEntry(startAt: Date, endAt: Date, note: String) -> TimeEntry {
-        TimeEntry(
+@MainActor
+private struct Fixture {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    var journals: [JournalEntry] = []
+    var documents: [ContentDocument] = []
+    var attachments: [ContentAttachment] = []
+    var journalLinks: [JournalTimeLink] = []
+    var media: [MediaMoment] = []
+    var entries: [TimeEntry] = []
+
+    mutating func addEntry(
+        startAt: Date? = nil,
+        endAt: Date? = nil,
+        body: String = ""
+    ) -> TimeEntry {
+        let start = startAt ?? now.addingTimeInterval(-3_600)
+        let entry = TimeEntry(
             projectId: UUID(),
             projectNameSnapshot: "语义项目",
             categoryNameSnapshot: "测试",
-            startAt: startAt,
-            endAt: endAt,
-            note: note,
-            status: .draft
+            startAt: start,
+            endAt: endAt ?? start.addingTimeInterval(3_600)
         )
+        entries.append(entry)
+        documents.append(ContentDocument(id: entry.id, ownerID: entry.id, ownerKind: .timeEntry, body: body))
+        return entry
     }
 
-    private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> Date {
-        var components = DateComponents()
-        components.year = year
-        components.month = month
-        components.day = day
-        components.hour = hour
-        components.minute = minute
-        return Calendar.current.date(from: components)!
+    mutating func addJournal(
+        body: String,
+        capturedAt: Date? = nil,
+        linkedEntry: TimeEntry? = nil,
+        source: ThoughtLinkSource = .none
+    ) -> JournalEntry {
+        let captured = capturedAt ?? now
+        let journal = JournalEntry(capturedAt: captured, anchorAt: captured)
+        journals.append(journal)
+        documents.append(ContentDocument(id: journal.id, ownerID: journal.id, ownerKind: .journalEntry, body: body))
+        if let linkedEntry {
+            journalLinks.append(JournalTimeLink(
+                id: journal.id,
+                journalEntryID: journal.id,
+                timeEntryID: linkedEntry.id,
+                linkSource: source
+            ))
+        }
+        return journal
     }
 
-    private func mediaMoment(
+    mutating func addMedia(
         kind: MediaKind,
-        capturedAt: Date,
-        linkedEntryId: UUID? = nil,
-        linkSource: ThoughtLinkSource = .none
+        ownerID: UUID,
+        ownerKind: ContentOwnerKind,
+        sortOrder: Int = 0,
+        capturedAt: Date? = nil
     ) -> MediaMoment {
-        MediaMoment(
+        let moment = MediaMoment(
             kind: kind,
-            capturedAt: capturedAt,
-            linkedEntryId: linkedEntryId,
-            linkSource: linkSource,
+            capturedAt: capturedAt ?? now,
             requestedStorage: .app,
             thumbnailData: Data([1])
         )
+        media.append(moment)
+        let document = documents.first {
+            $0.ownerID == ownerID && $0.ownerKindEnum == ownerKind
+        }!
+        attachments.append(ContentAttachment(
+            id: moment.id,
+            contentDocumentID: document.id,
+            mediaMomentID: moment.id,
+            sortOrder: sortOrder,
+            state: .ready
+        ))
+        return moment
+    }
+
+    func records() -> [TimelineRecord] {
+        TimelineProjection.records(
+            journals: journals,
+            documents: documents,
+            contentAttachments: attachments,
+            journalLinks: journalLinks,
+            mediaMoments: media,
+            entries: entries
+        )
+    }
+
+    func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> Date {
+        Calendar.current.date(from: DateComponents(
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute
+        ))!
     }
 }

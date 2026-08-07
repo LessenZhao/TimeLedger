@@ -3,6 +3,8 @@ import SwiftUI
 
 struct DailyReviewView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query private var allJournals: [JournalEntry]
+    @Query private var documents: [ContentDocument]
 
     @State private var selectedDate = Date()
     @State private var includeDraft = false
@@ -31,7 +33,7 @@ struct DailyReviewView: View {
                 .labelsHidden()
                 .datePickerStyle(.compact)
             Spacer()
-            Toggle("含草稿", isOn: $includeDraft)
+            Toggle("含待确认", isOn: $includeDraft)
                 .toggleStyle(.switch)
                 .controlSize(.small)
         }
@@ -51,7 +53,7 @@ struct DailyReviewView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
-                Text("思考")
+                Text("随记")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("\(thoughtCount)")
@@ -122,18 +124,19 @@ struct DailyReviewView: View {
         (try? TimeSummaryService(modelContext: modelContext).entriesForDate(date: selectedDate)) ?? []
     }
 
-    private var todayThoughts: [ThoughtNote] {
-        (try? ThoughtLinkingService(modelContext: modelContext).thoughtsCapturedOnDate(selectedDate)) ?? []
+    private var todayJournals: [JournalEntry] {
+        let range = DateRangeService.naturalDayRange(for: selectedDate)
+        return allJournals.filter { $0.capturedAt >= range.lowerBound && $0.capturedAt < range.upperBound }
     }
 
     private var thoughtCount: Int {
-        todayThoughts.count
+        todayJournals.count
     }
 
     private var thoughtHourlyDistribution: [(hour: Int, count: Int)] {
         let calendar = Calendar.current
-        let counts = todayThoughts.reduce(into: [Int: Int]()) { result, thought in
-            let hour = calendar.component(.hour, from: thought.capturedAt)
+        let counts = todayJournals.reduce(into: [Int: Int]()) { result, journal in
+            let hour = calendar.component(.hour, from: journal.capturedAt)
             result[hour, default: 0] += 1
         }
         return counts.sorted { $0.key < $1.key }.map { (hour: $0.key, count: $0.value) }
@@ -159,8 +162,11 @@ struct DailyReviewView: View {
                 Text("\(DateFormatterFactory.timeOnly.string(from: entry.startAt)) - \(DateFormatterFactory.timeOnly.string(from: entry.endAt))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if !entry.note.isEmpty {
-                    Text(entry.note)
+                let body = documents.first {
+                    $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry
+                }?.body ?? ""
+                if !body.isEmpty {
+                    Text(body)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -175,15 +181,15 @@ struct DailyReviewView: View {
     }
 
     private var thoughtDistributionSection: some View {
-        ReviewSection(title: "今日思考分布") {
-            if todayThoughts.isEmpty {
+        ReviewSection(title: "今日随记分布") {
+            if todayJournals.isEmpty {
                 Text("无数据")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("思考总数")
+                        Text("随记总数")
                             .font(.subheadline)
                         Spacer()
                         Text("\(thoughtCount) 条")

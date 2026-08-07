@@ -38,17 +38,20 @@ nonisolated struct SyncEnvelopeExportService {
         onlyConfirmed: Bool
     ) throws -> PreparedSyncExport {
         let allEntries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
+        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
+        let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>())
+        let journalLinks = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
         let entries = allEntries.filter { entry in
             let isInRange = range?.overlaps(startAt: entry.startAt, endAt: entry.endAt) ?? true
             return isInRange && (!onlyConfirmed || entry.status == TimeEntryStatus.confirmed.rawValue)
         }
         let entryIDs = Set(entries.map(\.id))
 
-        let allThoughts = try modelContext.fetch(FetchDescriptor<ThoughtNote>())
-        let thoughts = allThoughts.filter { thought in
+        let selectedJournals = journals.filter { journal in
             guard let range else { return true }
-            return range.contains(thought.capturedAt)
-                || thought.linkedEntryId.map(entryIDs.contains) == true
+            let linkedEntryID = journalLinks.first { $0.journalEntryID == journal.id }?.timeEntryID
+            return range.contains(journal.capturedAt)
+                || linkedEntryID.map(entryIDs.contains) == true
         }
 
         let projectIDs = Set(entries.map(\.projectId))
@@ -105,7 +108,7 @@ nonisolated struct SyncEnvelopeExportService {
                     "categoryNameSnapshot": e.categoryNameSnapshot,
                     "startAt": iso(e.startAt),
                     "endAt": iso(e.endAt),
-                    "note": e.note,
+                    "note": document(ownerID: e.id, kind: .timeEntry, in: documents)?.body ?? "",
                     "status": e.status,
                     "createdAt": iso(e.createdAt),
                     "updatedAt": iso(e.updatedAt)
@@ -113,21 +116,23 @@ nonisolated struct SyncEnvelopeExportService {
             ))
         }
 
-        for t in thoughts {
+        for journal in selectedJournals {
+            let content = document(ownerID: journal.id, kind: .journalEntry, in: documents)
+            let link = journalLinks.first { $0.journalEntryID == journal.id }
             envelopes.append(try envelope(
                 entityType: "thoughtNote",
-                entityId: t.id.uuidString,
-                revision: revision(from: t.updatedAt, created: t.createdAt),
-                updatedAt: t.updatedAt,
+                entityId: journal.id.uuidString,
+                revision: max(1, content?.revision ?? 1),
+                updatedAt: max(journal.updatedAt, content?.updatedAt ?? journal.updatedAt),
                 payload: [
-                    "id": t.id.uuidString,
-                    "body": t.body,
-                    "capturedAt": iso(t.capturedAt),
-                    "anchorAt": iso(t.anchorAt),
-                    "linkedEntryId": t.linkedEntryId?.uuidString ?? "",
-                    "linkSource": t.linkSource,
-                    "createdAt": iso(t.createdAt),
-                    "updatedAt": iso(t.updatedAt)
+                    "id": journal.id.uuidString,
+                    "body": content?.body ?? "",
+                    "capturedAt": iso(journal.capturedAt),
+                    "anchorAt": iso(journal.anchorAt),
+                    "linkedEntryId": link?.timeEntryID.uuidString ?? "",
+                    "linkSource": link?.linkSource ?? ThoughtLinkSource.none.rawValue,
+                    "createdAt": iso(journal.createdAt),
+                    "updatedAt": iso(max(journal.updatedAt, content?.updatedAt ?? journal.updatedAt))
                 ]
             ))
         }
@@ -142,7 +147,7 @@ nonisolated struct SyncEnvelopeExportService {
         return PreparedSyncExport(
             json: String(data: data, encoding: .utf8) ?? "{}",
             entryCount: entries.count,
-            thoughtCount: thoughts.count
+            thoughtCount: selectedJournals.count
         )
     }
 
@@ -173,5 +178,13 @@ nonisolated struct SyncEnvelopeExportService {
 
     private func iso(_ date: Date) -> String {
         dateFormatter.string(from: date)
+    }
+
+    private func document(
+        ownerID: UUID,
+        kind: ContentOwnerKind,
+        in documents: [ContentDocument]
+    ) -> ContentDocument? {
+        documents.first { $0.ownerID == ownerID && $0.ownerKindEnum == kind }
     }
 }

@@ -15,8 +15,8 @@ struct ThoughtComposerSheet: View {
 
     var body: some View {
         RichCardContentEditorSheet(
-            target: .newThought(entry: targetEntry),
-            title: "记录思考"
+            target: .newJournal(entry: targetEntry),
+            title: "记录随记"
         )
     }
 }

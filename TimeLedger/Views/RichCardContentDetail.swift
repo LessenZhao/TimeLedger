@@ -3,9 +3,10 @@ import SwiftUI
 
 struct ThoughtDetailView: View {
     @Query private var allEntries: [TimeEntry]
+    @Query private var journalLinks: [JournalTimeLink]
     @State private var showingEditor = false
 
-    let thought: ThoughtNote
+    let journal: JournalEntry
 
     var body: some View {
         ScrollView {
@@ -22,7 +23,7 @@ struct ThoughtDetailView: View {
                 }
 
                 RichCardContentView(
-                    target: .thought(thought),
+                    target: .journal(journal),
                     mode: .readOnly
                 )
                 .frame(minHeight: 260)
@@ -31,7 +32,7 @@ struct ThoughtDetailView: View {
             .padding(16)
         }
         .background(TLTheme.pageBackground.ignoresSafeArea())
-        .navigationTitle("思考详情")
+        .navigationTitle("随记详情")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -42,17 +43,22 @@ struct ThoughtDetailView: View {
             }
         }
         .sheet(isPresented: $showingEditor) {
-            RichCardContentEditorSheet(target: .thought(thought), title: "编辑思考")
+            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
     }
 
     private var linkedEntry: TimeEntry? {
-        allEntries.first { $0.id == thought.linkedEntryId }
+        guard let link = journalLinks.first(where: { $0.journalEntryID == journal.id }) else {
+            return nil
+        }
+        return allEntries.first { $0.id == link.timeEntryID }
     }
 }
 
 struct TimeEntryDetailView: View {
-    @Query private var allThoughts: [ThoughtNote]
+    @Query private var allJournals: [JournalEntry]
+    @Query private var allDocuments: [ContentDocument]
+    @Query private var journalLinks: [JournalTimeLink]
     @Query private var allActionCompletions: [ActionCompletion]
 
     let entry: TimeEntry
@@ -72,20 +78,21 @@ struct TimeEntryDetailView: View {
                 .frame(minHeight: 260)
                 .clipShape(RoundedRectangle(cornerRadius: TLTheme.cardRadius))
 
-                if !linkedThoughts.isEmpty {
+                if !linkedJournals.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("关联思考")
+                        Text("关联随记")
                             .font(.headline)
 
-                        ForEach(linkedThoughts) { thought in
+                        ForEach(linkedJournals) { journal in
                             NavigationLink {
-                                ThoughtDetailView(thought: thought)
+                                ThoughtDetailView(journal: journal)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(DateFormatterFactory.timeOnly.string(from: thought.capturedAt))
+                                    Text(DateFormatterFactory.timeOnly.string(from: journal.capturedAt))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    Text(thought.body.isEmpty ? "暂无文字内容" : thought.body)
+                                    let body = journalBody(journal)
+                                    Text(body.isEmpty ? "暂无文字内容" : body)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .lineLimit(3)
                                 }
@@ -104,7 +111,7 @@ struct TimeEntryDetailView: View {
                 Button {
                     showingAddThought = true
                 } label: {
-                    Label("添加思考", systemImage: "plus")
+                    Label("添加随记", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
 
@@ -158,7 +165,7 @@ struct TimeEntryDetailView: View {
             Text(timeRangeText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(entry.status == TimeEntryStatus.draft.rawValue ? "草稿" : "已确认")
+            Text(entry.status == TimeEntryStatus.draft.rawValue ? "待确认" : "已确认")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(
                     entry.status == TimeEntryStatus.draft.rawValue
@@ -175,10 +182,17 @@ struct TimeEntryDetailView: View {
         return start + " – " + end
     }
 
-    private var linkedThoughts: [ThoughtNote] {
-        allThoughts
-            .filter { $0.linkedEntryId == entry.id }
+    private var linkedJournals: [JournalEntry] {
+        let ids = Set(journalLinks.filter { $0.timeEntryID == entry.id }.map(\.journalEntryID))
+        return allJournals
+            .filter { ids.contains($0.id) }
             .sorted { $0.capturedAt < $1.capturedAt }
+    }
+
+    private func journalBody(_ journal: JournalEntry) -> String {
+        allDocuments.first {
+            $0.ownerID == journal.id && $0.ownerKindEnum == .journalEntry
+        }?.body ?? ""
     }
 
     private var linkedActionCompletions: [ActionCompletion] {
@@ -191,11 +205,12 @@ struct TimeEntryDetailView: View {
 struct RichCardContentEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var entries: [TimeEntry]
+    @Query private var journalLinks: [JournalTimeLink]
 
     let target: RichCardContentTarget
     let title: String
 
-    @State private var session: RichCardContentSession?
+    @State private var session: ContentEditorSession?
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -203,7 +218,9 @@ struct RichCardContentEditorSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let thoughtTarget, let linkedEntry = entries.first(where: { $0.id == thoughtTarget.linkedEntryId }) {
+                    if let journalTarget,
+                       let link = journalLinks.first(where: { $0.journalEntryID == journalTarget.id }),
+                       let linkedEntry = entries.first(where: { $0.id == link.timeEntryID }) {
                         LabeledContent(
                             "关联时间记录",
                             value: "\(linkedEntry.projectNameSnapshot) · \(DateFormatterFactory.timeOnly.string(from: linkedEntry.startAt))–\(DateFormatterFactory.timeOnly.string(from: linkedEntry.endAt))"
@@ -255,9 +272,9 @@ struct RichCardContentEditorSheet: View {
 
     private var saveAccessibilityIdentifier: String {
         switch target {
-        case .thought:
+        case .journal:
             return "thought.edit.save"
-        case .newThought:
+        case .newJournal:
             return "thought.composer.save"
         case .timeEntry:
             return "timeEntry.edit.save"
@@ -266,9 +283,9 @@ struct RichCardContentEditorSheet: View {
         }
     }
 
-    private var thoughtTarget: ThoughtNote? {
-        if case .thought(let thought) = target {
-            return thought
+    private var journalTarget: JournalEntry? {
+        if case .journal(let journal) = target {
+            return journal
         }
         return nil
     }

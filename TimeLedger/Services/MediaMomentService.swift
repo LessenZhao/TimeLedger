@@ -213,7 +213,7 @@ struct MediaMomentService {
             throw error
         }
         if autoLink {
-            _ = try? MediaLinkingService(modelContext: modelContext).tryAutoLink(moment)
+            try attachAsMediaJournal(moment)
         }
         await completeDestinations(for: moment)
         return moment
@@ -249,7 +249,10 @@ struct MediaMomentService {
         await fileStore.delete(relativePath: moment.appRelativePath)
         await fileStore.delete(relativePath: moment.pendingRelativePath)
         await fileStore.delete(absolutePath: moment.sourceTemporaryPath)
-        try? ThoughtMediaLinkService(modelContext: modelContext).removeLinks(for: moment)
+        let attachments = (try? modelContext.fetch(FetchDescriptor<ContentAttachment>())) ?? []
+        for attachment in attachments where attachment.mediaMomentID == moment.id {
+            modelContext.delete(attachment)
+        }
         modelContext.delete(moment)
         try? modelContext.save()
     }
@@ -336,6 +339,20 @@ struct MediaMomentService {
         }
     }
 
+    private func attachAsMediaJournal(_ moment: MediaMoment) throws {
+        let journal = JournalEntry(capturedAt: moment.capturedAt, anchorAt: moment.capturedAt)
+        let document = ContentDocument(ownerID: journal.id, ownerKind: .journalEntry)
+        let attachment = ContentAttachment(
+            contentDocumentID: document.id,
+            mediaMomentID: moment.id,
+            state: .pending
+        )
+        modelContext.insert(journal)
+        modelContext.insert(document)
+        modelContext.insert(attachment)
+        try modelContext.save()
+    }
+
     private func updateStoredLocation(
         _ moment: MediaMoment,
         appSucceeded: Bool,
@@ -360,6 +377,16 @@ struct MediaMomentService {
         moment.lastError = errors.isEmpty
             ? nil
             : errors.map(\.localizedDescription).joined(separator: "\n")
+        if let attachment = try? modelContext.fetch(FetchDescriptor<ContentAttachment>())
+            .first(where: { $0.mediaMomentID == moment.id }) {
+            switch status {
+            case .pending: attachment.state = ContentAttachmentState.pending.rawValue
+            case .partial: attachment.state = ContentAttachmentState.partial.rawValue
+            case .failed: attachment.state = ContentAttachmentState.failed.rawValue
+            case .saved: attachment.state = ContentAttachmentState.ready.rawValue
+            }
+            attachment.lastError = moment.lastError
+        }
         moment.originalAvailability = status == .failed
             ? MediaOriginalAvailability.unknown.rawValue
             : MediaOriginalAvailability.available.rawValue

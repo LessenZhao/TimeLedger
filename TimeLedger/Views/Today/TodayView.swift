@@ -179,7 +179,7 @@ struct TodayView: View {
     private var segmentBar: some View {
         Picker("视图", selection: $selectedView) {
             Text("项目").tag(0)
-            Text("草稿").tag(1)
+            Text("待确认").tag(1)
             Text("已确认").tag(2)
         }
         .pickerStyle(.segmented)
@@ -481,7 +481,7 @@ struct TodayView: View {
         do {
             let count = try ValidationService(modelContext: modelContext).confirmAllEligibleDrafts()
             if count == 0 {
-                errorMessage = "没有可确认的草稿。未知项目请先选择具体项目。"
+                errorMessage = "没有可确认的记录。未知项目请先选择具体项目。"
                 return
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
