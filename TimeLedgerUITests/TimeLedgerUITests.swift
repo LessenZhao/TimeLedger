@@ -447,7 +447,7 @@ final class TimeLedgerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Fixture 草稿项目"].waitForExistence(timeout: 3))
         let thoughtBody = Self.fixtureLongThought(in: app)
         XCTAssertFalse(thoughtBody.exists)
-        app.staticTexts["Fixture 草稿项目"].tap()
+        app.buttons["展开详情 Fixture 草稿项目"].tap()
         XCTAssertFalse(app.navigationBars["记录详情"].exists)
         XCTAssertTrue(thoughtBody.waitForExistence(timeout: 3))
 
@@ -589,7 +589,7 @@ final class TimeLedgerUITests: XCTestCase {
         app.segmentedControls.buttons["待确认"].tap()
         let draftProject = app.staticTexts["Fixture 草稿项目"]
         XCTAssertTrue(draftProject.waitForExistence(timeout: 3))
-        draftProject.tap()
+        app.buttons["展开详情 Fixture 草稿项目"].tap()
         XCTAssertFalse(app.navigationBars["记录详情"].exists)
         XCTAssertTrue(Self.fixtureLongThought(in: app).waitForExistence(timeout: 3))
         app.buttons["编辑 Fixture 草稿项目"].tap()
@@ -709,7 +709,7 @@ final class TimeLedgerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["richContent.media.pendingRemoval"].waitForExistence(timeout: 3))
         app.buttons["timeEntry.edit.cancel"].tap()
 
-        draftProject.tap()
+        app.buttons["展开详情 Fixture 草稿项目"].tap()
         XCTAssertTrue(app.buttons["查看照片"].waitForExistence(timeout: 3))
         let photoCountBeforeRemoval = app.buttons.matching(
             NSPredicate(format: "label == %@", "查看照片")
@@ -896,6 +896,51 @@ final class TimeLedgerUITests: XCTestCase {
         thoughtEditAgain.tap()
         XCTAssertTrue(app.navigationBars["编辑随记"].waitForExistence(timeout: 5), "编辑直达随记")
         XCTAssertFalse(app.navigationBars["随记详情"].exists, "不是详情页")
+    }
+
+    @MainActor
+    func testFavoriteJourneyFromDraftCardToTimelineFilter() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-ui-media-fixture"]
+        app.launch()
+
+        // 1. 待确认页：点摘要行展开，展开区给随记点星
+        app.segmentedControls.buttons["待确认"].tap()
+        let expand = app.buttons["展开详情 Fixture 草稿项目"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 3))
+        expand.tap()
+        let favoriteButton = app.buttons["timeEntry.journal.favorite"]
+        XCTAssertTrue(favoriteButton.waitForExistence(timeout: 3), "展开区应显示随记星标按钮")
+        XCTAssertEqual(favoriteButton.label, "收藏随记")
+        favoriteButton.tap()
+        XCTAssertTrue(
+            app.buttons["timeEntry.journal.favorite"].waitForExistence(timeout: 3),
+            "点星后按钮仍在"
+        )
+        XCTAssertEqual(app.buttons["timeEntry.journal.favorite"].label, "取消收藏随记")
+
+        // 2. 时间线：切「随记」+ 勾「收藏」筛选
+        app.tabBars.buttons["时间线"].tap()
+        let typeMode = app.segmentedControls["timeline.typeMode.picker"]
+        XCTAssertTrue(typeMode.waitForExistence(timeout: 5))
+        typeMode.buttons["随记"].tap()
+        let filterButton = app.buttons["timeline.filter.button"]
+        XCTAssertTrue(filterButton.waitForExistence(timeout: 3))
+        filterButton.tap()
+        let favoriteOption = app.buttons["timeline.filter.option.favorite"]
+        XCTAssertTrue(favoriteOption.waitForExistence(timeout: 3), "筛选应提供收藏选项")
+        favoriteOption.tap()
+        app.buttons["timeline.filter.done"].tap()
+
+        // 3. 收藏随记可见，未收藏随记不可见
+        XCTAssertTrue(
+            Self.fixtureLongThought(in: app).waitForExistence(timeout: 5),
+            "已收藏的草稿随记应出现在收藏筛选中"
+        )
+        XCTAssertFalse(
+            Self.element(in: app, labelContaining: "Fixture 首页独立思考").exists,
+            "未收藏的随记不应出现在收藏筛选中"
+        )
     }
 
     @MainActor

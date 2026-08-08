@@ -48,6 +48,7 @@ struct ThoughtCardView: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 TimelineKindBadge(title: "随记", tint: Color.purple.opacity(0.16), foreground: Color.purple)
+                favoriteButton
                 VisibleEditButton(
                     accessibilityLabel: "编辑",
                     accessibilityIdentifier: "timeline.thought.edit",
@@ -119,6 +120,32 @@ struct ThoughtCardView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    private var favoriteButton: some View {
+        Button {
+            toggleFavorite()
+        } label: {
+            Image(systemName: journal.isFavorite ? "star.fill" : "star")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(journal.isFavorite ? Color.yellow : .secondary)
+                .frame(
+                    width: TimelineCardActionMetrics.minTouch,
+                    height: TimelineCardActionMetrics.minTouch
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(journal.isFavorite ? "取消收藏随记" : "收藏随记")
+        .accessibilityIdentifier("timeline.thought.favorite")
+    }
+
+    private func toggleFavorite() {
+        do {
+            try JournalContentService(modelContext: modelContext).setFavorite(journal, !journal.isFavorite)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

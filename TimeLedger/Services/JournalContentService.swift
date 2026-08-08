@@ -137,4 +137,9 @@ struct JournalContentService {
             try modelContext.save()
         }
     }
+
+    func setFavorite(_ journal: JournalEntry, _ value: Bool) throws {
+        journal.isFavorite = value
+        try modelContext.save()
+    }
 }

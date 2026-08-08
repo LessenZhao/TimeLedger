@@ -52,19 +52,22 @@ final class JournalEntry {
     var anchorAt: Date
     var createdAt: Date
     var updatedAt: Date
+    var isFavorite: Bool = false
 
     init(
         id: UUID = UUID(),
         capturedAt: Date = Date(),
         anchorAt: Date? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.capturedAt = capturedAt
         self.anchorAt = anchorAt ?? capturedAt
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.isFavorite = isFavorite
     }
 }
 

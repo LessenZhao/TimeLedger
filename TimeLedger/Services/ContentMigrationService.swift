@@ -383,11 +383,21 @@ struct ContentMigrationCoordinator {
             ).createIfNeeded()
             let schema = Schema(versionedSchema: TimeLedgerSchemaV2.self)
             let configuration = ModelConfiguration("TimeLedger", schema: schema, url: storeURL)
-            let container = try ModelContainer(
-                for: schema,
-                migrationPlan: TimeLedgerMigrationPlan.self,
-                configurations: [configuration]
-            )
+            let container: ModelContainer
+            do {
+                container = try ModelContainer(
+                    for: schema,
+                    migrationPlan: TimeLedgerMigrationPlan.self,
+                    configurations: [configuration]
+                )
+            } catch {
+                // Existing V2 stores may have a compatible model change that the
+                // staged migration manager no longer recognizes by version hash.
+                container = try ModelContainer(
+                    for: schema,
+                    configurations: [configuration]
+                )
+            }
             let result = try ContentMigrationRunner(
                 modelContext: ModelContext(container)
             ).run()

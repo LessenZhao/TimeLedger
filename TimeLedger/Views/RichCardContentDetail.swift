@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct ThoughtDetailView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var allEntries: [TimeEntry]
     @Query private var journalLinks: [JournalTimeLink]
     @State private var showingEditor = false
@@ -36,6 +37,16 @@ struct ThoughtDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleFavorite()
+                } label: {
+                    Image(systemName: journal.isFavorite ? "star.fill" : "star")
+                        .foregroundStyle(journal.isFavorite ? Color.yellow : .secondary)
+                }
+                .accessibilityLabel(journal.isFavorite ? "取消收藏随记" : "收藏随记")
+                .accessibilityIdentifier("thought.detail.favorite")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("编辑") {
                     showingEditor = true
                 }
@@ -44,6 +55,14 @@ struct ThoughtDetailView: View {
         }
         .sheet(isPresented: $showingEditor) {
             RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
+        }
+    }
+
+    private func toggleFavorite() {
+        do {
+            try JournalContentService(modelContext: modelContext).setFavorite(journal, !journal.isFavorite)
+        } catch {
+            return
         }
     }
 
@@ -56,6 +75,7 @@ struct ThoughtDetailView: View {
 }
 
 struct TimeEntryDetailView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var allJournals: [JournalEntry]
     @Query private var allDocuments: [ContentDocument]
     @Query private var journalLinks: [JournalTimeLink]
@@ -84,26 +104,41 @@ struct TimeEntryDetailView: View {
                             .font(.headline)
 
                         ForEach(linkedJournals) { journal in
-                            NavigationLink {
-                                ThoughtDetailView(journal: journal)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(DateFormatterFactory.timeOnly.string(from: journal.capturedAt))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    let body = journalBody(journal)
-                                    Text(body.isEmpty ? "暂无文字内容" : body)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .lineLimit(3)
+                            HStack(spacing: 8) {
+                                NavigationLink {
+                                    ThoughtDetailView(journal: journal)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(DateFormatterFactory.timeOnly.string(from: journal.capturedAt))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        let body = journalBody(journal)
+                                        Text(body.isEmpty ? "暂无文字内容" : body)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .lineLimit(3)
+                                    }
+                                    .padding(12)
+                                    .background(
+                                        TLTheme.cardBackground,
+                                        in: RoundedRectangle(cornerRadius: TLTheme.cardRadius)
+                                    )
                                 }
-                                .padding(12)
-                                .background(
-                                    TLTheme.cardBackground,
-                                    in: RoundedRectangle(cornerRadius: TLTheme.cardRadius)
-                                )
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("entry.detail.thought")
+
+                                Button {
+                                    toggleFavorite(journal)
+                                } label: {
+                                    Image(systemName: journal.isFavorite ? "star.fill" : "star")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(journal.isFavorite ? Color.yellow : .secondary)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(journal.isFavorite ? "取消收藏随记" : "收藏随记")
+                                .accessibilityIdentifier("entry.detail.thought.favorite")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("entry.detail.thought")
                         }
                     }
                 }
@@ -195,6 +230,14 @@ struct TimeEntryDetailView: View {
         }?.body ?? ""
     }
 
+    private func toggleFavorite(_ journal: JournalEntry) {
+        do {
+            try JournalContentService(modelContext: modelContext).setFavorite(journal, !journal.isFavorite)
+        } catch {
+            return
+        }
+    }
+
     private var linkedActionCompletions: [ActionCompletion] {
         allActionCompletions
             .filter { $0.linkedEntryId == entry.id }
@@ -204,8 +247,10 @@ struct TimeEntryDetailView: View {
 
 struct RichCardContentEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Query private var entries: [TimeEntry]
     @Query private var journalLinks: [JournalTimeLink]
+    @Query private var journals: [JournalEntry]
 
     let target: RichCardContentTarget
     let title: String
@@ -213,6 +258,18 @@ struct RichCardContentEditorSheet: View {
     @State private var session: ContentEditorSession?
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var isFavorite: Bool
+    @State private var pendingNewJournalFavorite = false
+
+    init(target: RichCardContentTarget, title: String) {
+        self.target = target
+        self.title = title
+        if case .journal(let journal) = target {
+            _isFavorite = State(initialValue: journal.isFavorite)
+        } else {
+            _isFavorite = State(initialValue: false)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -250,6 +307,11 @@ struct RichCardContentEditorSheet: View {
                     }
                     .accessibilityIdentifier("richContent.cancel")
                     .disabled(isSaving)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if showsFavoriteToggle {
+                        favoriteToggleButton
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
@@ -290,6 +352,53 @@ struct RichCardContentEditorSheet: View {
         return nil
     }
 
+    private var showsFavoriteToggle: Bool {
+        switch target {
+        case .journal, .newJournal: true
+        case .timeEntry, .newTimeEntry: false
+        }
+    }
+
+    private var favoriteToggleButton: some View {
+        Button {
+            toggleFavorite()
+        } label: {
+            Image(systemName: isFavorite ? "star.fill" : "star")
+                .foregroundStyle(isFavorite ? Color.yellow : .secondary)
+        }
+        .accessibilityLabel(isFavorite ? "取消收藏随记" : "收藏随记")
+        .accessibilityIdentifier("thought.favorite.toggle")
+    }
+
+    private func toggleFavorite() {
+        switch target {
+        case .journal(let journal):
+            isFavorite.toggle()
+            do {
+                try JournalContentService(modelContext: modelContext).setFavorite(journal, isFavorite)
+            } catch {
+                isFavorite.toggle()
+                errorMessage = error.localizedDescription
+            }
+        case .newJournal:
+            isFavorite.toggle()
+            pendingNewJournalFavorite = isFavorite
+        case .timeEntry, .newTimeEntry:
+            break
+        }
+    }
+
+    private func applyPendingFavoriteToNewJournal() {
+        guard pendingNewJournalFavorite,
+              let ownerID = session?.ownerID,
+              let journal = journals.first(where: { $0.id == ownerID }) else { return }
+        do {
+            try JournalContentService(modelContext: modelContext).setFavorite(journal, true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func cancel() {
         Task {
             do {
@@ -307,6 +416,7 @@ struct RichCardContentEditorSheet: View {
         Task {
             do {
                 try await session.save()
+                applyPendingFavoriteToNewJournal()
                 dismiss()
             } catch {
                 isSaving = false

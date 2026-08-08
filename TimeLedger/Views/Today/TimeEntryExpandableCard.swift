@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TimeEntryExpandableCard: View {
+    @Environment(\.modelContext) private var modelContext
+
     let entry: TimeEntry
     let documents: [ContentDocument]
     let journals: [JournalEntry]
@@ -12,6 +14,7 @@ struct TimeEntryExpandableCard: View {
 
     @State private var isExpanded = false
     @State private var selectedMedia: MediaMoment?
+    @State private var errorMessage: String?
 
     init(
         entry: TimeEntry,
@@ -52,23 +55,7 @@ struct TimeEntryExpandableCard: View {
                 }
             }
 
-            if contentSummary != nil || SystemProject.isUnknownEntry(entry) || !actionTitles.isEmpty {
-                HStack(spacing: 8) {
-                    if let contentSummary {
-                        Text(contentSummary)
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.secondary)
-                    }
-                    if SystemProject.isUnknownEntry(entry) {
-                        badge("待选项目", color: .orange)
-                    }
-                    if let actionSummary {
-                        Text(actionSummary)
-                            .font(TLTheme.metaFont)
-                            .foregroundStyle(.blue)
-                    }
-                }
-            }
+            summaryRow
 
             if isExpanded {
                 Divider()
@@ -82,40 +69,96 @@ struct TimeEntryExpandableCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("timeEntry.card.\(entry.entryStatus.rawValue)")
         .fullScreenCover(item: $selectedMedia) { MediaViewer(moment: $0) }
+        .alert("操作失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: TimelineCardActionMetrics.spacing) {
-            Button(action: toggleExpansion) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.projectNameSnapshot)
-                        .font(TLTheme.projectNameFont)
-                        .foregroundStyle(SystemProject.isUnknownEntry(entry) ? .orange : .primary)
-                        .lineLimit(1)
-                    Text(timeRangeText)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "收起详情 \(entry.projectNameSnapshot)" : "展开详情 \(entry.projectNameSnapshot)")
-            .accessibilityIdentifier("timeEntry.body.\(entry.id.uuidString)")
-
-            Button(action: toggleExpansion) {
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.caption.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.projectNameSnapshot)
+                    .font(TLTheme.projectNameFont)
+                    .foregroundStyle(SystemProject.isUnknownEntry(entry) ? .orange : .primary)
+                    .lineLimit(1)
+                Text(timeRangeText)
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 44, minHeight: 44)
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             VisibleEditButton(
                 accessibilityLabel: "编辑 \(entry.projectNameSnapshot)",
                 accessibilityIdentifier: "timeEntry.edit.\(entry.id.uuidString)",
                 action: onEdit
             )
+        }
+    }
+
+    @ViewBuilder
+    private var summaryRow: some View {
+        if canExpand {
+            Button(action: toggleExpansion) {
+                HStack(spacing: 8) {
+                    if let contentSummary {
+                        summaryLabels(contentSummary)
+                    }
+                    if SystemProject.isUnknownEntry(entry) {
+                        badge("待选项目", color: .orange)
+                    }
+                    if let actionSummary {
+                        Text(actionSummary)
+                            .font(TLTheme.metaFont)
+                            .foregroundStyle(.blue)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "收起详情 \(entry.projectNameSnapshot)" : "展开详情 \(entry.projectNameSnapshot)")
+            .accessibilityIdentifier("timeEntry.body.\(entry.id.uuidString)")
+        } else {
+            if contentSummary != nil || SystemProject.isUnknownEntry(entry) || !actionTitles.isEmpty {
+                HStack(spacing: 8) {
+                    if let contentSummary {
+                        summaryLabels(contentSummary)
+                    }
+                    if SystemProject.isUnknownEntry(entry) {
+                        badge("待选项目", color: .orange)
+                    }
+                    if let actionSummary {
+                        Text(actionSummary)
+                            .font(TLTheme.metaFont)
+                            .foregroundStyle(.blue)
+                    }
+                }
+            }
+        }
+    }
+
+    private func summaryLabels(_ summary: String) -> some View {
+        let parts = summary.components(separatedBy: " · ")
+        return HStack(spacing: 8) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                if part.hasPrefix("随记") {
+                    Label(part, systemImage: "note.text")
+                        .font(TLTheme.metaFont)
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text(part)
+                        .font(TLTheme.metaFont)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -140,6 +183,7 @@ struct TimeEntryExpandableCard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
+                        favoriteButton(for: journal)
                         VisibleEditButton(
                             accessibilityLabel: "编辑关联随记",
                             accessibilityIdentifier: "timeEntry.journal.edit",
@@ -161,7 +205,6 @@ struct TimeEntryExpandableCard: View {
                     }
                 }
                 .padding(.vertical, 3)
-                .accessibilityIdentifier("timeEntry.journal.card")
             }
 
             if !actionTitles.isEmpty {
@@ -179,6 +222,25 @@ struct TimeEntryExpandableCard: View {
         }
     }
 
+    private func favoriteButton(for journal: JournalEntry) -> some View {
+        Button {
+            do {
+                try JournalContentService(modelContext: modelContext).setFavorite(journal, !journal.isFavorite)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        } label: {
+            Image(systemName: journal.isFavorite ? "star.fill" : "star")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(journal.isFavorite ? Color.yellow : .secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(journal.isFavorite ? "取消收藏随记" : "收藏随记")
+        .accessibilityIdentifier("timeEntry.journal.favorite")
+    }
+
     private var entryDocument: ContentDocument? {
         documents.first { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }
     }
@@ -190,6 +252,10 @@ struct TimeEntryExpandableCard: View {
     private var entryMedia: [MediaMoment] {
         guard let id = entryDocument?.id else { return [] }
         return media(documentID: id)
+    }
+
+    private var canExpand: Bool {
+        contentSummary != nil || SystemProject.isUnknownEntry(entry) || !actionTitles.isEmpty
     }
 
     private func body(for journal: JournalEntry) -> String {

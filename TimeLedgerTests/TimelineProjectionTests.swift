@@ -192,6 +192,34 @@ struct TimelineProjectionTests {
         #expect(records.filter { TimelineTypeMode.thoughts.matches($0) }.map(\.kind) == [.thought])
         #expect(records.filter { TimelineTypeMode.merged.matches($0) }.count == 2)
     }
+
+    @Test func favoriteFilterMatchesFavoritedJournal() {
+        var fixture = Fixture()
+        let journal = fixture.addJournal(body: "收藏随记")
+        journal.isFavorite = true
+
+        let record = fixture.records().first
+        #expect(record?.kind == .thought)
+        #expect(TimelineContentFilter.favorite.matches(record!))
+    }
+
+    @Test func favoriteFilterDoesNotMatchUnfavoritedJournal() {
+        var fixture = Fixture()
+        _ = fixture.addJournal(body: "普通随记")
+
+        let record = fixture.records().first
+        #expect(record?.kind == .thought)
+        #expect(!TimelineContentFilter.favorite.matches(record!))
+    }
+
+    @Test func favoriteFilterDoesNotMatchNoteRecord() {
+        var fixture = Fixture()
+        _ = fixture.addEntry(body: "时间记录")
+
+        let record = fixture.records().first
+        #expect(record?.kind == .note)
+        #expect(!TimelineContentFilter.favorite.matches(record!))
+    }
 }
 
 @MainActor

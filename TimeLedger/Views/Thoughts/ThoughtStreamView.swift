@@ -324,6 +324,7 @@ private extension TimelineContentFilter {
         case .text: "文字"
         case .photos: "照片"
         case .videos: "视频"
+        case .favorite: "收藏"
         }
     }
 
@@ -332,6 +333,7 @@ private extension TimelineContentFilter {
         case .text: "text.alignleft"
         case .photos: "photo"
         case .videos: "video"
+        case .favorite: "star"
         }
     }
 }

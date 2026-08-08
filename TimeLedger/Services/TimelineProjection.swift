@@ -67,6 +67,7 @@ enum TimelineContentFilter: String, CaseIterable, Hashable, Identifiable {
     case text
     case photos
     case videos
+    case favorite
 
     var id: String { rawValue }
 
@@ -78,6 +79,8 @@ enum TimelineContentFilter: String, CaseIterable, Hashable, Identifiable {
             record.hasPhoto
         case .videos:
             record.hasVideo
+        case .favorite:
+            record.journal?.isFavorite == true
         }
     }
 
