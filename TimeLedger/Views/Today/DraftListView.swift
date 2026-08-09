@@ -19,8 +19,7 @@ struct DraftListView: View {
 
     @State private var errorMessage: String?
     @State private var deleteTarget: TimeEntry?
-    @State private var editingEntry: TimeEntry?
-    @State private var editingJournal: JournalEntry?
+    @State private var activeSheet: TimelineSheet?
 
     var body: some View {
         Group {
@@ -47,10 +46,10 @@ struct DraftListView: View {
                                                 contentAttachments: allContentAttachments,
                                                 actionTitles: actionTitles(for: entry),
                                                 onEditJournal: { journal in
-                                                    editingJournal = journal
+                                                    activeSheet = .editJournal(journal)
                                                 },
                                                 onEdit: {
-                                                    editingEntry = entry
+                                                    activeSheet = .editEntry(entry)
                                                 }
                                             )
                                         } onDelete: {
@@ -82,13 +81,18 @@ struct DraftListView: View {
                 .accessibilityIdentifier("draft.scroll")
             }
         }
-        .sheet(item: $editingEntry) { entry in
-            NavigationStack {
-                TimeEntryEditView(entry: entry)
+        // 时间线 tab 上多 sheet 抢同一个视图的坑，DraftListView 一并修。
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .editEntry(let entry):
+                NavigationStack {
+                    TimeEntryEditorView(mode: .edit(entry: entry))
+                }
+            case .editJournal(let journal):
+                RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
+            default:
+                EmptyView()
             }
-        }
-        .sheet(item: $editingJournal) { journal in
-            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
         .alert("删除这条待确认记录？", isPresented: Binding(
             get: { deleteTarget != nil },

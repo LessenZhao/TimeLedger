@@ -12,8 +12,7 @@ struct ConfirmedListView: View {
     @Query private var allActionCompletions: [ActionCompletion]
 
     @State private var selectedDate = Date()
-    @State private var editingEntry: TimeEntry?
-    @State private var editingJournal: JournalEntry?
+    @State private var activeSheet: TimelineSheet?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,10 +79,10 @@ struct ConfirmedListView: View {
                                 contentAttachments: allContentAttachments,
                                 actionTitles: actionTitles(for: entry),
                                 onEditJournal: { journal in
-                                    editingJournal = journal
+                                    activeSheet = .editJournal(journal)
                                 },
                                 onEdit: {
-                                    editingEntry = entry
+                                    activeSheet = .editEntry(entry)
                                 }
                             )
                         }
@@ -93,13 +92,18 @@ struct ConfirmedListView: View {
                 }
             }
         }
-        .sheet(item: $editingEntry) { entry in
-            NavigationStack {
-                TimeEntryEditView(entry: entry)
+        // 时间线 tab 上多 sheet 抢同一个视图的坑，ConfirmedListView 一并修。
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .editEntry(let entry):
+                NavigationStack {
+                    TimeEntryEditorView(mode: .edit(entry: entry))
+                }
+            case .editJournal(let journal):
+                RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
+            default:
+                EmptyView()
             }
-        }
-        .sheet(item: $editingJournal) { journal in
-            RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
         }
     }
 

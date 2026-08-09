@@ -501,6 +501,7 @@ struct TimelineMediaGrid: View {
         .frame(maxWidth: .infinity)
         .aspectRatio(aspectRatio, contentMode: .fit)
         .clipped()
+        .contentShape(Rectangle())
         .accessibilityLabel(moment.kind == .photo ? "查看照片" : "查看视频")
     }
 }

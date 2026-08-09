@@ -228,8 +228,38 @@ struct TimeLedgerTests {
 
         try service.undoLastEntry()
 
-        #expect(try service.getOrCreateCursor().cursorAt == start)
-        #expect(!(try service.canUndoLastEntry()))
+       #expect(try service.getOrCreateCursor().cursorAt == start)
+       #expect(!(try service.canUndoLastEntry()))
+   }
+
+    @Test func undoAfterSecondRecordTargetsLatestNotFirst() throws {
+        /// 探针：验证 undoLastEntry() 总是撤销 createdAt 最新的草稿，
+        /// 而非提示条弹出的那条。若 toast 未绑定具体 entry 引用，
+        /// 在记录第二条后按撤销会删错记录。
+        let container = try makeContainer()
+        let context = ModelContext(container)
+        let service = TimeCursorService(modelContext: context)
+        let start = Date(timeIntervalSince1970: 1_000)
+        let mid = Date(timeIntervalSince1970: 1_600)
+        let end = Date(timeIntervalSince1970: 2_200)
+        let project = Project(name: "测试", categoryName: "工作")
+
+        context.insert(project)
+        _ = try service.getOrCreateCursor(now: start)
+
+        let entryA = try service.quickRecord(project: project, now: mid)
+        #expect(try service.canUndoLastEntry())
+
+        _ = try service.quickRecord(project: project, now: end)
+        #expect(try service.canUndoLastEntry())
+
+        try service.undoLastEntry()
+
+        let remaining = try context.fetch(FetchDescriptor<TimeEntry>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.id == entryA.id)
+        #expect(remaining.first?.status == TimeEntryStatus.draft.rawValue)
+        #expect(try service.getOrCreateCursor().cursorAt == mid)
     }
 
     @Test func timeSummaryCountsProjectDurationForToday() throws {

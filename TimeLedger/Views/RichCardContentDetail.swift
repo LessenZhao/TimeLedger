@@ -183,7 +183,7 @@ struct TimeEntryDetailView: View {
         }
         .sheet(isPresented: $showingRecordEditor) {
             NavigationStack {
-                TimeEntryEditView(entry: entry)
+                TimeEntryEditorView(mode: .edit(entry: entry))
             }
         }
         .sheet(isPresented: $showingAddThought) {

@@ -34,6 +34,7 @@ struct TimeEntryNoteCard: View {
                     action: onEdit
                 )
             }
+            .zIndex(1)
 
             if let entry = record.linkedEntry {
                 Text(entry.projectNameSnapshot)

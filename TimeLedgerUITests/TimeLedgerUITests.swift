@@ -523,6 +523,53 @@ final class TimeLedgerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPhotoOnlyTimeEntryEditDoesNotOpenPhotoViewer() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ui-testing",
+            "-ui-unified-content-fixture",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL"
+        ]
+        app.launch()
+
+        app.tabBars.buttons["时间线"].tap()
+        let typeMode = app.segmentedControls["timeline.typeMode.picker"]
+        XCTAssertTrue(typeMode.waitForExistence(timeout: 3))
+        typeMode.buttons["时间记录"].tap()
+        let project = app.staticTexts["Fixture 纯图片时间记录"]
+        XCTAssertTrue(
+            project.waitForExistence(timeout: 3),
+            "纯图片时间记录必须出现在时间记录时间线"
+        )
+
+        let edit = try XCTUnwrap(
+            app.buttons.matching(identifier: "timeline.note.edit")
+                .allElementsBoundByIndex
+                .min { abs($0.frame.midY - project.frame.minY) < abs($1.frame.midY - project.frame.minY) }
+        )
+        let photo = try XCTUnwrap(
+            app.buttons.matching(NSPredicate(format: "label == %@", "查看照片"))
+                .allElementsBoundByIndex
+                .min { abs($0.frame.midY - project.frame.maxY) < abs($1.frame.midY - project.frame.maxY) }
+        )
+        XCTAssertFalse(
+            edit.frame.intersects(photo.frame),
+            "纯图片时间记录的编辑与照片命中框不能重叠: edit=\(edit.frame), photo=\(photo.frame)"
+        )
+        edit.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)).tap()
+
+        XCTAssertTrue(
+            app.navigationBars["编辑记录"].waitForExistence(timeout: 3),
+            "点纯图片时间记录的编辑按钮应进入编辑记录"
+        )
+        XCTAssertFalse(
+            app.navigationBars["照片"].waitForExistence(timeout: 2),
+            "编辑记录出现后不应再被照片查看页覆盖"
+        )
+    }
+
+    @MainActor
     func testTimelineEditsNoteAndThoughtCardsImmediately() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-ui-media-fixture"]

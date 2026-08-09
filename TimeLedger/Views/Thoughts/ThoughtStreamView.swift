@@ -1,6 +1,23 @@
 import SwiftData
 import SwiftUI
 
+/// 时间线 tab 上唯一一个弹层入口，避免 SwiftUI 多个 `.sheet` 互相抢同一个视图。
+enum TimelineSheet: Identifiable {
+    case captureThought
+    case filter
+    case editEntry(TimeEntry)
+    case editJournal(JournalEntry)
+
+    var id: String {
+        switch self {
+        case .captureThought: "captureThought"
+        case .filter: "filter"
+        case .editEntry(let entry): "editEntry-\(entry.id.uuidString)"
+        case .editJournal(let journal): "editJournal-\(journal.id.uuidString)"
+        }
+    }
+}
+
 struct ThoughtStreamView: View {
     @Query(sort: \JournalEntry.capturedAt, order: .reverse) private var journals: [JournalEntry]
     @Query private var documents: [ContentDocument]
@@ -10,11 +27,8 @@ struct ThoughtStreamView: View {
     @Query private var entries: [TimeEntry]
 
     @AppStorage("timeline.typeMode") private var typeModeRaw: String = TimelineTypeMode.merged.rawValue
-    @State private var showingThoughtCapture = false
-    @State private var showingFilter = false
     @State private var selectedFilters: Set<TimelineContentFilter> = []
-    @State private var editingEntry: TimeEntry?
-    @State private var editingJournal: JournalEntry?
+    @State private var activeSheet: TimelineSheet?
 
     private var typeMode: TimelineTypeMode {
         TimelineTypeMode(rawValue: typeModeRaw) ?? .merged
@@ -67,28 +81,29 @@ struct ThoughtStreamView: View {
             .navigationTitle("时间线")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingThoughtCapture = true
+               ToolbarItem(placement: .topBarTrailing) {
+                   Button {
+                       activeSheet = .captureThought
                     } label: {
                         Image(systemName: "lightbulb.fill")
                     }
                     .accessibilityLabel("快速想法")
                 }
             }
-            .sheet(isPresented: $showingThoughtCapture) {
-                ThoughtComposerSheet()
-            }
-            .sheet(isPresented: $showingFilter) {
-                TimelineFilterSheet(selectedFilters: $selectedFilters)
-            }
-            .sheet(item: $editingEntry) { entry in
-                NavigationStack {
-                    TimeEntryEditView(entry: entry)
+           // 合并到一个 .sheet(item:) 上，避免 SwiftUI 同视图多 sheet 互相打架（历史上编辑页经常被前面几个 sheet 抢掉）。
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .captureThought:
+                    ThoughtComposerSheet()
+                case .filter:
+                    TimelineFilterSheet(selectedFilters: $selectedFilters)
+                case .editEntry(let entry):
+                    NavigationStack {
+                        TimeEntryEditorView(mode: .edit(entry: entry))
+                    }
+                case .editJournal(let journal):
+                    RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
                 }
-            }
-            .sheet(item: $editingJournal) { journal in
-                RichCardContentEditorSheet(target: .journal(journal), title: "编辑随记")
             }
         }
     }
@@ -114,7 +129,7 @@ struct ThoughtStreamView: View {
 
     private func filterSummary(recordsCount: Int) -> some View {
         Button {
-            showingFilter = true
+            activeSheet = .filter
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: selectedFilters.isEmpty
@@ -172,7 +187,7 @@ struct ThoughtStreamView: View {
                 record: record,
                 onEdit: {
                     if let entry = record.linkedEntry {
-                        editingEntry = entry
+                        activeSheet = .editEntry(entry)
                     }
                 }
             )
@@ -187,7 +202,7 @@ struct ThoughtStreamView: View {
                     displayEndAt: record.displayEndAt,
                     isRelatedToNote: record.isRelatedToNote,
                     onEdit: {
-                        editingJournal = journal
+                        activeSheet = .editJournal(journal)
                     }
                 )
             }

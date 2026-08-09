@@ -11,7 +11,8 @@ struct TodayView: View {
 
     @State private var now = Date()
     @State private var errorMessage: String?
-    @State private var canUndo = false
+    @State private var undoToast: UndoToastInfo?
+    @State private var statusBarExpanded = false
     @State private var adjustmentProject: Project?
     @State private var selectedView = 0
     @State private var showingThoughtCapture = false
@@ -19,6 +20,8 @@ struct TodayView: View {
     @State private var showingAddProject = false
     @State private var showingCamera = false
     @State private var showingCameraFixture = false
+    @State private var undoToastTask: Task<Void, Never>?
+    @State private var expandTask: Task<Void, Never>?
     @State private var pendingCameraCapture: CameraCapture?
     @State private var cameraAccessResult: CameraAccessResult?
     @State private var actionItemAwaitingNewCycle: ActionItem?
@@ -68,22 +71,17 @@ struct TodayView: View {
             Text("会保留之前的完成记录，并让这个事项恢复为待完成。")
         }
         .sheet(item: $adjustmentProject) { project in
-            TimeAdjustmentSheet(
-                project: project,
-                cursorAt: currentCursorAt(),
-                defaultEndAt: now,
-                saveAction: { startAt, endAt, note in
-                    try saveAdjustedSegment(
-                        project: project,
-                        startAt: startAt,
-                        endAt: endAt,
-                        note: note
-                    )
-                },
-                skipAction: { endAt in
-                    try skipSegment(to: endAt)
-                }
-            )
+            NavigationStack {
+                TimeEntryEditorView(
+                    mode: .create(project: project, cursorAt: currentCursorAt(), defaultEndAt: now),
+                    saveAction: { startAt, endAt, note in
+                        try saveAdjustedSegment(project: project, startAt: startAt, endAt: endAt, note: note)
+                    },
+                    skipAction: { endAt in
+                        try skipSegment(to: endAt)
+                    }
+                )
+            }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
@@ -134,26 +132,16 @@ struct TodayView: View {
         }
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 0) {
-            Button("撤销", action: undoLastEntry)
-                .font(TLTheme.statusFont)
-                .disabled(!canUndo)
+   private var statusBar: some View {
+       HStack(spacing: 0) {
+            Color.clear
                 .frame(width: 64, alignment: .leading)
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 5) {
-                Text("未记录")
-                    .foregroundStyle(.secondary)
-                Text(DurationFormatter.compact(unclassifiedDuration))
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-            }
-            .font(TLTheme.statusFont)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            centerStatus
+                .contentShape(Rectangle())
+                .onTapGesture { handleStatusBarTap() }
 
             Spacer(minLength: 0)
 
@@ -176,7 +164,7 @@ struct TodayView: View {
         .padding(.horizontal, 12)
     }
 
-    private var segmentBar: some View {
+   private var segmentBar: some View {
         Picker("视图", selection: $selectedView) {
             Text("项目").tag(0)
             Text("待确认").tag(1)
@@ -396,86 +384,133 @@ struct TodayView: View {
         .padding(.top, 32)
     }
 
-    private var unclassifiedDuration: TimeInterval {
-        (try? TimeCursorService(modelContext: modelContext).currentUnclassifiedDuration(now: now)) ?? 0
+   private var unclassifiedDuration: TimeInterval {
+       (try? TimeCursorService(modelContext: modelContext).currentUnclassifiedDuration(now: now)) ?? 0
+    }
+
+    @ViewBuilder
+    private var centerStatus: some View {
+        if let toast = undoToast {
+            HStack(spacing: 5) {
+                Text(toast.projectName)
+                    .foregroundStyle(.primary)
+                Text("·")
+                    .foregroundStyle(.secondary)
+                Text(DurationFormatter.compact(toast.duration))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                Text("·")
+                    .foregroundStyle(.secondary)
+               Text("撤销")
+                    .foregroundStyle(Color.accentColor)
+                   .fontWeight(.semibold)
+            }
+            .font(TLTheme.statusFont)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        } else if statusBarExpanded {
+            HStack(spacing: 5) {
+                Text("从 \(DateFormatterFactory.timeOnly.string(from: cursorStartAt)) 起")
+                    .foregroundStyle(.secondary)
+                if let last = lastEntryBeforeCursor {
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text("上次\(last.projectNameSnapshot)\(DurationFormatter.compact(last.durationSeconds))")
+                        .foregroundStyle(.primary)
+                }
+            }
+            .font(TLTheme.statusFont)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        } else {
+            HStack(spacing: 5) {
+                Text("未记录")
+                    .foregroundStyle(.secondary)
+                Text(DurationFormatter.compact(unclassifiedDuration))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+            }
+            .font(TLTheme.statusFont)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        }
+    }
+
+    private var cursorStartAt: Date {
+        (try? TimeCursorService(modelContext: modelContext).getOrCreateCursor(now: now).cursorAt) ?? now
+    }
+
+    private var lastEntryBeforeCursor: TimeEntry? {
+        try? TimeCursorService(modelContext: modelContext).lastEntryBeforeCursor()
     }
 
     private func todayDuration(for project: Project) -> TimeInterval {
         (try? TimeSummaryService(modelContext: modelContext).todayDuration(for: project.id, now: now)) ?? 0
     }
 
-    private func bootstrap() {
-        do {
-            _ = try TimeCursorService(modelContext: modelContext).getOrCreateCursor(now: now)
-            _ = try getOrCreateSettings()
-            _ = try ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
-            refreshUndoState()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+   private func bootstrap() {
+       do {
+           _ = try TimeCursorService(modelContext: modelContext).getOrCreateCursor(now: now)
+           _ = try getOrCreateSettings()
+           _ = try ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
+       } catch {
+           errorMessage = error.localizedDescription
+       }
+   }
 
-    private func quickRecord(_ project: Project) {
-        do {
-            let actionNow = Date()
-            now = actionNow
-            let settings = try getOrCreateSettings()
-            let currentDuration = try TimeCursorService(modelContext: modelContext)
-                .currentUnclassifiedDuration(now: actionNow)
+   private func quickRecord(_ project: Project) {
+       do {
+           let actionNow = Date()
+           now = actionNow
+           let settings = try getOrCreateSettings()
+           let currentDuration = try TimeCursorService(modelContext: modelContext)
+               .currentUnclassifiedDuration(now: actionNow)
 
-            guard currentDuration <= TimeInterval(settings.longUnclassifiedThresholdMinutes * 60) else {
-                openAdjustment(for: project)
-                return
-            }
+           guard currentDuration <= TimeInterval(settings.longUnclassifiedThresholdMinutes * 60) else {
+               openAdjustment(for: project)
+               return
+           }
 
-            _ = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: actionNow)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            now = Date()
-            refreshUndoState()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+            let entry = try TimeCursorService(modelContext: modelContext).quickRecord(project: project, now: actionNow)
+           UIImpactFeedbackGenerator(style: .light).impactOccurred()
+           now = Date()
+            showUndoToast(for: entry)
+       } catch {
+           errorMessage = error.localizedDescription
+       }
+   }
 
-    private func openAdjustment(for project: Project) {
-        now = Date()
-        adjustmentProject = project
-    }
+   private func openAdjustment(for project: Project) {
+       now = Date()
+       adjustmentProject = project
+   }
 
-    private func saveAdjustedSegment(
-        project: Project,
-        startAt: Date,
-        endAt: Date,
-        note: String
-    ) throws -> TimeEntry {
-        let entry = try TimeCursorService(modelContext: modelContext).recordSegment(
-            project: project,
-            startAt: startAt,
-            endAt: endAt,
-            note: note,
-            now: Date()
-        )
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        refreshUndoState()
-        now = Date()
-        return entry
-    }
+   private func saveAdjustedSegment(
+       project: Project,
+       startAt: Date,
+       endAt: Date,
+       note: String
+   ) throws -> TimeEntry {
+       let entry = try TimeCursorService(modelContext: modelContext).recordSegment(
+           project: project,
+           startAt: startAt,
+           endAt: endAt,
+           note: note,
+           now: Date()
+       )
+       UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showUndoToast(for: entry)
+       now = Date()
+       return entry
+   }
 
-    private func skipSegment(to endAt: Date) throws {
-        try TimeCursorService(modelContext: modelContext).skipSegment(to: endAt)
-        refreshUndoState()
-        now = Date()
-    }
-
-    private func undoLastEntry() {
-        do {
-            try TimeCursorService(modelContext: modelContext).undoLastEntry()
-            refreshUndoState()
-            now = Date()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+   private func skipSegment(to endAt: Date) throws {
+       try TimeCursorService(modelContext: modelContext).skipSegment(to: endAt)
+        cancelUndoToast()
+       now = Date()
+   }
 
     private func confirmDrafts() {
         do {
@@ -490,8 +525,66 @@ struct TodayView: View {
         }
     }
 
-    private func refreshUndoState() {
-        canUndo = ((try? TimeCursorService(modelContext: modelContext).canUndoLastEntry()) ?? false)
+    // MARK: - Status bar state machine
+
+    private func handleStatusBarTap() {
+        if undoToast != nil {
+            performUndo()
+        } else if statusBarExpanded {
+            collapseStatusBar()
+        } else {
+            expandStatusBar()
+        }
+    }
+
+    private func showUndoToast(for entry: TimeEntry) {
+        cancelUndoToast()
+        collapseStatusBar()
+        let duration = entry.endAt.timeIntervalSince(entry.startAt)
+        undoToast = UndoToastInfo(
+            entryId: entry.id,
+            projectName: entry.projectNameSnapshot,
+            duration: duration
+        )
+        undoToastTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if !Task.isCancelled {
+                await MainActor.run { cancelUndoToast() }
+            }
+        }
+    }
+
+    private func cancelUndoToast() {
+        undoToast = nil
+        undoToastTask?.cancel()
+        undoToastTask = nil
+    }
+
+    private func performUndo() {
+        guard let toast = undoToast else { return }
+        do {
+            try TimeCursorService(modelContext: modelContext).undoLastEntry(expectedId: toast.entryId)
+            cancelUndoToast()
+            now = Date()
+        } catch {
+            cancelUndoToast()
+        }
+    }
+
+    private func expandStatusBar() {
+        statusBarExpanded = true
+        expandTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if !Task.isCancelled {
+                await MainActor.run { collapseStatusBar() }
+            }
+        }
+    }
+
+    private func collapseStatusBar() {
+        statusBarExpanded = false
+        expandTask?.cancel()
+        expandTask = nil
     }
 
     private func getOrCreateSettings() throws -> AppSettings {
@@ -558,3 +651,9 @@ let previewModelContainer: ModelContainer = {
     let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
     return try! ModelContainer(for: schema, configurations: [configuration])
 }()
+
+private struct UndoToastInfo {
+    let entryId: UUID
+    let projectName: String
+    let duration: TimeInterval
+}

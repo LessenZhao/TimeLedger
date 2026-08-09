@@ -19,26 +19,10 @@ struct MediaViewer: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let image {
-                    GeometryReader { proxy in
-                        let fittedSize = MediaViewerLayout.fittedSize(
-                            imageSize: image.size,
-                            viewportSize: proxy.size
-                        )
-
-                        ZStack {
-                            Color.black
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(
-                                    width: fittedSize.width,
-                                    height: fittedSize.height
-                                )
-                        }
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                    }
-                } else if let player {
+           if let image {
+                    ZoomableImageView(image: image)
+                        .ignoresSafeArea()
+              } else if let player {
                     VideoPlayer(player: player)
                         .background(Color.black)
                         .onAppear { player.play() }

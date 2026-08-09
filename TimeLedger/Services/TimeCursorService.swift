@@ -147,12 +147,16 @@ struct TimeCursorService {
         return last.status == TimeEntryStatus.draft.rawValue && last.endAt == cursor.cursorAt
     }
 
-    func undoLastEntry() throws {
+    func undoLastEntry(expectedId: UUID? = nil) throws {
         let cursor = try getOrCreateCursor()
         guard let last = try lastCreatedEntry(),
               last.status == TimeEntryStatus.draft.rawValue,
               last.endAt == cursor.cursorAt
         else {
+            throw TimeCursorError.cannotUndo
+        }
+
+        if let expectedId, last.id != expectedId {
             throw TimeCursorError.cannotUndo
         }
 
@@ -163,6 +167,14 @@ struct TimeCursorService {
         try modelContext.save()
         _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
         reconcileActionLinks()
+    }
+
+    func lastEntryBeforeCursor() throws -> TimeEntry? {
+        let cursor = try getOrCreateCursor()
+        let entries = try modelContext.fetch(
+            FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.endAt, order: .reverse)])
+        )
+        return entries.first { $0.endAt <= cursor.cursorAt }
     }
 
     func updateEntry(

@@ -40,6 +40,7 @@ struct UITestFixtureService {
 
         let draftProject = Project(name: "Fixture 草稿项目", categoryName: "测试")
         let confirmedProject = Project(name: "Fixture 已确认项目", categoryName: "测试")
+        let photoOnlyEntryProject = Project(name: "Fixture 纯图片时间记录", categoryName: "测试")
         let draft = TimeEntry(
             projectId: draftProject.id,
             projectNameSnapshot: draftProject.name,
@@ -54,6 +55,14 @@ struct UITestFixtureService {
             categoryNameSnapshot: confirmedProject.categoryName,
             startAt: confirmedStart,
             endAt: confirmedEnd,
+            status: .confirmed
+        )
+        let photoOnlyEntry = TimeEntry(
+            projectId: photoOnlyEntryProject.id,
+            projectNameSnapshot: photoOnlyEntryProject.name,
+            categoryNameSnapshot: photoOnlyEntryProject.categoryName,
+            startAt: now.addingTimeInterval(300),
+            endAt: now.addingTimeInterval(360),
             status: .confirmed
         )
         let longBody = Array(
@@ -125,6 +134,15 @@ struct UITestFixtureService {
             status: .saved,
             originalAvailability: .unavailable
         )
+        let photoOnlyEntryMedia = MediaMoment(
+            kind: .photo,
+            capturedAt: photoOnlyEntry.startAt,
+            requestedStorage: .app,
+            storedLocation: .app,
+            thumbnailData: Data(),
+            status: .saved,
+            originalAvailability: .unavailable
+        )
 
         // 7 月 20 日条目：备注照片与条目内思考的真实录入在“今天”，语义时间落在 7 月 20 日
         var julyComponents = calendar.dateComponents([.year], from: now)
@@ -177,9 +195,11 @@ struct UITestFixtureService {
 
         modelContext.insert(draftProject)
         modelContext.insert(confirmedProject)
+        modelContext.insert(photoOnlyEntryProject)
         modelContext.insert(julyProject)
         insertEntry(draft, body: "Fixture 草稿备注")
         insertEntry(confirmed, body: "Fixture 已确认备注")
+        insertEntry(photoOnlyEntry, body: "")
         insertEntry(julyEntry, body: "Fixture 七月备注")
         insertJournal(draftJournal, body: longBody, linkedEntryID: draft.id)
         insertJournal(confirmedJournal, body: "Fixture 已确认思考全文", linkedEntryID: confirmed.id)
@@ -193,12 +213,14 @@ struct UITestFixtureService {
         modelContext.insert(standaloneVideo)
         modelContext.insert(automaticStandalonePhoto)
         modelContext.insert(photoOnlyMedia)
+        modelContext.insert(photoOnlyEntryMedia)
         modelContext.insert(julyNotePhoto)
         modelContext.insert(homePhoto)
         modelContext.insert(homeVideo)
         attach(photo, to: draftJournal.id)
         attach(video, to: confirmedJournal.id)
         attach(photoOnlyMedia, to: photoOnlyJournal.id)
+        attach(photoOnlyEntryMedia, toOwner: photoOnlyEntry.id, kind: .timeEntry)
         attach(standalonePhoto, toOwner: draft.id, kind: .timeEntry)
         attach(standaloneVideo, toOwner: confirmed.id, kind: .timeEntry)
         let automaticMediaJournal = JournalEntry(capturedAt: automaticStandalonePhoto.capturedAt, anchorAt: automaticStandalonePhoto.capturedAt)
