@@ -53,7 +53,9 @@ struct ExportView: View {
                     get: { settings?.exportOnlyConfirmed ?? true },
                     set: { newValue in
                         settings?.exportOnlyConfirmed = newValue
-                        try? modelContext.save()
+                        if let settings {
+                            try? TimeLedgerEngine(modelContext: modelContext).saveAppSettings(settings)
+                        }
                     }
                 ))
 
@@ -159,16 +161,7 @@ struct ExportView: View {
     }
 
     private func loadSettings() {
-        var descriptor = FetchDescriptor<AppSettings>()
-        descriptor.fetchLimit = 1
-        if let existing = try? modelContext.fetch(descriptor).first {
-            settings = existing
-        } else {
-            let newSettings = AppSettings()
-            modelContext.insert(newSettings)
-            try? modelContext.save()
-            settings = newSettings
-        }
+        settings = try? TimeLedgerEngine(modelContext: modelContext).getOrCreateAppSettings()
     }
 
     private func beginExport(_ kind: ExportKind) {

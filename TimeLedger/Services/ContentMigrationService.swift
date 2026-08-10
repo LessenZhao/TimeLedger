@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 import SwiftData
 
@@ -232,7 +233,7 @@ struct ContentMigrationRunner {
                 id: thought.id,
                 journalEntryID: thought.id,
                 timeEntryID: entryID,
-                linkSource: thought.linkSourceEnum,
+                linkSource: JournalLinkSource(rawValue: thought.linkSourceEnum.rawValue) ?? .none,
                 createdAt: thought.createdAt,
                 updatedAt: thought.updatedAt
             ))
@@ -351,9 +352,197 @@ struct ContentMigrationRunner {
     }
 }
 
+/// 旧模型摘要属于迁移实现；生产业务不得读取冻结模型。
+@MainActor
+extension StoreSummaryDigestBuilder {
+    static func legacyDigest(modelContext: ModelContext) throws -> StoreSummaryDigest {
+        var rows: [String] = []
+
+        let projects = try modelContext.fetch(FetchDescriptor<LegacyMigration.Project>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for project in projects {
+            rows.append([
+                "project",
+                project.id.uuidString.lowercased(),
+                hash(project.name),
+                hash(project.categoryName),
+                hash(project.emoji),
+                hash(project.colorHex),
+                String(project.sortOrder),
+                String(project.isArchived),
+                date(project.createdAt),
+                date(project.updatedAt),
+            ].joined(separator: "|"))
+        }
+
+        let entries = try modelContext.fetch(FetchDescriptor<LegacyMigration.TimeEntry>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for entry in entries {
+            rows.append([
+                "timeEntry",
+                entry.id.uuidString.lowercased(),
+                entry.projectId.uuidString.lowercased(),
+                hash(entry.projectNameSnapshot),
+                hash(entry.categoryNameSnapshot),
+                date(entry.startAt),
+                date(entry.endAt),
+                entry.status,
+                hash(entry.note),
+                date(entry.createdAt),
+                date(entry.updatedAt),
+            ].joined(separator: "|"))
+        }
+
+        let thoughts = try modelContext.fetch(FetchDescriptor<LegacyMigration.ThoughtNote>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for thought in thoughts {
+            rows.append([
+                "thought",
+                thought.id.uuidString.lowercased(),
+                date(thought.capturedAt),
+                date(thought.anchorAt),
+                hash(thought.body),
+                optionalID(thought.linkedEntryId),
+                thought.linkSource,
+                date(thought.createdAt),
+                date(thought.updatedAt),
+                "false",
+            ].joined(separator: "|"))
+        }
+
+        let moments = try modelContext.fetch(FetchDescriptor<LegacyMigration.MediaMoment>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        let thoughtLinks = try modelContext.fetch(FetchDescriptor<LegacyMigration.ThoughtMediaLink>())
+        let thoughtLinkByMediaID = Dictionary(
+            uniqueKeysWithValues: thoughtLinks.map { ($0.mediaMomentId, $0) }
+        )
+        for moment in moments {
+            rows.append([
+                "media",
+                moment.id.uuidString.lowercased(),
+                moment.mediaType,
+                date(moment.capturedAt),
+                date(moment.anchorAt),
+                optionalID(moment.linkedEntryId),
+                moment.linkSource,
+                moment.requestedStorage,
+                moment.storedLocation,
+                hash(moment.appRelativePath),
+                hash(moment.photosAssetIdentifier),
+                hash(moment.pendingRelativePath),
+                hash(moment.sourceTemporaryPath),
+                hash(moment.thumbnailData),
+                formatDouble(moment.durationSeconds),
+                moment.status,
+                hash(moment.lastError),
+                moment.originalAvailability,
+                date(moment.createdAt),
+                date(moment.updatedAt),
+            ].joined(separator: "|"))
+
+            if let link = thoughtLinkByMediaID[moment.id] {
+                rows.append([
+                    "mediaAttachment",
+                    moment.id.uuidString.lowercased(),
+                    link.thoughtId.uuidString.lowercased(),
+                    ContentOwnerKind.journalEntry.rawValue,
+                    String(link.sortOrder),
+                ].joined(separator: "|"))
+            } else if moment.linkSource == LegacyMigration.ThoughtLinkSource.manual.rawValue,
+                      let entryID = moment.linkedEntryId {
+                rows.append([
+                    "mediaAttachment",
+                    moment.id.uuidString.lowercased(),
+                    entryID.uuidString.lowercased(),
+                    ContentOwnerKind.timeEntry.rawValue,
+                    "0",
+                ].joined(separator: "|"))
+            } else {
+                rows.append([
+                    "mediaAttachment",
+                    moment.id.uuidString.lowercased(),
+                    moment.id.uuidString.lowercased(),
+                    ContentOwnerKind.journalEntry.rawValue,
+                    "0",
+                ].joined(separator: "|"))
+                rows.append([
+                    "thought",
+                    moment.id.uuidString.lowercased(),
+                    date(moment.capturedAt),
+                    date(moment.anchorAt),
+                    hash(""),
+                    "nil",
+                    LegacyMigration.ThoughtLinkSource.none.rawValue,
+                    date(moment.createdAt),
+                    date(moment.updatedAt),
+                    "false",
+                ].joined(separator: "|"))
+            }
+        }
+
+        let cursors = try modelContext.fetch(FetchDescriptor<LegacyMigration.TimeCursor>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for cursor in cursors {
+            rows.append([
+                "cursor",
+                cursor.id.uuidString.lowercased(),
+                date(cursor.cursorAt),
+                date(cursor.updatedAt),
+            ].joined(separator: "|"))
+        }
+
+        let settings = try modelContext.fetch(FetchDescriptor<LegacyMigration.AppSettings>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for setting in settings {
+            rows.append([
+                "settings",
+                setting.id.uuidString.lowercased(),
+                String(setting.longUnclassifiedThresholdMinutes),
+                String(setting.exportOnlyConfirmed),
+                String(setting.includeDraftInTodaySummary),
+                setting.mediaStoragePreference,
+            ].joined(separator: "|"))
+        }
+
+        let actionItems = try modelContext.fetch(FetchDescriptor<LegacyMigration.ActionItem>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for item in actionItems {
+            rows.append([
+                "actionItem",
+                item.id.uuidString.lowercased(),
+                hash(item.title),
+                String(item.sortOrder),
+                String(item.isArchived),
+                optionalDate(item.activeCycleStartedAt),
+                date(item.createdAt),
+                date(item.updatedAt),
+            ].joined(separator: "|"))
+        }
+
+        let completions = try modelContext.fetch(FetchDescriptor<LegacyMigration.ActionCompletion>())
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        for completion in completions {
+            rows.append([
+                "actionCompletion",
+                completion.id.uuidString.lowercased(),
+                completion.actionItemId.uuidString.lowercased(),
+                hash(completion.actionTitleSnapshot),
+                date(completion.completedAt),
+                date(completion.dayStart),
+                optionalID(completion.linkedEntryId),
+                date(completion.createdAt),
+                date(completion.updatedAt),
+            ].joined(separator: "|"))
+        }
+
+        return makeDigest(rows: rows)
+    }
+}
+
 enum ContentMigrationError: LocalizedError {
     case missingDocument(UUID)
     case invalidDocumentCount(UUID)
+    case incomplete
 
     var errorDescription: String? {
         switch self {
@@ -361,6 +550,8 @@ enum ContentMigrationError: LocalizedError {
             "迁移缺少内容文档：\(id.uuidString)"
         case .invalidDocumentCount(let id):
             "迁移后的内容文档数量无效：\(id.uuidString)"
+        case .incomplete:
+            "内容迁移尚未完成，请重试。"
         }
     }
 }
@@ -374,39 +565,70 @@ enum ContentMigrationOpenResult {
 struct ContentMigrationCoordinator {
     static func open(
         storeURL: URL,
-        backupRootURL: URL
+        backupRootURL: URL,
+        migrationPlan: (any SchemaMigrationPlan.Type)? = nil
     ) -> ContentMigrationOpenResult {
         do {
             _ = try PersistentStoreBackup(
                 storeURL: storeURL,
                 backupRootURL: backupRootURL
             ).createIfNeeded()
-            let schema = Schema(versionedSchema: TimeLedgerSchemaV2.self)
-            let configuration = ModelConfiguration("TimeLedger", schema: schema, url: storeURL)
-            let container: ModelContainer
-            do {
-                container = try ModelContainer(
-                    for: schema,
-                    migrationPlan: TimeLedgerMigrationPlan.self,
-                    configurations: [configuration]
-                )
-            } catch {
-                // Existing V2 stores may have a compatible model change that the
-                // staged migration manager no longer recognizes by version hash.
-                container = try ModelContainer(
-                    for: schema,
-                    configurations: [configuration]
+            if try storeVersionIdentifier(at: storeURL) != TimeLedgerSchemaV3.versionIdentifier {
+                try migrateContentThroughV2(
+                    storeURL: storeURL,
+                    migrationPlan: migrationPlan ?? TimeLedgerMigrationPlan.self
                 )
             }
-            let result = try ContentMigrationRunner(
-                modelContext: ModelContext(container)
-            ).run()
-            guard result.isComplete else {
-                return .blocked("内容迁移尚未完成，请重试。")
-            }
-            return .ready(container)
+            return .ready(try openV3(storeURL: storeURL))
         } catch {
-            return .blocked(error.localizedDescription)
+            return .blocked(
+                "迁移中止：数据库无法按迁移计划升级，已停止打开。"
+                    + "备份位于 \(backupRootURL.path)，请勿删除；可先恢复备份后重试。"
+                    + "原因：\(error.localizedDescription)"
+            )
         }
+    }
+
+    private static func storeVersionIdentifier(at storeURL: URL) throws -> Schema.Version? {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return nil }
+        let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+            type: .sqlite,
+            at: storeURL
+        )
+        guard let identifiers = metadata[NSStoreModelVersionIdentifiersKey] as? [String],
+              let identifier = identifiers.first
+        else { return nil }
+        let components = identifier.split(separator: ".").compactMap { Int($0) }
+        guard components.count == 3 else { return nil }
+        return Schema.Version(components[0], components[1], components[2])
+    }
+
+    private static func migrateContentThroughV2(
+        storeURL: URL,
+        migrationPlan: any SchemaMigrationPlan.Type
+    ) throws {
+        let schema = Schema(versionedSchema: TimeLedgerSchemaV2.self)
+        let configuration = ModelConfiguration("TimeLedger", schema: schema, url: storeURL)
+        let container = try ModelContainer(
+            for: schema,
+            migrationPlan: migrationPlan,
+            configurations: [configuration]
+        )
+        let result = try ContentMigrationRunner(
+            modelContext: ModelContext(container)
+        ).run()
+        guard result.isComplete else {
+            throw ContentMigrationError.incomplete
+        }
+    }
+
+    private static func openV3(storeURL: URL) throws -> ModelContainer {
+        let schema = Schema(versionedSchema: TimeLedgerSchemaV3.self)
+        let configuration = ModelConfiguration("TimeLedger", schema: schema, url: storeURL)
+        return try ModelContainer(
+            for: schema,
+            migrationPlan: TimeLedgerMigrationPlan.self,
+            configurations: [configuration]
+        )
     }
 }

@@ -6,6 +6,13 @@ enum ContentOwnerKind: String, CaseIterable, Codable, Sendable {
     case journalEntry
 }
 
+/// V3 内容模型的链接来源枚举，替代旧 ThoughtLinkSource。
+enum JournalLinkSource: String, CaseIterable, Codable, Sendable {
+    case none
+    case auto
+    case manual
+}
+
 @Model
 final class ContentDocument {
     @Attribute(.unique) var id: UUID
@@ -84,7 +91,7 @@ final class JournalTimeLink {
         id: UUID = UUID(),
         journalEntryID: UUID,
         timeEntryID: UUID,
-        linkSource: ThoughtLinkSource,
+        linkSource: JournalLinkSource,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {

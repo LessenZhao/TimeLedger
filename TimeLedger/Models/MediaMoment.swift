@@ -1,3 +1,11 @@
+/// 用于标记旧字段 linkedEntryId/linkSource 的关联来源。
+/// V3 中媒体归属由 ContentAttachment 表达，此枚举仅用于迁移兼容。
+enum ThoughtLinkSource: String, CaseIterable {
+    case none
+    case auto
+    case manual
+}
+
 import Foundation
 import SwiftData
 

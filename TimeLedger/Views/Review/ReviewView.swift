@@ -24,7 +24,7 @@ struct ReviewView: View {
 
                 if let summary {
                     ScrollView {
-                        LazyVStack(spacing: 16) {
+                        VStack(spacing: 16) {
                             if summary.pendingCount > 0 {
                                 pendingBanner(summary)
                             }

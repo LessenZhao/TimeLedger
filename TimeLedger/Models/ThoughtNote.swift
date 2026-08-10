@@ -1,11 +1,6 @@
 import Foundation
 import SwiftData
 
-enum ThoughtLinkSource: String, CaseIterable {
-    case none
-    case auto
-    case manual
-}
 
 @Model
 final class ThoughtNote {

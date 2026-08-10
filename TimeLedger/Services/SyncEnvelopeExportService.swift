@@ -1,3 +1,4 @@
+import EvolutionCore
 import Foundation
 import SwiftData
 
@@ -7,17 +8,13 @@ nonisolated struct PreparedSyncExport: Sendable {
     let thoughtCount: Int
 }
 
-/// File-exchange SyncBatch (matches EvolutionCore SyncBatchFile schema). No SQLite copy.
+/// File-exchange SyncBatch via EvolutionCore typed DTOs. No SQLite copy.
 nonisolated struct SyncEnvelopeExportService {
     let modelContext: ModelContext
     var deviceId: String
-    private let dateFormatter: ISO8601DateFormatter
 
     init(modelContext: ModelContext, deviceId: String? = nil) {
         self.modelContext = modelContext
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        dateFormatter = formatter
         if let deviceId {
             self.deviceId = deviceId
         } else if let id = UserDefaults.standard.string(forKey: "pee.deviceId") {
@@ -63,87 +60,98 @@ nonisolated struct SyncEnvelopeExportService {
             ? try modelContext.fetch(FetchDescriptor<TimeCursor>())
             : []
 
-        var envelopes: [[String: Any]] = []
+        var envelopes: [AnySyncEnvelope] = []
 
         if let cursor = cursors.first {
-            envelopes.append(try envelope(
-                entityType: "timeCursor",
+            let revision = max(1, Int(cursor.updatedAt.timeIntervalSince1970) % 1_000_000_000)
+            envelopes.append(try AnySyncEnvelope(
+                deviceId: deviceId,
+                entityType: .timeCursor,
                 entityId: "cursor",
-                revision: max(1, Int(cursor.updatedAt.timeIntervalSince1970) % 1_000_000_000),
+                revision: revision,
                 updatedAt: cursor.updatedAt,
-                payload: [
-                    "cursorAt": iso(cursor.cursorAt),
-                    "updatedAt": iso(cursor.updatedAt),
-                    "revision": max(1, Int(cursor.updatedAt.timeIntervalSince1970) % 1_000_000_000)
-                ]
+                payload: TimeCursorSyncPayload(
+                    cursorAt: cursor.cursorAt,
+                    updatedAt: cursor.updatedAt,
+                    revision: revision
+                )
             ))
         }
 
-        for p in projects {
-            envelopes.append(try envelope(
-                entityType: "project",
-                entityId: p.id.uuidString,
+        for project in projects {
+            envelopes.append(try AnySyncEnvelope(
+                deviceId: deviceId,
+                entityType: .project,
+                entityId: project.id.uuidString,
                 revision: 1,
-                updatedAt: p.updatedAt,
-                payload: [
-                    "id": p.id.uuidString,
-                    "name": p.name,
-                    "categoryName": p.categoryName,
-                    "isArchived": p.isArchived,
-                    "updatedAt": iso(p.updatedAt)
-                ]
+                updatedAt: project.updatedAt,
+                payload: ProjectSyncPayload(
+                    id: project.id.uuidString,
+                    name: project.name,
+                    categoryName: project.categoryName,
+                    isArchived: project.isArchived,
+                    updatedAt: project.updatedAt
+                )
             ))
         }
 
-        for e in entries {
-            envelopes.append(try envelope(
-                entityType: "timeEntry",
-                entityId: e.id.uuidString,
-                revision: revision(from: e.updatedAt, created: e.createdAt),
-                updatedAt: e.updatedAt,
-                payload: [
-                    "id": e.id.uuidString,
-                    "projectId": e.projectId.uuidString,
-                    "projectNameSnapshot": e.projectNameSnapshot,
-                    "categoryNameSnapshot": e.categoryNameSnapshot,
-                    "startAt": iso(e.startAt),
-                    "endAt": iso(e.endAt),
-                    "note": document(ownerID: e.id, kind: .timeEntry, in: documents)?.body ?? "",
-                    "status": e.status,
-                    "createdAt": iso(e.createdAt),
-                    "updatedAt": iso(e.updatedAt)
-                ]
+        for entry in entries {
+            envelopes.append(try AnySyncEnvelope(
+                deviceId: deviceId,
+                entityType: .timeEntry,
+                entityId: entry.id.uuidString,
+                revision: revision(from: entry.updatedAt, created: entry.createdAt),
+                updatedAt: entry.updatedAt,
+                payload: TimeEntrySyncPayload(
+                    id: entry.id.uuidString,
+                    projectId: entry.projectId.uuidString,
+                    projectNameSnapshot: entry.projectNameSnapshot,
+                    categoryNameSnapshot: entry.categoryNameSnapshot,
+                    startAt: entry.startAt,
+                    endAt: entry.endAt,
+                    note: document(ownerID: entry.id, kind: .timeEntry, in: documents)?.body ?? "",
+                    status: entry.status,
+                    createdAt: entry.createdAt,
+                    updatedAt: entry.updatedAt
+                )
             ))
         }
 
         for journal in selectedJournals {
             let content = document(ownerID: journal.id, kind: .journalEntry, in: documents)
             let link = journalLinks.first { $0.journalEntryID == journal.id }
-            envelopes.append(try envelope(
-                entityType: "thoughtNote",
+            let updatedAt = max(journal.updatedAt, content?.updatedAt ?? journal.updatedAt)
+            envelopes.append(try AnySyncEnvelope(
+                deviceId: deviceId,
+                entityType: .thoughtNote,
                 entityId: journal.id.uuidString,
                 revision: max(1, content?.revision ?? 1),
-                updatedAt: max(journal.updatedAt, content?.updatedAt ?? journal.updatedAt),
-                payload: [
-                    "id": journal.id.uuidString,
-                    "body": content?.body ?? "",
-                    "capturedAt": iso(journal.capturedAt),
-                    "anchorAt": iso(journal.anchorAt),
-                    "linkedEntryId": link?.timeEntryID.uuidString ?? "",
-                    "linkSource": link?.linkSource ?? ThoughtLinkSource.none.rawValue,
-                    "createdAt": iso(journal.createdAt),
-                    "updatedAt": iso(max(journal.updatedAt, content?.updatedAt ?? journal.updatedAt))
-                ]
+                updatedAt: updatedAt,
+                payload: ThoughtNoteSyncPayload(
+                    id: journal.id.uuidString,
+                    body: content?.body ?? "",
+                    capturedAt: journal.capturedAt,
+                    anchorAt: journal.anchorAt,
+                    linkedEntryId: link?.timeEntryID.uuidString,
+                    linkSource: link?.linkSource ?? ThoughtLinkSource.none.rawValue,
+                    createdAt: journal.createdAt,
+                    updatedAt: updatedAt
+                )
             ))
         }
 
-        let batch: [String: Any] = [
-            "protocolVersion": "1.0",
-            "deviceId": deviceId,
-            "exportedAt": iso(Date()),
-            "envelopes": envelopes
-        ]
-        let data = try JSONSerialization.data(withJSONObject: batch, options: [.prettyPrinted, .sortedKeys])
+        let batch = SyncBatchFile(
+            deviceId: deviceId,
+            exportedAt: Date(),
+            envelopes: envelopes
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(ISO8601Codec.string(from: date))
+        }
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(batch)
         return PreparedSyncExport(
             json: String(data: data, encoding: .utf8) ?? "{}",
             entryCount: entries.count,
@@ -151,33 +159,8 @@ nonisolated struct SyncEnvelopeExportService {
         )
     }
 
-    private func envelope(
-        entityType: String,
-        entityId: String,
-        revision: Int,
-        updatedAt: Date,
-        payload: [String: Any]
-    ) throws -> [String: Any] {
-        let payloadData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        let payloadJSON = String(data: payloadData, encoding: .utf8) ?? "{}"
-        return [
-            "protocolVersion": "1.0",
-            "deviceId": deviceId,
-            "entityType": entityType,
-            "entityId": entityId,
-            "operation": "upsert",
-            "revision": revision,
-            "updatedAt": iso(updatedAt),
-            "payloadJSON": payloadJSON
-        ]
-    }
-
     private func revision(from updated: Date, created: Date) -> Int {
         max(1, Int(updated.timeIntervalSince(created) / 60) + 1)
-    }
-
-    private func iso(_ date: Date) -> String {
-        dateFormatter.string(from: date)
     }
 
     private func document(
@@ -187,4 +170,10 @@ nonisolated struct SyncEnvelopeExportService {
     ) -> ContentDocument? {
         documents.first { $0.ownerID == ownerID && $0.ownerKindEnum == kind }
     }
+}
+
+private nonisolated struct TimeCursorSyncPayload: Codable, Sendable {
+    let cursorAt: Date
+    let updatedAt: Date
+    let revision: Int
 }

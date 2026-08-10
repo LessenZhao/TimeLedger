@@ -101,21 +101,13 @@ struct SettingsView: View {
     }
 
     private func loadSettings() {
-        var descriptor = FetchDescriptor<AppSettings>()
-        descriptor.fetchLimit = 1
-
-        if let existing = try? modelContext.fetch(descriptor).first {
-            settings = existing
-        } else {
-            let newSettings = AppSettings()
-            modelContext.insert(newSettings)
-            try? modelContext.save()
-            settings = newSettings
-        }
+        settings = try? TimeLedgerEngine(modelContext: modelContext).getOrCreateAppSettings()
     }
 
     private func saveSettings() {
-        try? modelContext.save()
+        if let settings {
+            try? TimeLedgerEngine(modelContext: modelContext).saveAppSettings(settings)
+        }
     }
 }
 

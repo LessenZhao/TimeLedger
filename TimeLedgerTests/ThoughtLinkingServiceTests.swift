@@ -19,7 +19,7 @@ struct ThoughtLinkingServiceTests {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [configuration])
     }

@@ -32,7 +32,7 @@ struct TimeLedgerApp: App {
 
     @MainActor
     private static func bootstrap() -> TimeLedgerBootstrapState {
-        let schema = Schema(versionedSchema: TimeLedgerSchemaV2.self)
+        let schema = Schema(versionedSchema: TimeLedgerSchemaV3.self)
         if ProcessInfo.processInfo.arguments.contains("-ui-testing") {
             do {
                 let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -91,5 +91,5 @@ private struct ContentMigrationGateView: View {
 }
 
 enum TimeLedgerModels {
-    static let all: [any PersistentModel.Type] = TimeLedgerSchemaV2.models
+    static let all: [any PersistentModel.Type] = TimeLedgerSchemaV3.models
 }

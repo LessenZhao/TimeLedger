@@ -19,12 +19,13 @@ enum SystemProject {
 
     @discardableResult
     static func getOrCreateUnknown(modelContext: ModelContext) throws -> Project {
+        let engine = TimeLedgerEngine(modelContext: modelContext)
         let projects = try modelContext.fetch(FetchDescriptor<Project>())
         if let existing = projects.first(where: { $0.name == unknownName }) {
             if existing.isArchived {
                 existing.isArchived = false
                 existing.updatedAt = Date()
-                try modelContext.save()
+                try engine.save()
             }
             return existing
         }
@@ -34,8 +35,8 @@ enum SystemProject {
             categoryName: unknownCategory,
             sortOrder: 9_999
         )
-        modelContext.insert(project)
-        try modelContext.save()
+        engine.insert(project)
+        try engine.save()
         return project
     }
 }

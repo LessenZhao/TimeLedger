@@ -99,6 +99,14 @@ enum TimelineTypeMode: String, CaseIterable, Hashable, Identifiable {
 
     var id: String { rawValue }
 
+    var title: String {
+        switch self {
+        case .notes: "时间记录"
+        case .thoughts: "随记"
+        case .merged: "合并"
+        }
+    }
+
     func matches(_ record: TimelineRecord) -> Bool {
         switch self {
         case .merged:

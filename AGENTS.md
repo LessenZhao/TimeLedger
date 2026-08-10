@@ -12,7 +12,7 @@ V3 起作为 **Personal Evolution Engine** 的时间事实端；Mac 端工作台
 - 优先查看：`AGENTS.md`、`PROJECT_STATE.md`、`docs/project-overview.md`、`docs/evolution-hub-usage.md`
 - 不要默认读取：`build/`、`dist/`、`*.xcuserstate`、DerivedData、`.build/`、日志与生成文件
 
-核心不是“开始/结束计时器”，而是：连续时间流、`TimeCursor`、快捷打标、草稿修正、确认锁定、本地导出、ThoughtNote 按时间点自动关联 TimeEntry。  
+核心不是“开始/结束计时器”，而是：连续时间流、`TimeCursor`、快捷打标、草稿修正、确认锁定、本地导出、`JournalEntry` 按时间点关联 `TimeEntry`。
 V3 跨端：iOS 导出 SyncEnvelope 文件 → Hub 导入；Hub 调独立 Collector；不直接同步 SQLite/SwiftData 文件。
 
 ## 目录与规则源
@@ -26,8 +26,10 @@ V3 跨端：iOS 导出 SyncEnvelope 文件 → Hub 导入；Hub 调独立 Collec
 - Hub 与 EvolutionCore 用独立 SPM；**不手写或伪造 Xcode 工程文件**；iOS 工程由 Xcode 维护。
 - 按当前任务读取最小上下文；验证优先最小充分证据；`xcodebuild` 过滤 `BUILD SUCCEEDED|BUILD FAILED|error:`。
 - 本地优先；不加入登录、云账号、App Store、订阅、多端 CRDT、把全部原文塞进 SwiftData。
-- `ThoughtNote`：`anchorAt` 自动关联；`linkSource = manual` 不被自动覆盖。
-- `confirmed` TimeEntry 锁定时间段，仍可增删改关联 ThoughtNote。
+- V3 正式内容模型为 `JournalEntry`、`ContentDocument`、`ContentAttachment`；`ThoughtNote`、`ThoughtMediaLink` 只作冻结迁移输入。
+- `JournalEntry`：`anchorAt` 自动关联；`linkSource = manual` 不被自动覆盖。
+- `confirmed` TimeEntry 锁定时间段，仍可增删改关联 `JournalEntry`。
+- 生产业务写入统一经过 `TimeLedgerEngine`；迁移模块可直接写库。
 - 时间统计用本地自然日；`duration` 由 `startAt`/`endAt` 计算。
 - `draft` 可改可删；`confirmed` 须先取消确认再改时间/删除。
 - 保存前校验：`endAt > startAt`、项目有效、时间不重叠；空档允许。

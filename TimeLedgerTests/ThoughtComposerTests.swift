@@ -57,7 +57,7 @@ struct ThoughtComposerTests {
         let draft = try fixture.store.updateBody("同一条思考", now: fixture.now)
         #expect(draft.id == draftWithPhoto.id)
 
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let context = ModelContext(
             try ModelContainer(for: schema, configurations: [configuration])
@@ -95,7 +95,7 @@ struct ThoughtComposerTests {
         let draft = try fixture.store.updateBody("关联到指定记录", now: fixture.now)
         #expect(draft.id == draftWithPhoto.id)
 
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let context = ModelContext(
             try ModelContainer(for: schema, configurations: [configuration])
@@ -145,7 +145,7 @@ struct ThoughtComposerTests {
             fileExtension: "jpg",
             capturedAt: fixture.now
         )
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let context = ModelContext(
             try ModelContainer(for: schema, configurations: [configuration])
@@ -179,7 +179,7 @@ struct ThoughtComposerTests {
         #expect(attachment.durationSeconds == 12.5)
         #expect(FileManager.default.fileExists(atPath: fixture.store.originalURL(for: attachment).path))
 
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         let context = ModelContext(
             try ModelContainer(for: schema, configurations: [configuration])

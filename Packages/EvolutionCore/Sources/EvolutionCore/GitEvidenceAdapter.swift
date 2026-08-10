@@ -23,6 +23,7 @@ public struct GitEvidenceAdapter {
     }
 
     private func runGit(_ args: [String]) throws -> String {
+#if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repoPath] + args
@@ -33,6 +34,9 @@ public struct GitEvidenceAdapter {
         process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
+#else
+        throw GitCommandUnavailableError()
+#endif
     }
 
     private func parse(output: String) -> [GitEvidenceSummary] {
@@ -85,3 +89,5 @@ public struct GitEvidenceAdapter {
         return Int(text[r])
     }
 }
+
+private struct GitCommandUnavailableError: Error {}

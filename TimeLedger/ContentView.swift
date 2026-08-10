@@ -45,7 +45,9 @@ struct ContentView: View {
                 .tag(4)
         }
         .task {
+#if DEBUG
             try? UITestFixtureService(modelContext: modelContext).seedIfRequested()
+#endif
         }
     }
 }

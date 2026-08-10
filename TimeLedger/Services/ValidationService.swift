@@ -23,6 +23,10 @@ enum ValidationError: LocalizedError {
 
 struct ValidationService {
     let modelContext: ModelContext
+
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
     var calendar: Calendar = .current
 
     func validateEntry(
@@ -118,7 +122,7 @@ struct ValidationService {
             draft.updatedAt = now
         }
 
-        try modelContext.save()
+        try engine.save()
         return eligible.count
     }
 

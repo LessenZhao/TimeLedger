@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct TimeEntryExpandableCard: View {
     @Environment(\.modelContext) private var modelContext

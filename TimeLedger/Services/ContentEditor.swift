@@ -52,8 +52,8 @@ final class ContentEditorSession {
         document: ContentDocument,
         modelContext: ModelContext
     ) throws -> ContentEditorSession {
-        let attachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
-            .filter { $0.contentDocumentID == document.id }
+        let attachments = try TimeLedgerQueries(modelContext: modelContext)
+            .attachments(documentID: document.id)
             .sorted { $0.sortOrder < $1.sortOrder }
             .map { ContentEditorAttachment(mediaMomentID: $0.mediaMomentID) }
         return ContentEditorSession(
@@ -228,82 +228,23 @@ enum SaveContentError: LocalizedError, Equatable {
 struct SaveContent {
     let modelContext: ModelContext
 
+    private var queries: TimeLedgerQueries {
+        TimeLedgerQueries(modelContext: modelContext)
+    }
+
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
+
     func save(_ session: ContentEditorSession) throws {
-        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
-        guard let document = documents.first(where: { $0.id == session.contentID }) else {
-            throw SaveContentError.missingDocument
-        }
-        guard document.revision == session.baseRevision else {
-            throw SaveContentError.revisionConflict
-        }
-
-        let allMedia = try modelContext.fetch(FetchDescriptor<MediaMoment>())
-        let desiredIDs = session.workingAttachments.map(\.mediaMomentID)
-        let desiredSet = Set(desiredIDs)
-        for mediaID in desiredIDs where !allMedia.contains(where: { $0.id == mediaID }) {
-            throw SaveContentError.missingMedia(mediaID)
-        }
-
-        try modelContext.transaction {
-            let allAttachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
-            let current = allAttachments.filter { $0.contentDocumentID == document.id }
-            for attachment in current where !desiredSet.contains(attachment.mediaMomentID) {
-                modelContext.delete(attachment)
-            }
-            for (index, mediaID) in desiredIDs.enumerated() {
-                if let existing = current.first(where: { $0.mediaMomentID == mediaID }) {
-                    existing.sortOrder = index
-                    existing.state = ContentAttachmentState.ready.rawValue
-                    existing.lastError = nil
-                } else if let attachedElsewhere = allAttachments.first(where: {
-                    $0.mediaMomentID == mediaID && $0.contentDocumentID != document.id
-                }) {
-                    throw SaveContentError.mediaAlreadyAttached(attachedElsewhere.mediaMomentID)
-                } else {
-                    modelContext.insert(ContentAttachment(
-                        contentDocumentID: document.id,
-                        mediaMomentID: mediaID,
-                        sortOrder: index,
-                        state: .ready
-                    ))
-                }
-            }
-            document.body = session.workingBody.trimmingCharacters(in: .whitespacesAndNewlines)
-            document.revision += 1
-            document.updatedAt = Date()
-            try modelContext.save()
-        }
+        try engine.saveContent(session)
     }
 
     func createTimeEntryDocumentAndSave(
         _ session: ContentEditorSession,
         entry: TimeEntry
     ) throws {
-        if let existing = try modelContext.fetch(FetchDescriptor<ContentDocument>())
-            .first(where: { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }) {
-            try modelContext.transaction {
-                existing.body = session.workingBody.trimmingCharacters(in: .whitespacesAndNewlines)
-                existing.revision = max(1, existing.revision)
-                existing.updatedAt = Date()
-                try insertDesiredAttachments(session, document: existing)
-                try modelContext.save()
-            }
-            return
-        }
-        try modelContext.transaction {
-            let document = ContentDocument(
-                id: session.contentID,
-                ownerID: entry.id,
-                ownerKind: .timeEntry,
-                body: session.workingBody.trimmingCharacters(in: .whitespacesAndNewlines),
-                revision: 1,
-                createdAt: entry.createdAt,
-                updatedAt: Date()
-            )
-            modelContext.insert(document)
-            try insertDesiredAttachments(session, document: document)
-            try modelContext.save()
-        }
+        try engine.createTimeEntryDocumentAndSave(session, entry: entry)
     }
 
     func createJournalAndSave(
@@ -311,67 +252,29 @@ struct SaveContent {
         capturedAt: Date,
         anchorAt: Date,
         linkedEntryID: UUID?,
-        linkSource: ThoughtLinkSource
+        linkSource: JournalLinkSource
     ) throws {
-        if try modelContext.fetch(FetchDescriptor<JournalEntry>())
-            .contains(where: { $0.id == session.ownerID }) {
-            try save(session)
-            return
-        }
-        try modelContext.transaction {
-            modelContext.insert(JournalEntry(
-                id: session.ownerID,
-                capturedAt: capturedAt,
-                anchorAt: anchorAt,
-                createdAt: capturedAt,
-                updatedAt: Date()
-            ))
-            let document = ContentDocument(
-                id: session.contentID,
-                ownerID: session.ownerID,
-                ownerKind: .journalEntry,
-                body: session.workingBody.trimmingCharacters(in: .whitespacesAndNewlines),
-                revision: 1,
-                createdAt: capturedAt,
-                updatedAt: Date()
-            )
-            modelContext.insert(document)
-            if let linkedEntryID {
-                modelContext.insert(JournalTimeLink(
-                    id: session.ownerID,
-                    journalEntryID: session.ownerID,
-                    timeEntryID: linkedEntryID,
-                    linkSource: linkSource,
-                    createdAt: capturedAt,
-                    updatedAt: Date()
-                ))
-            }
-            try insertDesiredAttachments(session, document: document)
-            try modelContext.save()
-        }
-    }
-
-    private func insertDesiredAttachments(
-        _ session: ContentEditorSession,
-        document: ContentDocument
-    ) throws {
-        let media = try modelContext.fetch(FetchDescriptor<MediaMoment>())
-        for (index, attachment) in session.workingAttachments.enumerated() {
-            guard media.contains(where: { $0.id == attachment.mediaMomentID }) else {
-                throw SaveContentError.missingMedia(attachment.mediaMomentID)
-            }
-            modelContext.insert(ContentAttachment(
-                contentDocumentID: document.id,
-                mediaMomentID: attachment.mediaMomentID,
-                sortOrder: index,
-                state: .ready
-            ))
-        }
+        try engine.createJournalAndSave(
+            session,
+            capturedAt: capturedAt,
+            anchorAt: anchorAt,
+            linkedEntryID: linkedEntryID,
+            linkSource: linkSource
+        )
     }
 }
 
 @MainActor
 enum ContentEditorSessionFactory {
+    static func uiTestPhotoLibrary() -> (any MediaPhotoLibraryWriting)? {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing") {
+            return UITestMediaPhotoLibrary()
+        }
+#endif
+        return nil
+    }
+
     static func existing(
         ownerID: UUID,
         ownerKind: ContentOwnerKind,
@@ -385,10 +288,10 @@ enum ContentEditorSessionFactory {
             ownerKind: ownerKind,
             modelContext: modelContext
         )
-        let allAttachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
-            .filter { $0.contentDocumentID == document.id }
+        let allAttachments = try TimeLedgerQueries(modelContext: modelContext)
+            .attachments(documentID: document.id)
             .sorted { $0.sortOrder < $1.sortOrder }
-        let media = try modelContext.fetch(FetchDescriptor<MediaMoment>())
+        let media = try TimeLedgerQueries(modelContext: modelContext).digestAllMedia()
         let mediaByID = Dictionary(uniqueKeysWithValues: media.map { ($0.id, $0) })
         let existingMedia = allAttachments.compactMap { mediaByID[$0.mediaMomentID] }
         let loadedDraft = try draftStore.prepareExisting(
@@ -506,22 +409,13 @@ enum ContentEditorSessionFactory {
         mediaFileStore: MediaFileStore,
         photoLibrary: any MediaPhotoLibraryWriting
     ) async throws {
-        let existing = try modelContext.fetch(FetchDescriptor<MediaMoment>())
+        let existing = try TimeLedgerQueries(modelContext: modelContext).digestAllMedia()
         let mediaService = MediaMomentService(
             modelContext: modelContext,
             fileStore: mediaFileStore,
             photoLibrary: photoLibrary
         )
-        var settingsDescriptor = FetchDescriptor<AppSettings>()
-        settingsDescriptor.fetchLimit = 1
-        let appSettings: AppSettings
-        if let existingSettings = try modelContext.fetch(settingsDescriptor).first {
-            appSettings = existingSettings
-        } else {
-            appSettings = AppSettings()
-            modelContext.insert(appSettings)
-            try modelContext.save()
-        }
+        let appSettings = try TimeLedgerEngine(modelContext: modelContext).getOrCreateAppSettings()
         let storagePreference = MediaStoragePreference(rawValue: appSettings.mediaStoragePreference) ?? .photosLibrary
         for attachment in session.draft.attachments {
             if let moment = existing.first(where: { $0.id == attachment.id }) {
@@ -555,9 +449,17 @@ enum ContentEditorSessionFactory {
         ownerKind: ContentOwnerKind,
         modelContext: ModelContext
     ) throws -> ContentDocument {
-        guard let document = try modelContext.fetch(FetchDescriptor<ContentDocument>()).first(where: {
-            $0.ownerID == ownerID && $0.ownerKindEnum == ownerKind
-        }) else { throw SaveContentError.missingDocument }
+        guard let document = try TimeLedgerQueries(modelContext: modelContext).document(ownerID: ownerID, ownerKind: ownerKind) else { throw SaveContentError.missingDocument }
         return document
+    }
+}
+
+struct UITestMediaPhotoLibrary: MediaPhotoLibraryWriting {
+    func saveOriginal(at fileURL: URL, kind: MediaKind) async throws -> String {
+        "ui-test-\(UUID().uuidString)"
+    }
+
+    func assetExists(identifier: String) async -> Bool {
+        true
     }
 }

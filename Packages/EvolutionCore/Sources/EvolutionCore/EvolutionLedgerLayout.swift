@@ -48,7 +48,7 @@ public struct EvolutionLedgerLayout: Sendable, Hashable {
 
     public static func defaultDocuments(fileManager: FileManager = .default) -> EvolutionLedgerLayout {
         let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+            ?? fileManager.temporaryDirectory
         return EvolutionLedgerLayout(
             rootURL: documents.appendingPathComponent("Personal Evolution", isDirectory: true)
         )

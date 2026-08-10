@@ -86,27 +86,16 @@ struct ProjectEditView: View {
         let resolvedCategory = trimmedCategory.isEmpty ? "日常" : trimmedCategory
         let emoji = ProjectEmojiMatcher.emoji(for: trimmedName, categoryName: resolvedCategory)
 
-        if let project {
-            project.name = trimmedName
-            project.categoryName = resolvedCategory
-            project.emoji = emoji
-            project.colorHex = colorHex.isEmpty ? nil : colorHex
-            project.sortOrder = sortOrder
-            project.isArchived = isArchived
-            project.updatedAt = Date()
-        } else {
-            let newProject = Project(
+        do {
+            try TimeLedgerEngine(modelContext: modelContext).saveProject(
+                project: project,
                 name: trimmedName,
                 categoryName: resolvedCategory,
                 emoji: emoji,
                 colorHex: colorHex.isEmpty ? nil : colorHex,
-                sortOrder: sortOrder
+                sortOrder: sortOrder,
+                isArchived: isArchived
             )
-            modelContext.insert(newProject)
-        }
-
-        do {
-            try modelContext.save()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

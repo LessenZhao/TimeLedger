@@ -174,6 +174,7 @@ struct RichCardContentView: View {
     private func loadSession() {
         guard session == nil else { return }
         do {
+            let photoLibrary = ContentEditorSessionFactory.uiTestPhotoLibrary()
             let loaded: ContentEditorSession
             switch target {
             case .timeEntry(let entry):
@@ -181,20 +182,23 @@ struct RichCardContentView: View {
                     ownerID: entry.id,
                     ownerKind: .timeEntry,
                     modelContext: modelContext,
-                    draftStore: draftStore
+                    draftStore: draftStore,
+                    photoLibrary: photoLibrary
                 )
             case .journal(let journal):
                 loaded = try ContentEditorSessionFactory.existing(
                     ownerID: journal.id,
                     ownerKind: .journalEntry,
                     modelContext: modelContext,
-                    draftStore: draftStore
+                    draftStore: draftStore,
+                    photoLibrary: photoLibrary
                 )
             case .newJournal(let entry):
                 loaded = try ContentEditorSessionFactory.newJournal(
                     targetEntryID: entry?.id,
                     modelContext: modelContext,
-                    draftStore: draftStore
+                    draftStore: draftStore,
+                    photoLibrary: photoLibrary
                 )
             case .newTimeEntry(_, let range, let text, let save):
                 loaded = try ContentEditorSessionFactory.newTimeEntry(
@@ -202,7 +206,8 @@ struct RichCardContentView: View {
                     initialText: text,
                     createEntry: save,
                     modelContext: modelContext,
-                    draftStore: draftStore
+                    draftStore: draftStore,
+                    photoLibrary: photoLibrary
                 )
             }
             session = loaded

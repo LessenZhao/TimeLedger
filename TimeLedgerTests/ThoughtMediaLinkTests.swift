@@ -98,7 +98,7 @@ struct ThoughtMediaLinkTests {
         try previousContext.save()
         previousContainer = nil
 
-        let currentSchema = Schema(TimeLedgerModels.all)
+        let currentSchema = Schema(LegacyThoughtTestModels.all)
         let currentContainer = try ModelContainer(
             for: currentSchema,
             configurations: [
@@ -113,7 +113,7 @@ struct ThoughtMediaLinkTests {
     }
 
     private func makeContext() throws -> ModelContext {
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return ModelContext(
             try ModelContainer(for: schema, configurations: [configuration])

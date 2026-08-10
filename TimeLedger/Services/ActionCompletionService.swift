@@ -23,6 +23,10 @@ enum ActionCompletionError: LocalizedError {
 
 struct ActionCompletionService {
     let modelContext: ModelContext
+
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
     let calendar: Calendar
 
     init(modelContext: ModelContext, calendar: Calendar = .current) {
@@ -43,8 +47,8 @@ struct ActionCompletionService {
             createdAt: now,
             updatedAt: now
         )
-        modelContext.insert(item)
-        try modelContext.save()
+        engine.insert(item)
+        try engine.save()
         return item
     }
 
@@ -67,7 +71,7 @@ struct ActionCompletionService {
             item.activeCycleStartedAt = nil
         }
         item.updatedAt = now
-        try modelContext.save()
+        try engine.save()
     }
 
     func completions(for item: ActionItem, on date: Date = Date()) throws -> [ActionCompletion] {
@@ -98,7 +102,7 @@ struct ActionCompletionService {
 
         item.activeCycleStartedAt = now
         item.updatedAt = now
-        try modelContext.save()
+        try engine.save()
     }
 
     @discardableResult
@@ -110,7 +114,7 @@ struct ActionCompletionService {
             let completion = try makeCompletion(for: item, now: now)
             item.activeCycleStartedAt = nil
             item.updatedAt = now
-            try modelContext.save()
+            try engine.save()
             return completion
         }
         if let existing = try completion(for: item, on: now) {
@@ -118,7 +122,7 @@ struct ActionCompletionService {
         }
 
         let completion = try makeCompletion(for: item, now: now)
-        try modelContext.save()
+        try engine.save()
         return completion
     }
 
@@ -132,7 +136,7 @@ struct ActionCompletionService {
             createdAt: now,
             updatedAt: now
         )
-        modelContext.insert(completion)
+        engine.insert(completion)
         return completion
     }
 
@@ -140,13 +144,13 @@ struct ActionCompletionService {
         guard let completion = try completion(for: item, on: date) else {
             throw ActionCompletionError.missingCompletion
         }
-        modelContext.delete(completion)
-        try modelContext.save()
+        engine.delete(completion)
+        try engine.save()
     }
 
     func deleteCompletion(_ completion: ActionCompletion) throws {
-        modelContext.delete(completion)
-        try modelContext.save()
+        engine.delete(completion)
+        try engine.save()
     }
 
     func completionsForEntry(_ entry: TimeEntry) throws -> [ActionCompletion] {
@@ -167,7 +171,7 @@ struct ActionCompletionService {
             completion.linkedEntryId = entry.id
             completion.updatedAt = now
         }
-        try modelContext.save()
+        try engine.save()
         return unlinked.count
     }
 
@@ -187,7 +191,7 @@ struct ActionCompletionService {
         }
 
         if changed > 0 {
-            try modelContext.save()
+            try engine.save()
         }
         return changed
     }

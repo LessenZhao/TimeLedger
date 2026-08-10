@@ -132,7 +132,7 @@ private struct AttachmentFixture {
         rootURL = FileManager.default.temporaryDirectory
             .appending(path: "TimeEntryAttachmentTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let schema = Schema(TimeLedgerModels.all)
+        let schema = Schema(LegacyThoughtTestModels.all)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         context = ModelContext(try ModelContainer(for: schema, configurations: [configuration]))
         mediaFileStore = MediaFileStore(

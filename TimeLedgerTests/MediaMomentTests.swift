@@ -358,7 +358,7 @@ struct MediaMomentTests {
         try legacyContext.save()
         legacyContainer = nil
 
-        let currentSchema = Schema(TimeLedgerModels.all)
+        let currentSchema = Schema(LegacyThoughtTestModels.all)
         let currentContainer = try ModelContainer(
             for: currentSchema,
             configurations: [ModelConfiguration("MediaMigration", schema: currentSchema, url: storeURL)]

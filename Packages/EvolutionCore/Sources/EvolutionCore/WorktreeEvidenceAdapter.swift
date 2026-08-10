@@ -119,6 +119,7 @@ public struct WorktreeEvidenceAdapter: Sendable {
     }
 
     private func runGit(at path: String, arguments: [String]) throws -> String {
+#if os(macOS)
         let processArguments = ["-C", path] + arguments
         let process = Process()
         process.executableURL = URL(fileURLWithPath: gitPath)
@@ -151,6 +152,13 @@ public struct WorktreeEvidenceAdapter: Sendable {
             )
         }
         return String(decoding: outputData, as: UTF8.self)
+#else
+        throw WorktreeEvidenceError.commandFailed(
+            arguments: ["-C", path] + arguments,
+            status: -1,
+            stderr: "git command unavailable on iOS"
+        )
+#endif
     }
 
     private func parseStatus(_ output: String) -> [WorktreeFileChange] {

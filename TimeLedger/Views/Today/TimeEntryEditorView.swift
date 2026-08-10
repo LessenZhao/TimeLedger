@@ -14,12 +14,6 @@ struct TimeEntryEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Project> { !$0.isArchived }, sort: \Project.sortOrder) private var projects: [Project]
-    @Query private var allJournals: [JournalEntry]
-    @Query private var allDocuments: [ContentDocument]
-    @Query private var allContentAttachments: [ContentAttachment]
-    @Query private var allJournalLinks: [JournalTimeLink]
-    @Query private var allEntries: [TimeEntry]
-    @Query private var allMediaMoments: [MediaMoment]
 
     let mode: TimeEntryEditorMode
     let saveAction: ((Date, Date, String) throws -> TimeEntry)?
@@ -48,6 +42,14 @@ struct TimeEntryEditorView: View {
             return ComposerDraftStoreFactory.newTimeEntry(projectID: project.id)
         }
         return ComposerDraftStoreFactory.newTimeEntry(projectID: UUID())
+    }
+
+    private var queries: TimeLedgerQueries {
+        TimeLedgerQueries(modelContext: modelContext)
+    }
+
+    private var editorIdentifierPrefix: String {
+        isCreateMode ? "timeEntry.create" : "timeEntry.edit"
     }
 
     init(
@@ -102,14 +104,14 @@ struct TimeEntryEditorView: View {
                 Button("取消") {
                     cancel()
                 }
-                .accessibilityIdentifier("timeEntry.editor.cancel")
+                .accessibilityIdentifier("\(editorIdentifierPrefix).cancel")
                 .disabled(isSaving)
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
                     save()
                 }
-                .accessibilityIdentifier("timeEntry.editor.save")
+                .accessibilityIdentifier("\(editorIdentifierPrefix).save")
                 .disabled(isSaving || !canSave)
             }
         }
@@ -147,7 +149,7 @@ struct TimeEntryEditorView: View {
         }
         .sheet(isPresented: $showingAddThought) {
             if let entryID = createdEntryID,
-               let entry = allEntries.first(where: { $0.id == entryID }) {
+               let entry = try? queries.entry(id: entryID) {
                 ThoughtComposerSheet(targetEntry: entry)
             } else {
                 ThoughtComposerSheet()
@@ -190,7 +192,7 @@ struct TimeEntryEditorView: View {
                         }
                     }
                     .labelsHidden()
-                    .accessibilityIdentifier("timeEntry.editor.project")
+                    .accessibilityIdentifier("\(editorIdentifierPrefix).project")
                 } else {
                     Text(entry.projectNameSnapshot)
                         .font(.headline)
@@ -268,7 +270,7 @@ struct TimeEntryEditorView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .accessibilityIdentifier("timeEntry.editor.addThought")
+                .accessibilityIdentifier("\(editorIdentifierPrefix).addThought")
             }
 
             let visibleJournals = linkedJournals.filter { !pendingUnlinkedJournalIDs.contains($0.id) }
@@ -406,10 +408,10 @@ struct TimeEntryEditorView: View {
 
     private var linkedJournals: [JournalEntry] {
         guard let entryID = createdEntryID ?? editEntry?.id else { return [] }
-        let ids = Set(allJournalLinks.filter { $0.timeEntryID == entryID }.map(\.journalEntryID))
-        return allJournals
-            .filter { ids.contains($0.id) }
-            .sorted { $0.capturedAt < $1.capturedAt }
+        guard let links = try? queries.journalLinks(timeEntryID: entryID) else { return [] }
+        let ids = Set(links.map(\.journalEntryID))
+        let journals = (try? queries.journals(ids: ids)) ?? []
+        return journals.sorted { $0.capturedAt < $1.capturedAt }
     }
 
     private var startPickerRange: ClosedRange<Date> {
@@ -434,15 +436,7 @@ struct TimeEntryEditorView: View {
 
     private var nextEntry: TimeEntry? {
         guard let entryID = editEntry?.id ?? createdEntryID else { return nil }
-        let currentEnd = endAt
-        return allEntries
-            .filter { $0.id != entryID && $0.startAt >= currentEnd }
-            .sorted { $0.startAt < $1.startAt }
-            .first
-            ?? allEntries
-            .filter { $0.id != entryID && $0.startAt > startAt }
-            .sorted { $0.startAt < $1.startAt }
-            .first
+        return try? queries.nextEntry(after: entryID, startAt: startAt, endAt: endAt)
     }
 
     private var richCardTarget: RichCardContentTarget {
@@ -458,7 +452,7 @@ struct TimeEntryEditorView: View {
         if let entry = editEntry {
             return .timeEntry(entry)
         }
-        if let entryID = createdEntryID, let entry = allEntries.first(where: { $0.id == entryID }) {
+        if let entryID = createdEntryID, let entry = try? queries.entry(id: entryID) {
             return .timeEntry(entry)
         }
         if case .create(let project, _, _) = mode {
@@ -490,9 +484,7 @@ struct TimeEntryEditorView: View {
 
     private func linkedJournalCard(_ journal: JournalEntry) -> some View {
         let moments = mediaMoments(for: journal)
-        let body = allDocuments.first {
-            $0.ownerID == journal.id && $0.ownerKindEnum == .journalEntry
-        }?.body ?? ""
+        let body = (try? queries.document(ownerID: journal.id, ownerKind: .journalEntry))?.body ?? ""
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center) {
                 Text(DateFormatterFactory.timeOnly.string(from: journal.capturedAt))
@@ -505,9 +497,11 @@ struct TimeEntryEditorView: View {
                     Image(systemName: "square.and.pencil")
                         .font(.caption)
                         .foregroundStyle(Color.accentColor)
+                        .frame(width: TimelineCardActionMetrics.minTouch, height: TimelineCardActionMetrics.minTouch)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("编辑关联随记")
-                .accessibilityIdentifier("timeEntry.editor.thought.edit")
+                .accessibilityIdentifier("\(editorIdentifierPrefix).thought.edit")
                 Menu {
                     Button("取消关联", role: .destructive) {
                         pendingUnlinkedJournalIDs.insert(journal.id)
@@ -519,7 +513,7 @@ struct TimeEntryEditorView: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("更多操作")
-                .accessibilityIdentifier("timeEntry.editor.thought.menu")
+                .accessibilityIdentifier("\(editorIdentifierPrefix).thought.menu")
             }
 
             if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -530,7 +524,7 @@ struct TimeEntryEditorView: View {
                 TimelineExpandableText(
                     text: body,
                     collapsedLineLimit: 6,
-                    accessibilityPrefix: "timeEntry.editor.thought.body",
+                    accessibilityPrefix: "\(editorIdentifierPrefix).thought.body",
                     style: .thought
                 )
             }
@@ -548,18 +542,17 @@ struct TimeEntryEditorView: View {
                 .fill(TLTheme.cardBackground)
         )
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("timeEntry.editor.thought.card")
+        .accessibilityIdentifier("\(editorIdentifierPrefix).thought.card")
     }
 
     private func mediaMoments(for journal: JournalEntry) -> [MediaMoment] {
-        guard let documentID = allDocuments.first(where: {
-            $0.ownerID == journal.id && $0.ownerKindEnum == .journalEntry
-        })?.id else { return [] }
-        let order = Dictionary(uniqueKeysWithValues: allContentAttachments
-            .filter { $0.contentDocumentID == documentID }
-            .map { ($0.mediaMomentID, $0.sortOrder) })
-        return allMediaMoments.filter { order[$0.id] != nil }
-            .sorted { order[$0.id, default: 0] < order[$1.id, default: 0] }
+        guard let document = try? queries.document(ownerID: journal.id, ownerKind: .journalEntry) else {
+            return []
+        }
+        let attachments = (try? queries.attachments(documentID: document.id)) ?? []
+        let order = Dictionary(uniqueKeysWithValues: attachments.map { ($0.mediaMomentID, $0.sortOrder) })
+        let moments = (try? queries.mediaMoments(ids: Set(order.keys))) ?? []
+        return moments.sorted { order[$0.id, default: 0] < order[$1.id, default: 0] }
     }
 
     // MARK: Actions
@@ -649,7 +642,7 @@ struct TimeEntryEditorView: View {
                     // Find the created entry via content document
                     let docs = try modelContext.fetch(FetchDescriptor<ContentDocument>())
                     guard let doc = docs.first(where: { $0.id == session.contentID }),
-                          let entry = allEntries.first(where: { $0.id == doc.ownerID })
+                          let entry = try? queries.entry(id: doc.ownerID)
                     else { return }
                     createdEntryID = entry.id
                     self.contentSession = nil  // force reload with .timeEntry target

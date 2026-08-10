@@ -28,7 +28,7 @@ struct ThoughtExportTests {
         body: String,
         capturedAt: Date,
         linkedEntryID: UUID? = nil,
-        linkSource: ThoughtLinkSource = .none,
+        linkSource: JournalLinkSource = .none,
         into context: ModelContext
     ) {
         let journal = JournalEntry(capturedAt: capturedAt, anchorAt: capturedAt)

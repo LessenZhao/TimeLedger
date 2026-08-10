@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-**TimeLedger** 是个人时间事实入口（iOS）：柳比谢夫式低摩擦时间记录 + ThoughtNote。  
+**TimeLedger** 是个人时间事实入口（iOS）：柳比谢夫式低摩擦时间记录 + `JournalEntry`。
 **Personal Evolution Engine (V3)** 在 Mac 上用 **Evolution Hub** 把时间事实与 Codex / Claude / ChatGPT 等上下文对齐，做有证据的每日复盘。
 
 核心闭环：目标 → 行动 → 事实证据 → 结果 → 复盘 → 调整 → 下一轮验证。
@@ -29,8 +29,9 @@ docs/plans/003-…            # V3 实施与审计
 
 ### iOS（`TimeLedger/`）
 
-- 模型：`Project`、`TimeCursor`、`TimeEntry`、`AppSettings`、`ThoughtNote`
-- 服务：时间游标、统计、校验、导出、思考关联、`SyncEnvelopeExportService`
+- V3 生产模型：`Project`、`TimeCursor`、`TimeEntry`、`AppSettings`、`JournalEntry`、`ContentDocument`、`ContentAttachment`
+- 冻结迁移输入：`ThoughtNote`、`ThoughtMediaLink`，不再承担生产业务
+- 服务：`TimeLedgerEngine` 是唯一业务写入入口；另有时间游标、统计、校验、导出和 `SyncEnvelopeExportService`
 - 页面：Today / Thoughts / Review / Settings / Projects
 
 ### EvolutionCore
@@ -73,5 +74,5 @@ cd EvolutionHub && swift test
 - 本地优先；无账号/云同步/订阅/App Store（V3）。
 - 不同步 SQLite；跨端用 SyncEnvelope 文件交换（Bonjour 未做）。
 - AI 复盘仅接口预留；默认确定性报告。
-- 不改 SwiftData schema 即可完成 V3 同步回传（明日调整为 Hub 侧文件）。
+- iOS 生产启动、迁移协调器与 `TimeLedgerModels` 统一采用 `TimeLedgerSchemaV3`；跨端仍只交换 SyncEnvelope，不同步数据库。
 - 真机签名免费 Personal Team，约 7 天有效。

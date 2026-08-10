@@ -158,6 +158,10 @@ struct MediaFileStore {
 @MainActor
 struct MediaMomentService {
     let modelContext: ModelContext
+
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
     let fileStore: MediaFileStore
     let photoLibrary: any MediaPhotoLibraryWriting
 
@@ -204,11 +208,11 @@ struct MediaMomentService {
             thumbnailData: thumbnailData,
             durationSeconds: durationSeconds
         )
-        modelContext.insert(moment)
+        engine.insert(moment)
         do {
-            try modelContext.save()
+            try engine.save()
         } catch {
-            modelContext.delete(moment)
+            engine.delete(moment)
             await fileStore.delete(relativePath: pendingRelativePath)
             throw error
         }
@@ -223,7 +227,7 @@ struct MediaMomentService {
         moment.status = MediaMomentStatus.pending.rawValue
         moment.lastError = nil
         moment.updatedAt = Date()
-        try? modelContext.save()
+        try? engine.save()
         await completeDestinations(for: moment)
     }
 
@@ -251,10 +255,10 @@ struct MediaMomentService {
         await fileStore.delete(absolutePath: moment.sourceTemporaryPath)
         let attachments = (try? modelContext.fetch(FetchDescriptor<ContentAttachment>())) ?? []
         for attachment in attachments where attachment.mediaMomentID == moment.id {
-            modelContext.delete(attachment)
+            engine.delete(attachment)
         }
-        modelContext.delete(moment)
-        try? modelContext.save()
+        engine.delete(moment)
+        try? engine.save()
     }
 
     func recoverableURL(for moment: MediaMoment) async -> URL? {
@@ -335,7 +339,7 @@ struct MediaMomentService {
             await fileStore.delete(absolutePath: moment.sourceTemporaryPath)
             moment.pendingRelativePath = nil
             moment.sourceTemporaryPath = nil
-            try? modelContext.save()
+            try? engine.save()
         }
     }
 
@@ -347,10 +351,10 @@ struct MediaMomentService {
             mediaMomentID: moment.id,
             state: .pending
         )
-        modelContext.insert(journal)
-        modelContext.insert(document)
-        modelContext.insert(attachment)
-        try modelContext.save()
+        engine.insert(journal)
+        engine.insert(document)
+        engine.insert(attachment)
+        try engine.save()
     }
 
     private func updateStoredLocation(
@@ -391,14 +395,14 @@ struct MediaMomentService {
             ? MediaOriginalAvailability.unknown.rawValue
             : MediaOriginalAvailability.available.rawValue
         moment.updatedAt = Date()
-        try? modelContext.save()
+        try? engine.save()
     }
 
     private func setAvailability(_ availability: MediaOriginalAvailability, for moment: MediaMoment) {
         guard moment.originalAvailability != availability.rawValue else { return }
         moment.originalAvailability = availability.rawValue
         moment.updatedAt = Date()
-        try? modelContext.save()
+        try? engine.save()
     }
 
     private func preferredExtension(sourceURL: URL, kind: MediaKind) -> String {

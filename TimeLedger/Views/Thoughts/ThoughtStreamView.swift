@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// 时间线 tab 上唯一一个弹层入口，避免 SwiftUI 多个 `.sheet` 互相抢同一个视图。
 enum TimelineSheet: Identifiable {
@@ -109,22 +110,14 @@ struct ThoughtStreamView: View {
     }
 
     private var typeModePicker: some View {
-        Picker("类型", selection: typeModeBinding) {
-            Text("时间记录").tag(TimelineTypeMode.notes.rawValue)
-            Text("随记").tag(TimelineTypeMode.thoughts.rawValue)
-            Text("合并").tag(TimelineTypeMode.merged.rawValue)
-        }
-        .pickerStyle(.segmented)
+        TimelineTypeModeSegmentedControl(
+            selection: Binding(
+                get: { typeMode },
+                set: { typeModeRaw = $0.rawValue }
+            )
+        )
         .padding(.horizontal, 16)
         .padding(.top, 10)
-        .accessibilityIdentifier("timeline.typeMode.picker")
-    }
-
-    private var typeModeBinding: Binding<String> {
-        Binding(
-            get: { typeModeRaw },
-            set: { typeModeRaw = $0 }
-        )
     }
 
     private func filterSummary(recordsCount: Int) -> some View {
@@ -258,6 +251,42 @@ struct ThoughtStreamView: View {
             .padding(.top, 4)
             .padding(.bottom, 2)
             .accessibilityIdentifier("timeline.day.\(title)")
+    }
+}
+
+private struct TimelineTypeModeSegmentedControl: UIViewRepresentable {
+    let selection: Binding<TimelineTypeMode>
+
+    func makeUIView(context: Context) -> UISegmentedControl {
+        let control = UISegmentedControl(items: TimelineTypeMode.allCases.map(\.title))
+        control.accessibilityIdentifier = "timeline.typeMode.picker"
+        control.selectedSegmentIndex = TimelineTypeMode.allCases.firstIndex(of: selection.wrappedValue) ?? 0
+        control.addTarget(context.coordinator, action: #selector(Coordinator.valueChanged(_:)), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ uiView: UISegmentedControl, context: Context) {
+        if let index = TimelineTypeMode.allCases.firstIndex(of: selection.wrappedValue) {
+            uiView.selectedSegmentIndex = index
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selection: selection)
+    }
+
+    final class Coordinator: NSObject {
+        let selection: Binding<TimelineTypeMode>
+
+        init(selection: Binding<TimelineTypeMode>) {
+            self.selection = selection
+        }
+
+        @objc func valueChanged(_ sender: UISegmentedControl) {
+            let index = sender.selectedSegmentIndex
+            guard TimelineTypeMode.allCases.indices.contains(index) else { return }
+            selection.wrappedValue = TimelineTypeMode.allCases[index]
+        }
     }
 }
 

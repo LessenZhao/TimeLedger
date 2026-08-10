@@ -254,7 +254,7 @@ private struct Fixture {
         body: String,
         capturedAt: Date? = nil,
         linkedEntry: TimeEntry? = nil,
-        source: ThoughtLinkSource = .none
+        source: JournalLinkSource = .none
     ) -> JournalEntry {
         let captured = capturedAt ?? now
         let journal = JournalEntry(capturedAt: captured, anchorAt: captured)

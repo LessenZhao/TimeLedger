@@ -4,6 +4,10 @@ import SwiftData
 struct MediaLinkingService {
     let modelContext: ModelContext
 
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
+
     @discardableResult
     func tryAutoLink(_ moment: MediaMoment) throws -> Bool {
         guard moment.linkSourceEnum == .none else { return false }
@@ -12,7 +16,7 @@ struct MediaLinkingService {
         moment.linkedEntryId = entry.id
         moment.linkSource = ThoughtLinkSource.auto.rawValue
         moment.updatedAt = Date()
-        try modelContext.save()
+        try engine.save()
         return true
     }
 
@@ -33,7 +37,7 @@ struct MediaLinkingService {
             moment.updatedAt = now
         }
         if !candidates.isEmpty {
-            try modelContext.save()
+            try engine.save()
         }
         return candidates.count
     }
@@ -73,7 +77,7 @@ struct MediaLinkingService {
         }
 
         if changed > 0 {
-            try modelContext.save()
+            try engine.save()
         }
         return changed
     }
@@ -82,14 +86,14 @@ struct MediaLinkingService {
         moment.linkedEntryId = entry.id
         moment.linkSource = ThoughtLinkSource.manual.rawValue
         moment.updatedAt = Date()
-        try modelContext.save()
+        try engine.save()
     }
 
     func unlink(_ moment: MediaMoment) throws {
         moment.linkedEntryId = nil
         moment.linkSource = ThoughtLinkSource.none.rawValue
         moment.updatedAt = Date()
-        try modelContext.save()
+        try engine.save()
     }
 
     private func bestCoveringEntry(for anchorAt: Date) throws -> TimeEntry? {

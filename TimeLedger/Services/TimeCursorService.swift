@@ -33,56 +33,25 @@ enum TimeCursorError: LocalizedError {
     }
 }
 
+/// 兼容 facade：只转发给 TimeLedgerEngine，不再直接写数据库。
 struct TimeCursorService {
     let modelContext: ModelContext
 
+    private var engine: TimeLedgerEngine {
+        TimeLedgerEngine(modelContext: modelContext)
+    }
+
     func getOrCreateCursor(now: Date = Date()) throws -> TimeCursor {
-        var descriptor = FetchDescriptor<TimeCursor>(sortBy: [SortDescriptor(\.updatedAt)])
-        descriptor.fetchLimit = 1
-
-        if let cursor = try modelContext.fetch(descriptor).first {
-            return cursor
-        }
-
-        let cursor = TimeCursor(cursorAt: now, updatedAt: now)
-        modelContext.insert(cursor)
-        try modelContext.save()
-        return cursor
+        try engine.getOrCreateCursor(now: now)
     }
 
     func currentUnclassifiedDuration(now: Date = Date()) throws -> TimeInterval {
-        let cursor = try getOrCreateCursor(now: now)
-        return max(0, now.timeIntervalSince(cursor.cursorAt))
+        try engine.currentUnclassifiedDuration(now: now)
     }
 
     @discardableResult
     func quickRecord(project: Project, now: Date = Date()) throws -> TimeEntry {
-        let cursor = try getOrCreateCursor(now: now)
-        guard now > cursor.cursorAt else {
-            throw TimeCursorError.emptySegment
-        }
-        try ValidationService(modelContext: modelContext).validateEntry(
-            projectId: project.id,
-            startAt: cursor.cursorAt,
-            endAt: now
-        )
-
-        let entry = TimeEntry(
-            projectId: project.id,
-            projectNameSnapshot: project.name,
-            categoryNameSnapshot: project.categoryName,
-            startAt: cursor.cursorAt,
-            endAt: now
-        )
-
-        modelContext.insert(entry)
-        modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry))
-        cursor.cursorAt = now
-        cursor.updatedAt = now
-        try modelContext.save()
-        _ = try? JournalContentService(modelContext: modelContext).linkUnlinkedJournals(to: entry)
-        _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
-        return entry
+        try engine.quickRecord(project: project, now: now)
     }
 
     @discardableResult
@@ -93,88 +62,23 @@ struct TimeCursorService {
         note: String = "",
         now: Date = Date()
     ) throws -> TimeEntry {
-        let cursor = try getOrCreateCursor(now: now)
-        guard endAt > startAt else {
-            throw TimeCursorError.emptySegment
-        }
-        guard startAt >= cursor.cursorAt else {
-            throw TimeCursorError.startBeforeCursor
-        }
-        guard endAt <= now else {
-            throw TimeCursorError.endAfterNow
-        }
-        try ValidationService(modelContext: modelContext).validateEntry(
-            projectId: project.id,
-            startAt: startAt,
-            endAt: endAt
-        )
-
-        let entry = TimeEntry(
-            projectId: project.id,
-            projectNameSnapshot: project.name,
-            categoryNameSnapshot: project.categoryName,
-            startAt: startAt,
-            endAt: endAt,
-            note: ""
-        )
-
-        modelContext.insert(entry)
-        modelContext.insert(ContentDocument(ownerID: entry.id, ownerKind: .timeEntry, body: note))
-        cursor.cursorAt = endAt
-        cursor.updatedAt = now
-        try modelContext.save()
-        _ = try? JournalContentService(modelContext: modelContext).linkUnlinkedJournals(to: entry)
-        _ = try? ActionCompletionService(modelContext: modelContext).linkCompletionsForEntry(entry)
-        return entry
+        try engine.recordSegment(project: project, startAt: startAt, endAt: endAt, note: note, now: now)
     }
 
     func skipSegment(to date: Date) throws {
-        let cursor = try getOrCreateCursor(now: date)
-        guard date > cursor.cursorAt else {
-            throw TimeCursorError.emptySegment
-        }
-
-        cursor.cursorAt = date
-        cursor.updatedAt = date
-        try modelContext.save()
+        try engine.skipSegment(to: date)
     }
 
     func canUndoLastEntry() throws -> Bool {
-        let cursor = try getOrCreateCursor()
-        guard let last = try lastCreatedEntry() else {
-            return false
-        }
-        return last.status == TimeEntryStatus.draft.rawValue && last.endAt == cursor.cursorAt
+        try engine.canUndoLastEntry()
     }
 
     func undoLastEntry(expectedId: UUID? = nil) throws {
-        let cursor = try getOrCreateCursor()
-        guard let last = try lastCreatedEntry(),
-              last.status == TimeEntryStatus.draft.rawValue,
-              last.endAt == cursor.cursorAt
-        else {
-            throw TimeCursorError.cannotUndo
-        }
-
-        if let expectedId, last.id != expectedId {
-            throw TimeCursorError.cannotUndo
-        }
-
-        cursor.cursorAt = last.startAt
-        cursor.updatedAt = Date()
-        try deleteContent(for: last)
-        modelContext.delete(last)
-        try modelContext.save()
-        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
-        reconcileActionLinks()
+        try engine.undoLastEntry(expectedId: expectedId)
     }
 
     func lastEntryBeforeCursor() throws -> TimeEntry? {
-        let cursor = try getOrCreateCursor()
-        let entries = try modelContext.fetch(
-            FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.endAt, order: .reverse)])
-        )
-        return entries.first { $0.endAt <= cursor.cursorAt }
+        try engine.lastEntryBeforeCursor()
     }
 
     func updateEntry(
@@ -185,87 +89,14 @@ struct TimeCursorService {
         endAt: Date,
         now: Date = Date()
     ) throws {
-        let originalStartAt = entry.startAt
-        let originalEndAt = entry.endAt
-        var nextDraftToSnap: TimeEntry?
-        var unknownProject: Project?
-        var cursorToMove: TimeCursor?
-
-        if entry.status == TimeEntryStatus.draft.rawValue {
-            try validateEntryUpdate(
-                entry,
-                project: project,
-                startAt: startAt,
-                endAt: endAt,
-                now: now
-            )
-
-            let next = try nextEntry(after: entry)
-            if let next {
-                let nextIsDraft = next.status == TimeEntryStatus.draft.rawValue
-                if nextIsDraft {
-                    let shouldSnapNextStart =
-                        endAt > next.startAt
-                        || (endAt < originalEndAt && next.startAt == originalEndAt)
-                    if shouldSnapNextStart {
-                        nextDraftToSnap = next
-                    }
-                }
-            }
-
-            if startAt > originalStartAt {
-                unknownProject = try SystemProject.getOrCreateUnknown(modelContext: modelContext)
-            }
-
-            let cursor = try getOrCreateCursor(now: now)
-            if cursor.cursorAt == originalEndAt {
-                cursorToMove = cursor
-            }
-        }
-
-        entry.projectId = project.id
-        entry.projectNameSnapshot = project.name
-        entry.categoryNameSnapshot = project.categoryName
-        _ = note // Legacy parameter retained for source compatibility; content is saved by SaveContent.
-        entry.updatedAt = now
-
-        var freedEntry: TimeEntry?
-        if entry.status == TimeEntryStatus.draft.rawValue {
-            if let nextDraftToSnap {
-                nextDraftToSnap.startAt = endAt
-                nextDraftToSnap.updatedAt = now
-            }
-
-            if let unknownProject {
-                let freed = TimeEntry(
-                    projectId: unknownProject.id,
-                    projectNameSnapshot: unknownProject.name,
-                    categoryNameSnapshot: unknownProject.categoryName,
-                    startAt: originalStartAt,
-                    endAt: startAt,
-                    status: .draft
-                )
-                modelContext.insert(freed)
-                modelContext.insert(ContentDocument(ownerID: freed.id, ownerKind: .timeEntry))
-                freedEntry = freed
-            }
-
-            entry.startAt = startAt
-            entry.endAt = endAt
-
-            if let cursorToMove {
-                cursorToMove.cursorAt = endAt
-                cursorToMove.updatedAt = now
-            }
-        }
-
-        try modelContext.save()
-        if let freedEntry {
-            _ = try? JournalContentService(modelContext: modelContext)
-                .linkUnlinkedJournals(to: freedEntry)
-        }
-        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
-        reconcileActionLinks()
+        try engine.updateEntry(
+            entry,
+            project: project,
+            note: note,
+            startAt: startAt,
+            endAt: endAt,
+            now: now
+        )
     }
 
     func validateEntryUpdate(
@@ -275,126 +106,24 @@ struct TimeCursorService {
         endAt: Date,
         now: Date = Date()
     ) throws {
-        guard entry.status == TimeEntryStatus.draft.rawValue else { return }
-        guard endAt > startAt else {
-            throw ValidationError.invalidTimeRange
-        }
-        guard startAt >= entry.startAt else {
-            throw TimeCursorError.startCannotMoveEarlier
-        }
-        guard endAt <= now else {
-            throw TimeCursorError.endAfterNow
-        }
-
-        var excludedEntryIds: Set<UUID> = [entry.id]
-        if let next = try nextEntry(after: entry) {
-            if next.status == TimeEntryStatus.draft.rawValue {
-                if endAt >= next.endAt {
-                    throw TimeCursorError.squeezesNextDraft
-                }
-                if endAt > next.startAt {
-                    excludedEntryIds.insert(next.id)
-                }
-            } else if endAt > next.startAt {
-                throw TimeCursorError.endOverlapsNext
-            }
-        }
-
-        try ValidationService(modelContext: modelContext).validateEntry(
-            projectId: project.id,
+        try engine.validateEntryUpdate(
+            entry,
+            project: project,
             startAt: startAt,
             endAt: endAt,
-            excludingEntryIds: excludedEntryIds
+            now: now
         )
     }
 
-    /// Compatibility entry point for tests and older callers; the new content document is the only fact written.
     func updateNote(_ entry: TimeEntry, note: String, now: Date = Date()) throws {
-        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
-        let document: ContentDocument
-        if let existing = documents.first(where: { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }) {
-            document = existing
-        } else {
-            document = ContentDocument(ownerID: entry.id, ownerKind: .timeEntry)
-            modelContext.insert(document)
-        }
-        document.body = note
-        document.revision += 1
-        document.updatedAt = now
-        entry.updatedAt = now
-        try modelContext.save()
+        try engine.updateNote(entry, note: note, now: now)
     }
 
     func cancelConfirmation(_ entry: TimeEntry) throws {
-        entry.status = TimeEntryStatus.draft.rawValue
-        entry.updatedAt = Date()
-        try modelContext.save()
+        try engine.cancelConfirmation(entry)
     }
 
     func deleteDraftEntry(_ entry: TimeEntry) throws {
-        guard entry.status == TimeEntryStatus.draft.rawValue else {
-            throw TimeCursorError.cannotDelete
-        }
-
-        let deletedStart = entry.startAt
-        let deletedEnd = entry.endAt
-        let cursor = try getOrCreateCursor()
-
-        if cursor.cursorAt == deletedEnd {
-            cursor.cursorAt = deletedStart
-            cursor.updatedAt = Date()
-            try deleteContent(for: entry)
-            modelContext.delete(entry)
-            try modelContext.save()
-            _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
-            reconcileActionLinks()
-            return
-        }
-
-        if let next = try nextEntry(after: entry),
-           next.status == TimeEntryStatus.draft.rawValue {
-            next.startAt = deletedStart
-            next.updatedAt = Date()
-        }
-
-        try deleteContent(for: entry)
-        modelContext.delete(entry)
-        try modelContext.save()
-        _ = try? JournalContentService(modelContext: modelContext).reconcileAutoLinks()
-        reconcileActionLinks()
-    }
-
-    func nextEntry(after entry: TimeEntry) throws -> TimeEntry? {
-        let entries = try modelContext.fetch(
-            FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.startAt)])
-        )
-        return entries.first { candidate in
-            candidate.id != entry.id && candidate.startAt >= entry.endAt
-        } ?? entries.first { candidate in
-            candidate.id != entry.id && candidate.startAt > entry.startAt
-        }
-    }
-
-    private func lastCreatedEntry() throws -> TimeEntry? {
-        var descriptor = FetchDescriptor<TimeEntry>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        descriptor.fetchLimit = 1
-        return try modelContext.fetch(descriptor).first
-    }
-
-    private func reconcileActionLinks() {
-        _ = try? ActionCompletionService(modelContext: modelContext).reconcileAllLinks()
-    }
-
-    private func deleteContent(for entry: TimeEntry) throws {
-        let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
-            .filter { $0.ownerID == entry.id && $0.ownerKindEnum == .timeEntry }
-        let documentIDs = Set(documents.map(\.id))
-        let attachments = try modelContext.fetch(FetchDescriptor<ContentAttachment>())
-            .filter { documentIDs.contains($0.contentDocumentID) }
-        let links = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
-            .filter { $0.timeEntryID == entry.id }
-        for attachment in attachments { modelContext.delete(attachment) }
-        for document in documents { modelContext.delete(document) }
-        for link in links { modelContext.delete(link) }
+        try engine.deleteDraftEntry(entry)
     }
 }

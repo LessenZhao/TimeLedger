@@ -588,17 +588,7 @@ struct TodayView: View {
     }
 
     private func getOrCreateSettings() throws -> AppSettings {
-        var descriptor = FetchDescriptor<AppSettings>()
-        descriptor.fetchLimit = 1
-
-        if let settings = try modelContext.fetch(descriptor).first {
-            return settings
-        }
-
-        let settings = AppSettings()
-        modelContext.insert(settings)
-        try modelContext.save()
-        return settings
+        try TimeLedgerEngine(modelContext: modelContext).getOrCreateAppSettings()
     }
 
     private func currentCursorAt() -> Date {

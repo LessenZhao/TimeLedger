@@ -125,9 +125,8 @@ struct ProjectManageView: View {
 
     private func deleteProject(_ project: Project?) {
         guard let project else { return }
-        modelContext.delete(project)
         do {
-            try modelContext.save()
+            try TimeLedgerEngine(modelContext: modelContext).deleteProject(project)
         } catch {
             deleteError = error.localizedDescription
         }
