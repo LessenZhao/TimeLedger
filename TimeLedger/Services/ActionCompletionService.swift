@@ -44,11 +44,10 @@ struct ActionCompletionService {
         let item = ActionItem(
             title: trimmed,
             sortOrder: sortOrder,
-            createdAt: now,
-            updatedAt: now
-        )
-        engine.insert(item)
-        try engine.save()
+           createdAt: now,
+           updatedAt: now
+       )
+        try engine.saveActionItem(item)
         return item
     }
 
@@ -114,7 +113,7 @@ struct ActionCompletionService {
             let completion = try makeCompletion(for: item, now: now)
             item.activeCycleStartedAt = nil
             item.updatedAt = now
-            try engine.save()
+            try engine.saveActionCompletion(completion)
             return completion
         }
         if let existing = try completion(for: item, on: now) {
@@ -122,7 +121,7 @@ struct ActionCompletionService {
         }
 
         let completion = try makeCompletion(for: item, now: now)
-        try engine.save()
+        try engine.saveActionCompletion(completion)
         return completion
     }
 
@@ -136,7 +135,6 @@ struct ActionCompletionService {
             createdAt: now,
             updatedAt: now
         )
-        engine.insert(completion)
         return completion
     }
 
@@ -144,13 +142,11 @@ struct ActionCompletionService {
         guard let completion = try completion(for: item, on: date) else {
             throw ActionCompletionError.missingCompletion
         }
-        engine.delete(completion)
-        try engine.save()
+        try engine.deleteActionCompletion(completion)
     }
 
     func deleteCompletion(_ completion: ActionCompletion) throws {
-        engine.delete(completion)
-        try engine.save()
+        try engine.deleteActionCompletion(completion)
     }
 
     func completionsForEntry(_ entry: TimeEntry) throws -> [ActionCompletion] {

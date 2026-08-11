@@ -58,6 +58,8 @@ struct ArchitectureBoundaryTests {
         "EngineImportCommands.swift",
         "EngineProjectSettingsCommands.swift",
         "EngineFixtureCommands.swift",
+        "EngineMediaMomentCommands.swift",
+        "EngineActionCompletionCommands.swift",
         "ContentMigrationService.swift",
         "ContentRollback.swift",
     ]
@@ -188,7 +190,7 @@ struct ArchitectureBoundaryTests {
 
     @Test func syncJSONUsesEvolutionCoreTypedDTOs() throws {
         let files = try Self.sourceFiles(in: "TimeLedger/Services")
-        for name in ["SyncEnvelopeExportService.swift", "EngineImportCommands.swift"] {
+        for name in ["SyncEnvelopeExportService.swift", "EngineImportCommands.swift", "MirrorNetworkPhoneClient.swift"] {
             let file = try #require(files.first { $0.name == name })
             #expect(file.content.contains("import EvolutionCore"))
             #expect(!file.content.contains("JSONSerialization"))
@@ -203,6 +205,22 @@ struct ArchitectureBoundaryTests {
         #expect(content.contains("XCLocalSwiftPackageReference"))
         #expect(content.contains("relativePath = Packages/EvolutionCore"))
         #expect(content.contains("productName = EvolutionCore"))
+    }
+
+    @Test func engineDoesNotExposeGenericWriteWrappers() throws {
+        let engineSource = try String(
+            contentsOf: Self.repoRoot
+                .appendingPathComponent("TimeLedger/Services/TimeLedgerEngine.swift"),
+            encoding: .utf8
+        )
+        #expect(
+            !engineSource.contains("func insert<T: PersistentModel>"),
+            "Engine 不得暴露泛型 insert<T>"
+        )
+        #expect(
+            !engineSource.contains("func delete<T: PersistentModel>"),
+            "Engine 不得暴露泛型 delete<T>"
+        )
     }
 
     private static var repoRoot: URL {

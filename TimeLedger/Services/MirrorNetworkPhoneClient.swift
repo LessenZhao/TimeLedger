@@ -3,6 +3,8 @@ import Foundation
 import Network
 import SwiftData
 
+import EvolutionCore
+
 /// Phone-side Bonjour client. JSON wire format compatible with EvolutionCore.MirrorWireMessage.
 final class MirrorNetworkPhoneClient: ObservableObject {
     @Published var isBrowsing = false
@@ -71,8 +73,8 @@ final class MirrorNetworkPhoneClient: ObservableObject {
             guard let self, let modelContext = self.modelContext else { return }
             guard self.connection != nil else { return }
             do {
-                let snapshotJSON = try self.buildSnapshotJSON(modelContext: modelContext)
-                self.sendRaw(type: "fullSnapshot", extra: ["snapshot": snapshotJSON])
+                let snapshot = try self.buildSnapshot(modelContext: modelContext)
+                self.sendMessage(.fullSnapshot(snapshot))
                 self.publish { $0.status = "已推送全量到 Mac" }
             } catch {
                 self.publish { $0.status = "推送失败：\(error.localizedDescription)" }
@@ -104,11 +106,7 @@ final class MirrorNetworkPhoneClient: ObservableObject {
     }
 
     private func sendHello() {
-        sendRaw(type: "hello", extra: [
-            "role": "phone",
-            "deviceId": deviceId,
-            "pairingCode": pairingCode
-        ])
+        sendMessage(.hello(role: "phone", deviceId: deviceId, pairingCode: pairingCode))
     }
 
     private func receiveLoop(_ connection: NWConnection) {
@@ -137,13 +135,10 @@ final class MirrorNetworkPhoneClient: ObservableObject {
     }
 
     private func handlePayload(_ data: Data) {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = obj["type"] as? String
-        else { return }
+        guard let message = try? MirrorWireMessage.decode(from: data) else { return }
 
-        switch type {
-        case "helloAck":
-            let ok = obj["ok"] as? Bool ?? false
+        switch message {
+        case .helloAck(_, let ok, let reason):
             if ok {
                 publish {
                     $0.isConnected = true
@@ -152,42 +147,34 @@ final class MirrorNetworkPhoneClient: ObservableObject {
                 }
                 pushFullSnapshot()
             } else {
-                let reason = obj["reason"] as? String ?? "未知"
-                publish { $0.status = "配对失败：\(reason)" }
+                let detail = reason ?? "未知"
+                publish { $0.status = "配对失败：\(detail)" }
                 DispatchQueue.main.async { self.stop() }
             }
-        case "requestFullSnapshot":
+        case .requestFullSnapshot:
             pushFullSnapshot()
-        case "delta":
-            if let batch = obj["batch"] as? [String: Any],
-               let modelContext,
-               let data = try? JSONSerialization.data(withJSONObject: batch),
-               let json = String(data: data, encoding: .utf8)
-            {
-                DispatchQueue.main.async {
-                    do {
-                        let count = try MirrorSyncImportService(modelContext: modelContext).importMacBatchJSON(json)
-                        self.status = "已应用 Mac 变更 \(count) 条"
-                    } catch {
-                        self.status = "应用 Mac 变更失败：\(error.localizedDescription)"
-                    }
+        case .delta(let batch):
+            guard let modelContext else { return }
+            DispatchQueue.main.async {
+                do {
+                    let json = try String(data: ISO8601Codec.encoder.encode(batch), encoding: .utf8) ?? "{}"
+                    let count = try MirrorSyncImportService(modelContext: modelContext).importMacBatchJSON(json)
+                    self.status = "已应用 Mac 变更 \(count) 条"
+                } catch {
+                    self.status = "应用 Mac 变更失败：\(error.localizedDescription)"
                 }
             }
-        case "ping":
-            sendRaw(type: "pong", extra: [:])
-        default:
+        case .ping:
+            sendMessage(.pong)
+        case .hello, .fullSnapshot, .pong:
             break
         }
     }
 
-    private func sendRaw(type: String, extra: [String: Any]) {
+    private func sendMessage(_ message: MirrorWireMessage) {
         guard let connection else { return }
-        var body = extra
-        body["type"] = type
-        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return }
-        var length = UInt32(payload.count).bigEndian
-        var frame = Data(bytes: &length, count: 4)
-        frame.append(payload)
+        guard let payload = try? message.encodedData() else { return }
+        let frame = MirrorFrameCodec.encode(payload)
         connection.send(content: frame, completion: .contentProcessed { _ in })
     }
 
@@ -197,80 +184,78 @@ final class MirrorNetworkPhoneClient: ObservableObject {
         }
     }
 
-    private func buildSnapshotJSON(modelContext: ModelContext) throws -> [String: Any] {
+    /// 构建完整账本快照，使用 EvolutionCore typed DTO，与 Mac 端 wire 协议一一对应。
+    private func buildSnapshot(modelContext: ModelContext) throws -> MirrorLedgerSnapshot {
         let projects = try modelContext.fetch(FetchDescriptor<Project>())
         let entries = try modelContext.fetch(FetchDescriptor<TimeEntry>())
         let documents = try modelContext.fetch(FetchDescriptor<ContentDocument>())
         let journals = try modelContext.fetch(FetchDescriptor<JournalEntry>())
         let journalLinks = try modelContext.fetch(FetchDescriptor<JournalTimeLink>())
         let cursor = try modelContext.fetch(FetchDescriptor<TimeCursor>()).first
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        func d(_ date: Date) -> String { iso.string(from: date) }
 
         let cursorAt = cursor?.cursorAt ?? Date()
         let cursorUpdated = cursor?.updatedAt ?? Date()
 
-        return [
-            "protocolVersion": "1.0",
-            "phoneDeviceId": deviceId,
-            "snapshotRevision": 1,
-            "exportedAt": d(Date()),
-            "cursor": [
-                "cursorAt": d(cursorAt),
-                "updatedAt": d(cursorUpdated),
-                "revision": 1
-            ] as [String: Any],
-            "projects": projects.map { p -> [String: Any] in
-                [
-                    "id": p.id.uuidString,
-                    "name": p.name,
-                    "categoryName": p.categoryName,
-                    "sortOrder": p.sortOrder,
-                    "isArchived": p.isArchived,
-                    "revision": 1,
-                    "updatedAt": d(p.updatedAt)
-                ]
-            },
-            "timeEntries": entries.map { e -> [String: Any] in
-                let body = documents.first {
-                    $0.ownerID == e.id && $0.ownerKind == ContentOwnerKind.timeEntry.rawValue
-                }?.body ?? ""
-                return [
-                    "id": e.id.uuidString,
-                    "projectId": e.projectId.uuidString,
-                    "projectNameSnapshot": e.projectNameSnapshot,
-                    "categoryNameSnapshot": e.categoryNameSnapshot,
-                    "startAt": d(e.startAt),
-                    "endAt": d(e.endAt),
-                    "note": body,
-                    "status": e.status,
-                    "revision": 1,
-                    "createdAt": d(e.createdAt),
-                    "updatedAt": d(e.updatedAt)
-                ]
-            },
-            "thoughts": journals.map { journal -> [String: Any] in
-                let document = documents.first {
-                    $0.ownerID == journal.id && $0.ownerKind == ContentOwnerKind.journalEntry.rawValue
-                }
-                let link = journalLinks.first { $0.journalEntryID == journal.id }
-                var row: [String: Any] = [
-                    "id": journal.id.uuidString,
-                    "body": document?.body ?? "",
-                    "capturedAt": d(journal.capturedAt),
-                    "anchorAt": d(journal.anchorAt),
-                    "linkSource": link?.linkSource ?? ThoughtLinkSource.none.rawValue,
-                    "revision": document?.revision ?? 0,
-                    "createdAt": d(journal.createdAt),
-                    "updatedAt": d(document?.updatedAt ?? journal.updatedAt)
-                ]
-                if let linked = link?.timeEntryID.uuidString {
-                    row["linkedEntryId"] = linked
-                }
-                return row
+        let mirrorProjects = projects.map { p in
+            MirrorProject(
+                id: p.id.uuidString,
+                name: p.name,
+                categoryName: p.categoryName,
+                sortOrder: p.sortOrder,
+                isArchived: p.isArchived,
+                revision: 1,
+                updatedAt: p.updatedAt
+            )
+        }
+
+        let mirrorEntries = entries.map { e -> MirrorTimeEntry in
+            let body = documents.first {
+                $0.ownerID == e.id && $0.ownerKind == ContentOwnerKind.timeEntry.rawValue
+            }?.body ?? ""
+            return MirrorTimeEntry(
+                id: e.id.uuidString,
+                projectId: e.projectId.uuidString,
+                projectNameSnapshot: e.projectNameSnapshot,
+                categoryNameSnapshot: e.categoryNameSnapshot,
+                startAt: e.startAt,
+                endAt: e.endAt,
+                note: body,
+                status: e.status,
+                revision: 1,
+                createdAt: e.createdAt,
+                updatedAt: e.updatedAt
+            )
+        }
+
+        let mirrorThoughts = journals.map { journal -> MirrorThought in
+            let document = documents.first {
+                $0.ownerID == journal.id && $0.ownerKind == ContentOwnerKind.journalEntry.rawValue
             }
-        ]
+            let link = journalLinks.first { $0.journalEntryID == journal.id }
+            return MirrorThought(
+                id: journal.id.uuidString,
+                body: document?.body ?? "",
+                capturedAt: journal.capturedAt,
+                anchorAt: journal.anchorAt,
+                linkedEntryId: link?.timeEntryID.uuidString,
+                linkSource: link?.linkSource ?? ThoughtLinkSource.none.rawValue,
+                revision: document?.revision ?? 0,
+                createdAt: journal.createdAt,
+                updatedAt: document?.updatedAt ?? journal.updatedAt
+            )
+        }
+
+        return MirrorLedgerSnapshot(
+            phoneDeviceId: deviceId,
+            snapshotRevision: 1,
+            cursor: MirrorCursor(
+                cursorAt: cursorAt,
+                updatedAt: cursorUpdated,
+                revision: 1
+            ),
+            projects: mirrorProjects,
+            timeEntries: mirrorEntries,
+            thoughts: mirrorThoughts
+        )
     }
 }

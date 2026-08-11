@@ -32,6 +32,14 @@ struct TimeLedgerEngine {
         SettingsCommandHandler(modelContext: modelContext)
     }
 
+    private var mediaMoments: MediaMomentCommandHandler {
+        MediaMomentCommandHandler(modelContext: modelContext)
+    }
+
+    private var actionCompletions: ActionCompletionCommandHandler {
+        ActionCompletionCommandHandler(modelContext: modelContext)
+    }
+
     // MARK: Cursor / TimeEntry
 
     func getOrCreateCursor(now: Date = Date()) throws -> TimeCursor {
@@ -223,19 +231,37 @@ struct TimeLedgerEngine {
         try imports.importMacBatchJSON(json)
     }
 
-    // MARK: - Generic Write Wrappers (facade for migrated services)
+    // MARK: MediaMoment
 
-    /// Insert any PersistentModel through the engine.
-    func insert<T: PersistentModel>(_ model: T) {
-        modelContext.insert(model)
+    func saveMediaMoment(_ moment: MediaMoment) throws {
+        try mediaMoments.save(moment)
     }
 
-    /// Delete any PersistentModel through the engine.
-    func delete<T: PersistentModel>(_ model: T) {
-        modelContext.delete(model)
+    func deleteMediaMoment(_ moment: MediaMoment) throws {
+        try mediaMoments.delete(moment)
     }
 
-    /// Save the model context through the engine.
+    func attachMediaAsJournal(_ moment: MediaMoment) throws {
+        try mediaMoments.attachAsJournal(moment)
+    }
+
+    // MARK: ActionCompletion
+
+    func saveActionItem(_ item: ActionItem) throws {
+        try actionCompletions.saveItem(item)
+    }
+
+    func saveActionCompletion(_ completion: ActionCompletion) throws {
+        try actionCompletions.saveCompletion(completion)
+    }
+
+    func deleteActionCompletion(_ completion: ActionCompletion) throws {
+        try actionCompletions.deleteCompletion(completion)
+    }
+
+    // MARK: - Commit
+
+    /// 持久化当前所有待提交变更；仅持久化，不创建或销毁模型。
     func save() throws {
         try modelContext.save()
     }
@@ -609,22 +635,5 @@ struct EntryCommandHandler {
         for attachment in attachments { modelContext.delete(attachment) }
         for document in documents { modelContext.delete(document) }
         for link in links { modelContext.delete(link) }
-    }
-
-    // MARK: - Generic Write Wrappers (facade for migrated services)
-
-    /// Insert any PersistentModel through the engine.
-    func insert<T: PersistentModel>(_ model: T) {
-        modelContext.insert(model)
-    }
-
-    /// Delete any PersistentModel through the engine.
-    func delete<T: PersistentModel>(_ model: T) {
-        modelContext.delete(model)
-    }
-
-    /// Save the model context through the engine.
-    func save() throws {
-        try modelContext.save()
     }
 }

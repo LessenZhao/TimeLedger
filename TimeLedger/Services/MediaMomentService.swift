@@ -207,17 +207,15 @@ struct MediaMomentService {
             sourceTemporaryPath: sourceURL.path,
             thumbnailData: thumbnailData,
             durationSeconds: durationSeconds
-        )
-        engine.insert(moment)
+       )
         do {
-            try engine.save()
+            try engine.saveMediaMoment(moment)
         } catch {
-            engine.delete(moment)
             await fileStore.delete(relativePath: pendingRelativePath)
             throw error
         }
         if autoLink {
-            try attachAsMediaJournal(moment)
+            try engine.attachMediaAsJournal(moment)
         }
         await completeDestinations(for: moment)
         return moment
@@ -253,12 +251,7 @@ struct MediaMomentService {
         await fileStore.delete(relativePath: moment.appRelativePath)
         await fileStore.delete(relativePath: moment.pendingRelativePath)
         await fileStore.delete(absolutePath: moment.sourceTemporaryPath)
-        let attachments = (try? modelContext.fetch(FetchDescriptor<ContentAttachment>())) ?? []
-        for attachment in attachments where attachment.mediaMomentID == moment.id {
-            engine.delete(attachment)
-        }
-        engine.delete(moment)
-        try? engine.save()
+        try? engine.deleteMediaMoment(moment)
     }
 
     func recoverableURL(for moment: MediaMoment) async -> URL? {
@@ -343,19 +336,6 @@ struct MediaMomentService {
         }
     }
 
-    private func attachAsMediaJournal(_ moment: MediaMoment) throws {
-        let journal = JournalEntry(capturedAt: moment.capturedAt, anchorAt: moment.capturedAt)
-        let document = ContentDocument(ownerID: journal.id, ownerKind: .journalEntry)
-        let attachment = ContentAttachment(
-            contentDocumentID: document.id,
-            mediaMomentID: moment.id,
-            state: .pending
-        )
-        engine.insert(journal)
-        engine.insert(document)
-        engine.insert(attachment)
-        try engine.save()
-    }
 
     private func updateStoredLocation(
         _ moment: MediaMoment,

@@ -23,20 +23,29 @@ enum SystemProject {
         let projects = try modelContext.fetch(FetchDescriptor<Project>())
         if let existing = projects.first(where: { $0.name == unknownName }) {
             if existing.isArchived {
-                existing.isArchived = false
-                existing.updatedAt = Date()
-                try engine.save()
+                try engine.saveProject(
+                    project: existing,
+                    name: existing.name,
+                    categoryName: existing.categoryName,
+                    emoji: existing.emoji,
+                    colorHex: existing.colorHex,
+                    sortOrder: existing.sortOrder,
+                    isArchived: false
+                )
             }
             return existing
         }
 
-        let project = Project(
+        try engine.saveProject(
+            project: nil,
             name: unknownName,
             categoryName: unknownCategory,
-            sortOrder: 9_999
+            emoji: nil,
+            colorHex: nil,
+            sortOrder: 9_999,
+            isArchived: false
         )
-        engine.insert(project)
-        try engine.save()
-        return project
+        let allProjects = try modelContext.fetch(FetchDescriptor<Project>())
+        return allProjects.first(where: { $0.name == unknownName })!
     }
 }
